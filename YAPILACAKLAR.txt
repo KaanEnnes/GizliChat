@@ -1,0 +1,59 @@
+GizliChat — Senin (elle) yapman gereken adımlar
+=================================================
+
+Bu dosyadaki adımlar kod tarafında YAPILAMAZ, Firebase Console üzerinden
+elle yapılması gerekiyor. İkisi de yapılmadan gizli sohbet ve skor
+tablosu çalışmaz.
+
+1) FIRESTORE GÜVENLİK KURALLARINI YAYINLA
+------------------------------------------
+- https://console.firebase.google.com adresine git, "kaanchatmercan"
+  projesini aç.
+- Sol menüden Firestore Database -> üstteki "Rules" sekmesine geç.
+- Orada yazan mevcut kuralların hepsini sil.
+- Bu projedeki "firestore.rules" dosyasının TÜM içeriğini kopyala,
+  yerine yapıştır.
+- Sağ üstteki "Publish" butonuna bas.
+
+Bu adım yapılmazsa: "Kişiler yüklenemedi" / "Profil hazırlanamadı" gibi
+hatalar görürsün, çünkü eski kurallar yeni users/rooms/highscores
+koleksiyonlarına izin vermiyor.
+
+2) EMAIL/PASSWORD GİRİŞİNİ AÇ (kullanıcı adı+şifre hesap sistemi için)
+-----------------------------------------------------------------------
+- Aynı Firebase Console'da, sol menüden Authentication -> üstteki
+  "Sign-in method" sekmesine geç.
+- Sağlayıcılar listesinde "Email/Password" satırını bul.
+- Üzerine tıkla, "Enable" (Etkinleştir) seçeneğini aç, Save/Kaydet.
+- (Anonymous/Anonim sağlayıcı muhtemelen zaten açık; değilse onu da aç,
+  skor tablosu ona ihtiyaç duyuyor.)
+
+Bu adım yapılmazsa: kayıt ol / giriş yap ekranı "auth/operation-not-allowed"
+gibi bir hata verir, hesap oluşturulamaz.
+
+3) YENİ APK'YI TELEFONA KUR
+-----------------------------
+- Dosya: android/app/build/outputs/apk/release/app-release.apk
+- Telefonda Ayarlar -> Güvenlik/Uygulamalar -> "Bilinmeyen kaynaklardan
+  yükleme" iznini aç.
+- APK'yı telefona aktar (USB, Drive, e-posta vs.), dosyaya dokunup
+  "Yükle"ye bas.
+- USB bağlıyken tek komutla kurulum alternatifi: adb install -r app-release.apk
+
+4) DENEME SIRASI
+------------------
+- Oyunu oyna, kaybet -> isim sorulmalı (bir kere) -> "Skor Tablosu"
+  butonuyla listeyi görebilmelisin.
+- Ana ekrandaki dişli ikonuna (sağ alt köşe) 3.5 saniye içinde 10 kez
+  dokun -> "Admin Girişi" ekranı açılır (bu hâlâ sahte/decoy bir katman).
+- Herhangi bir kullanıcı adı/şifre gir (admin/admin123 değil, bu ayrı
+  ve gerçek olmayan bir kontrol) -> geç.
+- Karşına gerçek "Giriş Yap / Kayıt Ol" ekranı çıkar -> "Kayıt ol" ile
+  yeni bir kullanıcı adı + şifre belirle.
+- Kişi listesi ekranında "+ Kişi Ekle" ile başka bir kullanıcı adını
+  (başka bir hesapla kayıt olmuş biri) ekleyip sohbet edebilirsin.
+- Aynı kullanıcı adı+şifre ile başka bir telefonda da giriş yapılabilir,
+  kişi listen ve sohbetlerin orada da görünür.
+
+Daha fazla teknik detay için: ObsidianVault/ klasöründeki notlara bak,
+özellikle ObsidianVault/00-START-HERE.md ve ObsidianVault/Changelog.md.
