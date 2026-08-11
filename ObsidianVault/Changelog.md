@@ -1,5 +1,14 @@
 # Değişiklik Günlüğü
 
+## 2026-08-11 — Proje GitHub'a gönderildi
+
+İlk kez git ile versiyonlandı ve `https://github.com/KaanEnnes/GizliChat` (private) reposuna push
+edildi. `Mobile/` (boş, bozuk bir `.git` içeren eski artık) ve `.claude/` (yerel makine ayarları,
+başka bir kullanıcıya ait eski dosya yolları içeriyordu) `.gitignore`'a eklenip repo dışında
+bırakıldı. `ObsidianVault/` ve `firestore.rules` dahil projenin geri kalanı commit edildi. Repo
+private tutuldu çünkü `src/config/adminConfig.ts` içinde mock admin şifresi düz metin olarak duruyor
+(bkz. [[04-Security-Notes]]).
+
 > En yeni kayıt en üstte. Her proje değişikliğinde (özellik, refactor, config, build/deploy) buraya
 > tarih + kısa özet + hangi dosyaların etkilendiği eklenir. Eski kayıtlar silinmez.
 
