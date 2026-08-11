@@ -8,23 +8,23 @@ Kütüphanesiz, `src/navigation/AppNavigator.tsx` içinde elle yazılmış durum
 
 ```
 HOME (HomeScreen — oyun)
-  └─ dişli ikonuna 3.5 sn içinde 10 dokunuş → ADMIN_LOGIN (AdminLoginScreen, mock decoy şifre)
-       ├─ başarılı mock login → ACCOUNT (AccountScreen — gerçek kullanıcı adı/şifre girişi)
-       │    ├─ zaten kayıtlı bir oturum varsa → form atlanır, otomatik → CONTACTS
-       │    ├─ giriş/kayıt başarılı → CONTACTS (ContactsScreen — kişi listesi)
-       │    │    ├─ bir kişiye dokun → CHAT_ROOM (ChatRoomScreen — o kişiyle 1-1 sohbet)
-       │    │    │    └─ geri ok → CONTACTS
-       │    │    └─ "Çıkış" → gerçekten Firebase oturumu kapanır (logoutAccount) → HOME
-       │    └─ "Vazgeç" → HOME
+  └─ dişli ikonuna 3.5 sn içinde 10 dokunuş → ACCOUNT (AccountScreen — gerçek kullanıcı adı/şifre girişi)
+       ├─ zaten kayıtlı bir oturum varsa → form atlanır, otomatik → CONTACTS
+       ├─ giriş/kayıt başarılı → CONTACTS (ContactsScreen — kişi listesi)
+       │    ├─ bir kişiye dokun → CHAT_ROOM (ChatRoomScreen — o kişiyle 1-1 sohbet)
+       │    │    └─ geri ok → CONTACTS
+       │    └─ "Çıkış" → gerçekten Firebase oturumu kapanır (logoutAccount) → HOME
        └─ "Vazgeç" → HOME
 ```
 
-Android donanım geri tuşu: `ADMIN_LOGIN`/`ACCOUNT`/`CONTACTS` → `HOME`, `CHAT_ROOM` → `CONTACTS`.
+Android donanım geri tuşu: `ACCOUNT`/`CONTACTS` → `HOME`, `CHAT_ROOM` → `CONTACTS`.
 
-**İki ayrı "giriş" katmanı olduğuna dikkat:** `ADMIN_LOGIN` hâlâ eski mock/decoy şifre kontrolü
-(`admin`/`admin123`, gerçek kimlik doğrulama değil, sadece "gizli özelliğin var olduğunu gizleme"
-katmanı). `ACCOUNT` ise ondan tamamen bağımsız, gerçek bir Firebase Auth hesabı — birini geçmek
-diğerini atlamaz, ikisi de sırayla geçilmesi gereken ayrı adımlar.
+**Eskiden burada iki ayrı "giriş" katmanı vardı** — dişli tetikleyicisi önce sahte/mock bir
+`AdminLoginScreen` (decoy şifre, gerçek kimlik doğrulama değil) açıyordu, onu geçince gerçek
+`AccountScreen`'e geçiliyordu. Bu decoy katmanı tamamen kaldırıldı (bkz. [[Changelog]]) — artık
+gizli tetikleyici doğrudan gerçek Firebase Auth girişine açılıyor. Gizliliğin kaynağı hâlâ jestin
+kendisi (dişliye 10 dokunuş) ve bunun görünmez olması, ama artık arkasında sahte bir şifre kontrolü
+yok.
 
 ## HomeScreen — "BLOK ÇILGINLIĞI" oyunu (görünen yüz)
 
@@ -44,12 +44,6 @@ diğerini atlamaz, ikisi de sırayla geçilmesi gereken ayrı adımlar.
   Tablosu" butonu `fetchTopScores()` ile en yüksek 20 skoru bir modalda listeler.
 - Gizli tetikleyici: köşedeki `⚙` ikonuna `REQUIRED_TAPS` (10) kez `TAP_RESET_MS` (3.5 sn) içinde
   dokununca `onAdminTriggerReached()` çağrılıyor.
-
-## AdminLoginScreen — gizli girişin kapısı (decoy)
-
-- Kullanıcı adı/şifre inputları, `authService.loginAdmin()` çağırıyor (gerçek backend değil, mock).
-- Yükleniyor spinner'ı, satır içi hata mesajı.
-- Başarılı → `onLoginSuccess()` (→ `ACCOUNT`), iptal → `onCancel()`.
 
 ## AccountScreen — gerçek hesap girişi/kaydı
 
@@ -82,8 +76,52 @@ diğerini atlamaz, ikisi de sırayla geçilmesi gereken ayrı adımlar.
   odayı açar).
 - `subscribeToMessages(roomId, ...)` (Firestore canlı dinleyici), `FlatList` + `MessageBubble` ile
   mesaj listesi, yeni mesajda otomatik aşağı kaydırma.
-- Gönderim `sendMessage(roomId, text, myUid)` ile.
+- Metin gönderimi `sendMessage(roomId, text, myUid)` ile.
+- **Fotoğraf/video gönderme:** 📎 butonu bir seçim gösterir (Galeri / Kamera →
+  `react-native-image-picker`); seçilen dosya `mediaService.uploadRoomMedia()` ile Storage'a
+  yüklenir, sonra `sendMediaMessage(roomId, myUid, 'image'|'video', mediaUrl)` ile gönderilir.
+- **Sesli mesaj:** 🎤 butonu basılı tutulduğu sürece kayıt yapar (`react-native-audio-recorder-player`
+  singleton'ı), bırakınca kayıt durur, Storage'a yüklenir, süresi (saniye) ile birlikte
+  `sendMediaMessage(..., 'audio', mediaUrl, durationSeconds)` ile gönderilir.
+- **Arama:** header'daki 📞 (`startVoiceCall`) / 🎥 (`startVideoCall`) butonları
+  `callService.ts` üzerinden Stream Video'da o kişiyle `ring: true` bir çağrı oluşturur — arama
+  ekranı bu ekrandan değil, `CallProvider`'ın global `IncomingCallWatcher`'ı üzerinden açılır (bkz.
+  aşağıdaki "Sesli/görüntülü arama" bölümü).
 - Geri ok → `onBack()` ile `CONTACTS`'a döner.
+
+## Sesli/görüntülü arama (Stream Video)
+
+- `AppNavigator`, hesap girişi yapılmış her ekranı (`CONTACTS`, `CHAT_ROOM`) `CallProvider` ile
+  sarmalar. `CallProvider`, o oturum için bir Stream Video client'ı kurar ve içine
+  `IncomingCallWatcher`'ı yerleştirir.
+- `IncomingCallWatcher`, Stream'in `useCalls()` hook'unu dinler; `ringing` durumundaki **herhangi
+  bir** çağrıyı (hem bu cihazın az önce başlattığı giden arama, hem karşı taraftan gelen arama) tam
+  ekran bir `Modal` içinde `CallScreen` olarak açar — yani arayan ve aranan aynı mekanizmayla
+  ekranı görür, sadece Stream'in `RingingCallContent` bileşeni içeriği (arıyor/çalıyor) otomatik
+  ayırt eder.
+- `CallScreen`, `CallingState`'e göre iki aşama gösterir: `RINGING` → `RingingCallContent` (kabul
+  et/reddet, arıyor animasyonu); `JOINED` → `CallContent` (kamera aç/kapa, mikrofon sustur, kapat)
+  + üstte canlı süre sayaçlı "Görüşme sürüyor • mm:ss" banner'ı. `LEFT` olur olmaz `onLeave()`
+  hemen çağrılır, ekstra bir "görüşme bitti" ekranı yok (kullanıcı isteği, ilk denemede vardı,
+  kaldırıldı — bkz. [[Changelog]]).
+- `startVoiceCall()`/`startVideoCall()` çağrı oluşturmadan önce `permissionsService.
+  requestCallPermissions()` ile mikrofon (+ görüntülüyse kamera) izni ister; `CallProvider`'ın
+  `IncomingCallWatcher`'ı da gelen bir çağrı tespit eder etmez aynı izni **aranan** taraf için de
+  proaktif olarak istiyor (kabul et'e basılmadan önce izin hazır olsun diye).
+  `startVideoCall()` ayrıca çağrı oluşturulur oluşturulmaz `call.camera.enable()` çağırır (sesli
+  aramada bunun yerine `call.camera.disable()`); `CallScreen` da `JOINED` durumuna geçilince
+  `call.microphone.enable()` çağırıyor (hem arayan hem aranan tarafında).
+- **⚠️ BİLİNEN AÇIK SORUN: Sesli aramada ses gelmiyor.** Kamera fix'i (`camera.enable()`) video
+  için işe yaramıştı, aynı mantıkla `microphone.enable()` denendi ama sorunu çözmedi — bkz.
+  [[Changelog]] "Arama bitince direkt kapanma + mikrofon fix denemesi" kaydındaki araştırma
+  notları. Bir sonraki oturumda gerçek zamanlı logcat ile devam edilmeli.
+- **Elle yapılması gereken adım:** Stream Dashboard'da bir "Video & Audio" app oluşturup API
+  key/secret'ı `src/config/streamConfig.ts`'e girmek gerekiyor, yoksa arama butonları sessizce
+  başarısız olur. Detay: [[05-Build-Deployment]].
+- **Test ederken dikkat:** Arama, kimliği hesaba bağlı bir özellik olduğu için **iki farklı cihazda
+  aynı hesapla test edilemez** — Stream aynı `user_id`'nin iki oturumunu çakışan bir çağrı olarak
+  görüp `"Cannot reject a call that has already been accepted"` gibi hatalar verir. Test için iki
+  farklı hesap (iki cihazda ayrı ayrı kayıt olup birbirini kişi olarak eklemek) gerekir.
 
 ## Önemli davranışsal notlar
 
@@ -98,7 +136,7 @@ diğerini atlamaz, ikisi de sırayla geçilmesi gereken ayrı adımlar.
 - **Şifre kurtarma yok.** Kullanıcı adı sahte bir e-postaya çevrildiği için Firebase'in "şifremi
   unuttum" e-posta akışı çalışmaz — şifresini unutan biri o hesaba bir daha giremez, yeni bir
   kullanıcı adıyla yeni hesap açmak zorunda kalır. Bkz [[04-Security-Notes]].
-- Admin şifresi ve oyunun "gizli tetikleyici" mantığı istemci tarafında (JS bundle içinde) —
-  reverse-engineering ile kolayca bulunabilir. Bkz [[04-Security-Notes]].
-- **Henüz yok (planlanan sonraki aşamalar):** fotoğraf/görsel/video mesajı gönderme, görüntülü
-  konuşma (hazır bir video SDK'sı ile yapılması kararlaştırıldı, henüz entegre edilmedi).
+- Oyunun "gizli tetikleyici" mantığı (dişliye 10 dokunuş, 3.5 sn) istemci tarafında (JS bundle
+  içinde) — reverse-engineering ile kolayca bulunabilir. Bkz [[04-Security-Notes]].
+- Fotoğraf/video/sesli mesaj ve sesli/görüntülü arama artık var (yukarı bkz.). **Henüz yok:** grup
+  sohbeti/araması (her şey hâlâ 1-1), medyayı cihaza indirme/galeriye kaydetme.

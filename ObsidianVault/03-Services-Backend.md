@@ -21,6 +21,8 @@ servisi kullanılıyor, hiçbir custom backend/API sunucusu yok:
 
 - **Firestore** — `users`, `users/{uid}/contacts`, `rooms/{roomId}/messages`, `highscores`
   koleksiyonları.
+- **Storage** — `rooms/{roomId}/media/{image|video|audio}/` altında sohbet medyası
+  (`src/services/mediaService.ts`). Erişim kontrolü `storage.rules`'ta (bkz. aşağıda).
 
 ## Auth akışı
 
@@ -79,17 +81,23 @@ kullanıcılar için leaderboard'un çalışmasını sağlayan tek amaç bu.
 
 ```ts
 {
-  text: string;
-  senderId: string;   // Firebase uid
+  type: 'text' | 'image' | 'video' | 'audio';
+  text: string;            // sadece type: 'text' için doldurulur
+  senderId: string;        // Firebase uid
   createdAt: Timestamp;
+  mediaUrl?: string;       // image/video/audio için Firebase Storage indirme URL'i
+  durationSeconds?: number; // sadece audio için, oynatıcı UI'ında gösterilir
 }
 ```
 
 - `roomId = getRoomId(uidA, uidB)` — iki uid sıralanıp `__` ile birleştiriliyor, hangi taraf
   başlatırsa başlatsın aynı id çıkıyor (`src/services/chatService.ts`).
 - Sorgu: `orderBy('createdAt', 'asc')`, `MESSAGE_LIMIT = 300`.
-- `subscribeToMessages(roomId, ...)` (`onSnapshot` canlı dinleyici) ve
-  `sendMessage(roomId, text, senderId)` (`addDoc` + `serverTimestamp()`).
+- `subscribeToMessages(roomId, ...)` (`onSnapshot` canlı dinleyici), `sendMessage(roomId, text,
+  senderId)` (metin, `type: 'text'`) ve `sendMediaMessage(roomId, senderId, type, mediaUrl,
+  durationSeconds?)` (fotoğraf/video/ses, `addDoc` + `serverTimestamp()`).
+- Medya dosyasının kendisi burada değil, Storage'da (`rooms/{roomId}/media/...`) tutulur; bu alanda
+  sadece indirme URL'i saklanır (bkz. aşağıda "Storage" bölümü).
 - **Eski model artık yok:** önceden tüm uygulama tek sabit `messages` koleksiyonunu paylaşıyordu
   (2 kişilik, odasız). O koleksiyondaki eski veriler Firestore'da duruyor olabilir ama hiçbir kod
   artık ona bakmıyor/yazmıyor — migrate edilmedi, orphan veri.
@@ -116,6 +124,63 @@ kullanıcılar için leaderboard'un çalışmasını sağlayan tek amaç bu.
 - Yorumda: gerçek bir API çağrısıyla 1:1 değiştirilmek üzere tasarlanmış bir prototip.
 - **Bu, Firebase Auth'tan tamamen ayrı bir sistem** — chat/kişi sistemi için kullanılan anonim
   Firebase kimliğiyle hiçbir ilişkisi yok, sadece "gizli özelliğin kapısı" olarak çalışıyor.
+
+## Fotoğraf ve sesli mesajlar — Storage YOK, doğrudan Firestore (base64)
+
+Fotoğraflar ve sesli mesajlar Firebase Storage'a hiç uğramıyor — bilinçli bir tercih: Storage,
+Firebase projesini Blaze (ücretli) plana geçirmeyi gerektiriyor, bu proje Spark (ücretsiz) planda
+kalmak istiyor.
+
+- **Fotoğraf:** `ChatRoomScreen.tsx`'teki `handlePickMedia`, `react-native-image-picker`'ın
+  `maxWidth: 1280, maxHeight: 1280, quality: 0.7, includeBase64: true` seçenekleriyle fotoğrafı
+  cihazda küçültüp sıkıştırıyor, `data:image/jpeg;base64,...` bir URI oluşturuyor.
+- **Sesli mesaj:** `ChatRoomScreen.tsx`'teki `handleStopRecording`, kaydedilen dosyayı
+  `mediaService.localFileToDataUri()` ile (`fetch` + `Blob` + `FileReader.readAsDataURL()`)
+  `data:audio/...;base64,...` bir URI'ye çeviriyor. (İlk halinde bu unutulup sesli mesajlar hâlâ
+  Storage'a gönderiliyordu, kullanıcı testinde fark edilip düzeltildi — bkz. [[Changelog]].)
+
+İkisi de bu URI'yi **doğrudan** `sendMediaMessage(roomId, myUid, type, dataUri, ...)` ile Firestore
+mesaj dokümanının `mediaUrl` alanına yazıyor. `MessageBubble.tsx`'teki `<Image>`/`AudioMessagePlayer`
+normal bir HTTPS URL'i ile bir data URI'yi ayrım yapmadan render ettiği için ekran tarafında ekstra
+bir kod gerekmedi. Firestore'un tek doküman limiti 1 MiB olduğundan `ChatRoomScreen.tsx`'te bir
+`MAX_INLINE_MEDIA_DATA_URI_LENGTH` (900.000 karakter, fotoğraf ve ses için ortak) güvenlik sınırı
+var; aşılırsa kullanıcıya hata gösterilip gönderim iptal edilir. Bu yaklaşımın firestore kurallarına
+bir etkisi yok — mesaj alanları zaten `isRoomMember(roomId)` kuralına tabi, içeriğin base64 olması
+ekstra bir kural gerektirmiyor.
+
+## Video mesajları — hâlâ Firebase Storage üzerinden
+
+Fotoğrafın aksine video dosyaları base64/Firestore için pratik değil (dosyalar çok büyük, 1 MiB
+limitini kolayca aşar). Video mesajları hâlâ eski yöntemle gidiyor: `src/services/mediaService.ts`
+→ `uploadRoomMedia(roomId, 'video', localUri, 'mp4')`, `rooms/{roomId}/media/video/` yoluna yükler,
+`getDownloadURL()` ile bir indirme URL'i döner, bu URL `mediaUrl` alanına yazılır. **Bu yüzden video
+mesajı göndermek isteyen biri hâlâ Firebase Storage'ın aktif olmasına (Blaze plan) ve
+`storage.rules`'ın deploy edilmiş olmasına ihtiyaç duyar** — fotoğraf bundan artık muaf. Erişim
+kontrolü `storage.rules`'ta: `firestore.rules`'daki `isRoomMember(roomId)` ile birebir aynı mantık
+(roomId'yi `__` ile ayırıp uid'lerden biriyle eşleştiriyor). Bu dosya da `firestore.rules` gibi
+sadece bir metin dosyası — Firebase Console'a elle deploy edilmedikçe hiçbir etkisi yok, bkz.
+[[05-Build-Deployment]].
+
+## Sesli/görüntülü arama (Stream Video)
+
+Firebase'den tamamen ayrı, üçüncü parti bir servis: [Stream Video](https://getstream.io/video/).
+`src/services/callService.ts`:
+- `getOrCreateStreamClient(uid, username)` — `StreamVideoClient.getOrCreateInstance()`, aynı uid
+  için tekrar çağrılırsa aynı client instance'ını döner (SDK'nın kendi cache'i).
+- Token üretimi backend olmadığı için **cihazda** yapılıyor: `generateStreamToken(uid)`, `crypto-js`
+  ile `STREAM_CONFIG.apiSecret` kullanarak elle bir HS256 JWT (`{user_id, iat}`) imzalıyor. Normalde
+  bu bir sunucu sorumluluğu — bkz. [[04-Security-Notes]] "Stream arama token'ları".
+- `startVoiceCall()`/`startVideoCall()` — `client.call('default', callId).getOrCreate({ ring: true,
+  data: { members: [...] } })`; `callId = [myUid, contact.uid].sort().join('-')` (chatService'in
+  `getRoomId()`'ine benzer ama Stream call id'lerinde `__` yerine `-` kullanılıyor, Stream'in kendi
+  id kısıtlarına göre).
+- Stream tarafında ayrı bir kullanıcı/erişim modeli var (Firebase Auth'tan bağımsız) — her cihaz,
+  Firebase uid'ini Stream'e de "user id" olarak veriyor, böylece iki sistem aynı kimliği paylaşıyor
+  ama birbirinden habersiz çalışıyor (chat/admin auth'un birbirinden bağımsız olmasına benzer bir
+  desen, bkz. [[02-Screens-and-Features]]).
+- **Elle yapılması gereken adım:** Stream Dashboard'da (https://dashboard.getstream.io) bir "Video &
+  Audio" app oluşturup API Key + Secret'ı `src/config/streamConfig.ts`'e girmek gerekiyor. Detay:
+  [[05-Build-Deployment]].
 
 ## Firestore Security Rules — repoda VAR ama Firebase'e elle deploy edilmeli
 

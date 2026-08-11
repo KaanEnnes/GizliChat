@@ -20,7 +20,7 @@ const getReactNativePersistence = (
   }
 ).getReactNativePersistence;
 
-const app = initializeApp(FIREBASE_CONFIG);
+export const app = initializeApp(FIREBASE_CONFIG);
 
 export const auth = initializeAuth(app, {
   persistence: getReactNativePersistence(AsyncStorage),

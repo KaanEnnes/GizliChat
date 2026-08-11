@@ -63,6 +63,36 @@ klasörlerini silip tekrar dene.
 Alternatif (USB bağlıyken tek komutla kurulum): `adb install -r app-release.apk` (SDK
 `platform-tools` klasöründeki `adb.exe` ile).
 
+## Stream Video (arama) kurulumu — ÖNEMLİ, elle yapılmalı
+
+Sesli/görüntülü arama, ayrı bir üçüncü parti hesap gerektirir (Firebase'in parçası değil):
+
+1. https://dashboard.getstream.io → hesap oluştur (ücretsiz, kredi kartı istemiyor) → yeni bir
+   **Video & Audio** app oluştur.
+2. App ayarlarından **API Key** ve **API Secret**'ı kopyala, `src/config/streamConfig.ts` içindeki
+   `STREAM_API_KEY_BURAYA` / `STREAM_API_SECRET_BURAYA` placeholder'larının yerine yapıştır.
+3. Bu adım atlanırsa arama butonları (`ChatRoomScreen`'deki 📞/🎥) sessizce başarısız olur (Stream'e
+   geçersiz bir key ile bağlanmaya çalışır, `callService.ts` içindeki `.catch()` sadece konsola
+   `console.warn` basar, kullanıcıya bir hata göstermez).
+4. Fiyatlandırma: her Stream hesabına aylık $100 ücretsiz kredi veriliyor — kişisel/arkadaş arası
+   kullanım için pratikte tükenmesi neredeyse imkansız (sadece sesli ~166.000 dk/ay, HD görüntülü
+   ~33.000 dk/ay karşılığı). Detay: [[03-Services-Backend]].
+
+## Firebase Storage kurallarını deploy etme — ÖNEMLİ, elle yapılmalı
+
+`storage.rules` (proje kökünde) fotoğraf/video/sesli mesaj erişimini kısıtlıyor, ama
+`firestore.rules` gibi **sadece bir metin dosyası** — elle deploy edilmedikçe etkisi yok:
+
+**A) Firebase Console üzerinden (en hızlı):**
+1. https://console.firebase.google.com → `kaanchatmercan` projesi → **Storage** → **Rules** sekmesi.
+2. `storage.rules` dosyasının içeriğini kopyala, konsoldaki editöre yapıştır, **Publish**.
+
+**B) Firebase CLI ile:** `firebase deploy --only storage` (aynı `firebase login`/`firebase init`
+kurulumu, bkz. aşağıdaki "Firestore kurallarını deploy etme" bölümü — `firebase init` sırasında
+Storage'ı da seçmek gerekir).
+
+Bu adım atlanırsa fotoğraf/video/sesli mesaj gönderme "permission denied" hatasıyla başarısız olur.
+
 ## Native bağımlılık eklendiğinde (örn. react-native-sound)
 
 `react-native-sound` gibi native modüller eklendiğinde/güncellendiğinde **sadece JS değişir, native

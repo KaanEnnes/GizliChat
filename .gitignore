@@ -81,3 +81,7 @@ yarn-error.log
 !.yarn/releases
 !.yarn/sdks
 !.yarn/versions
+
+# Obsidian's own local app state (open tabs/layout) — not project content
+ObsidianVault/.obsidian/
+ObsidianVault/*.canvas

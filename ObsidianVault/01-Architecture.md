@@ -22,21 +22,27 @@ Bağlam için önce [[00-START-HERE]] dosyasına bak.
 ### src/components
 - `src/components/MessageBubble.tsx` — Tek bir sohbet mesajı satırı. Gönderen kullanıcı ise (`isMine`)
   sağa yaslı/mavi, karşı taraf ise sola yaslı/gri stil. `message.createdAt`'ten `HH:MM` saat damgası
-  render eder.
+  render eder. `message.type`'a göre dallanır: `text` → düz metin, `image`/`video` → küçük önizleme
+  (tam ekran görüntüleyici modal'ı açar, dokununca), `audio` → `AudioMessagePlayer`.
+- `src/components/AudioMessagePlayer.tsx` — Tek bir sesli mesaj balonu için oynat/duraklat kontrolü,
+  `react-native-nitro-sound`'ın (singleton export, `Sound`) oynatma API'sini kullanır.
+- `src/components/CallProvider.tsx` — Hesap girişi yapılmış ekranları (`CONTACTS`, `CHAT_ROOM`)
+  sarmalayan `StreamVideo` provider'ı. İçindeki `IncomingCallWatcher`, `useCalls()` ile her
+  `ringing` çağrıyı (hem gelen hem bu cihazın başlattığı) yakalayıp tam ekran `CallScreen` açar.
 
 ### src/config
 - `src/config/firebaseConfig.ts` — Sabit kodlanmış Firebase Web SDK config objesi
   (`projectId: 'kaanchatmercan'` vb.). Yorum: bu değerler tek başına "gizli" değil, gerçek erişim
   kontrolü Firestore Security Rules ile sağlanmalı (bu repoda Security Rules dosyası yok).
-- `src/config/adminConfig.ts` — Sabit kodlanmış mock admin bilgileri (`admin` / `admin123`) ve
-  `MOCK_AUTH_DELAY_MS` (600ms, sahte ağ gecikmesi). Yorumda açıkça "prototip, gerçek backend ile
-  değiştirilecek" yazıyor.
+- `src/config/streamConfig.ts` — Stream Video (arama) API key/secret. Placeholder değerlerle gelir,
+  Stream Dashboard'da bir app oluşturulup elle doldurulmalı (bkz. [[05-Build-Deployment]]).
+  "Client-side düz metin secret" deseni — bkz. [[04-Security-Notes]].
 
 ### src/navigation
 - `src/navigation/AppNavigator.tsx` — Uygulamanın tüm "navigasyon" katmanı. Kütüphane yok; elle
-  yazılmış `useState<'HOME'|'ADMIN_LOGIN'|'CONTACTS'|'CHAT_ROOM'>` ile ekran anahtarlama. Aktif oda
+  yazılmış `useState<'HOME'|'ACCOUNT'|'CONTACTS'|'CHAT_ROOM'>` ile ekran anahtarlama. Aktif oda
   (`{ myUid, contact }`) `activeRoom` state'inde tutulur, `ContactsScreen`'den bir kişiye dokununca
-  doldurulur. Android donanım geri tuşu (`BackHandler`): `ADMIN_LOGIN`/`CONTACTS` → `HOME`,
+  doldurulur. Android donanım geri tuşu (`BackHandler`): `ACCOUNT`/`CONTACTS` → `HOME`,
   `CHAT_ROOM` → `CONTACTS`.
 
 ### src/screens
@@ -48,11 +54,8 @@ Bağlam için önce [[00-START-HERE]] dosyasına bak.
   isim sorar (`playerNameStorage`'a kaydeder), sonra `leaderboardService.submitScore()` ile skoru
   gönderir; "🏆 Skor Tablosu" butonu `fetchTopScores()` ile top 20'yi bir modalda listeler. Ekranın
   köşesindeki `⚙` dişli ikonuna 3.5 saniye içinde 10 kez dokununca `onAdminTriggerReached()` çağrılır
-  — uygulamanın admin/gizli giriş tetikleyicisi burada gizli.
-- `src/screens/AdminLoginScreen.tsx` — Kullanıcı adı/şifre formu, `authService.ts`'deki `loginAdmin`'i
-  çağırır; başarılıysa `onLoginSuccess()` (→ `ACCOUNT`), iptal ile `onCancel()` (→ home). Yükleniyor
-  spinner'ı ve satır içi hata mesajı gösterir. **Bu hâlâ mock/decoy bir katman** — gerçek hesap
-  sistemi bir sonraki ekranda.
+  — bu, uygulamanın gizli giriş tetikleyicisi, doğrudan `AccountScreen`'e geçirir (eskiden burada
+  bir sahte/mock admin şifre ekranı vardı, tamamen kaldırıldı — bkz. [[Changelog]]).
 - `src/screens/AccountScreen.tsx` — Gerçek Firebase Auth (email/şifre) tabanlı giriş/kayıt ekranı.
   Mount olunca `getRestoredAccountUser()` ile cihazda zaten kalıcı gerçek bir oturum olup olmadığı
   sessizce kontrol edilir; varsa form hiç gösterilmeden doğrudan `onAuthenticated()` çağrılır. Yoksa
@@ -70,7 +73,13 @@ Bağlam için önce [[00-START-HERE]] dosyasına bak.
   hâli). `getRoomId(myUid, contact.uid)` ile deterministik bir oda id'si hesaplar,
   `subscribeToMessages(roomId, ...)` ile o odaya özel mesajları dinler, `FlatList` + `MessageBubble`
   ile render eder, gönderim `sendMessage(roomId, text, myUid)` ile. Geri oku ile `onBack()` çağrılır
-  (`CONTACTS`'a döner).
+  (`CONTACTS`'a döner). Header'da 📞/🎥 butonları `callService.startVoiceCall()`/`startVideoCall()`'ı
+  tetikler. 📎 ataç butonu galeri/kamera'dan fotoğraf/video seçtirir (`react-native-image-picker`),
+  🎤 butonu basılı tutulduğu sürece ses kaydeder (`react-native-audio-recorder-player`); her ikisi de
+  `mediaService.uploadRoomMedia()` ile Storage'a yüklenip `sendMediaMessage()` ile gönderilir.
+- `src/screens/CallScreen.tsx` — Bir `Call` nesnesini `StreamCall` ile sarar, `CallingState`'e göre
+  `RingingCallContent` (çalıyor/arıyor ekranı) ile `CallContent` (aktif görüşme: kamera/mikrofon
+  kontrolleri) arasında geçiş yapar.
 
 ### src/services
 - `src/services/firebase.ts` — Firebase başlatma modülü. `initializeApp(FIREBASE_CONFIG)`,
@@ -118,24 +127,47 @@ Bağlam için önce [[00-START-HERE]] dosyasına bak.
   `android/app/src/main/res/raw/`'dan yükler; `playPlaceSound()`/`playClearSound()`/`playGameOverSound()`
   export eder. Şu an sadece Android'de etkin (`Platform.OS === 'android'` kontrolü) — iOS için ses
   dosyaları Xcode projesine eklenmedi.
-- `src/services/authService.ts` — Mock admin login servisi (Firebase Auth değil).
-  `loginAdmin(username, password)` `MOCK_AUTH_DELAY_MS` bekler, `adminConfig.ts`'deki sabit
-  bilgilerle karşılaştırır, `{ success, errorMessage? }` döner. Chat için kullanılan Firebase anonim
-  auth'tan tamamen bağımsız — uygulamada birbirinden habersiz iki ayrı "auth" sistemi var.
+- `src/services/mediaService.ts` — `uploadRoomMedia(roomId, kind, localUri, extension)`: bir
+  `file://` uri'sini Firebase Storage'a `rooms/{roomId}/media/{kind}/` altına yükler, indirme
+  URL'ini döner. Sadece video mesajları için kullanılıyor — fotoğraflar artık Storage'a hiç
+  uğramıyor, bkz. [[03-Services-Backend]]. Erişim kontrolü `storage.rules`'ta (aynı oda-üyeliği
+  modeli).
+- `src/services/callService.ts` — Stream Video entegrasyonu: `getOrCreateStreamClient(uid,
+  username)` (aynı uid için her çağrıda aynı client instance'ını döner), `startVoiceCall()`/
+  `startVideoCall()` (`client.call('default', callId).getOrCreate({ ring: true, ... })`, `callId`
+  iki uid'in sıralanıp `-` ile birleşmesi — `chatService.getRoomId()`'e benzer ama farklı ayraç).
+  Token üretimi (`generateStreamToken`) `crypto-js` ile cihazda HS256 JWT imzalıyor — bkz.
+  [[04-Security-Notes]] "Stream arama token'ları".
 
 ## Bağımlılıklar (package.json)
 
 **dependencies:**
-- `firebase` (^12.17.1) — sadece Auth (anonim) ve Firestore (`messages` koleksiyonu) kullanılıyor.
-  Storage/Functions/Analytics/Remote Config/Crashlytics kullanılmıyor.
+- `firebase` (^12.17.1) — Auth (anonim + email/şifre), Firestore, ve artık **Storage**
+  (`mediaService.ts`) kullanılıyor. Functions/Analytics/Remote Config/Crashlytics kullanılmıyor.
 - `@react-native-async-storage/async-storage` (^3.1.1) — sadece Firebase Auth persistence için
   kullanılıyor, başka hiçbir yerde local cache/storage yok.
 - `react-native-safe-area-context` (^5.5.2) — `SafeAreaProvider`/`useSafeAreaInsets`,
   `App.tsx`/`HomeScreen.tsx`/`ContactsScreen.tsx`/`ChatRoomScreen.tsx`'te.
-- `react-native-sound` — native ses çalma modülü, `src/services/soundService.ts`'te kullanılıyor.
-  Native bir modül olduğu için eklendiğinde/güncellendiğinde APK'nın yeniden derlenmesi (sadece JS
-  bundle değil) gerekiyor. Jest'te native tarafı olmadığı için `__mocks__/react-native-sound.js`
-  manuel mock'u var (bkz. [[05-Build-Deployment]]).
+- `react-native-sound` — native ses çalma modülü, `src/services/soundService.ts`'te kullanılıyor
+  (oyunun ses efektleri, sohbetin sesli mesajlarından ayrı).
+- `react-native-image-picker` — galeri/kameradan fotoğraf/video seçme (`ChatRoomScreen`'in 📎
+  butonu). Fotoğraflar `maxWidth`/`maxHeight`/`quality`/`includeBase64` seçenekleriyle cihazda
+  küçültülüp base64 olarak alınıyor (bkz. [[03-Services-Backend]] "Fotoğraf mesajları").
+- `react-native-video` — sohbetteki video mesajlarını oynatma (`MessageBubble`).
+- `react-native-nitro-sound` (+ zorunlu peer `react-native-nitro-modules@0.36.5`, **sabitlenmiş
+  sürüm** — başka bir sürüm ABI uyumsuzluğuna yol açabilir) — sesli mesaj kaydı + oynatma. Eski
+  `react-native-audio-recorder-player`'ın resmi halefi; o paketin **hiçbir sürümü** RN 0.86.2 ile
+  derlenmiyordu (4.x Nitro ABI hatası, 3.x kaldırılmış RN API'lerine referans) — detay:
+  [[Changelog]]. API'si sınıf değil, doğrudan bir singleton export ediyor (`import Sound from
+  'react-native-nitro-sound'`, `new` ile çağrılmaz).
+- `crypto-js` — sadece Stream arama token'ları için HMAC-SHA256 imzalama (`callService.ts`). Saf JS,
+  native modül değil.
+- `@stream-io/video-react-native-sdk`, `@stream-io/react-native-webrtc`, `react-native-svg`,
+  `@react-native-community/netinfo` — sesli/görüntülü arama (Stream Video SDK ve zorunlu peer
+  bağımlılıkları). Native WebRTC modülü içerir, APK rebuild'i gerektirir.
+- Native modül içeren tüm yukarıdaki paketler için (`react-native-sound`, `-image-picker`,
+  `-nitro-sound`, `-video`, `@stream-io/video-react-native-sdk`) Jest'te native taraf olmadığından
+  `__mocks__/` altında manuel mock'lar var (bkz. [[05-Build-Deployment]]).
 - `react` 19.2.3, `react-native` 0.86.2, `@react-native/new-app-screen` — RN CLI boilerplate,
   `App.tsx` tamamen değiştirildiği için kullanılmıyor.
 

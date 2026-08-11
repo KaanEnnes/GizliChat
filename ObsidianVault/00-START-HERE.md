@@ -30,13 +30,16 @@ değiştirilmemiş), "GizliChat" sadece klasör adı ve üst seviye yorum/başl�
 - **Ana özellik (görünen yüz):** "BLOK ÇILGINLIĞI" adlı bir 8x8 blok yerleştirme oyunu (Block Blast
   tarzı). Artık ses efektleri var (parça yerleşimi, satır temizleme, oyun bitişi) ve kaybedince
   isim bir kere sorulup Firebase üzerinden herkese açık bir skor tablosuna gönderiliyor.
-- **Gizli özellik:** Oyun ekranındaki dişli ikonuna 3.5 saniye içinde 10 kez dokununca gizli admin
-  girişi açılır → mock şifre ile giriş → bir **kişi (contact) listesi** ekranı. Her kullanıcının
-  paylaşılabilir 6 haneli bir kodu var; başkasının kodunu girerek onu kişi olarak ekleyip, o kişiyle
-  ayrı, özel, 1-1 gerçek zamanlı bir Firestore sohbet odasına giriliyor (WhatsApp'a benzer temel bir
-  kişi/oda modeli — henüz medya/fotoğraf/video/görüntülü konuşma yok, bunlar planlanan sonraki
-  aşamalar, bkz. [[Changelog]]).
-- **Backend:** Firebase (proje adı `kaanchatmercan`) — Auth (anonim) ve Firestore kullanılıyor.
+- **Gizli özellik:** Oyun ekranındaki dişli ikonuna 3.5 saniye içinde 10 kez dokununca doğrudan
+  gerçek "Giriş Yap / Kayıt Ol" ekranı (kullanıcı adı/şifre, Firebase Auth) açılır — eskiden burada
+  bir sahte/mock admin şifre katmanı vardı, tamamen kaldırıldı (bkz. [[Changelog]]). Giriş sonrası
+  bir **kişi (contact) listesi** ekranına geçilir. Kullanıcı adıyla birini bulup kişi olarak ekleyip,
+  o kişiyle ayrı, özel, 1-1 gerçek zamanlı bir Firestore sohbet odasına giriliyor (WhatsApp'a benzer
+  bir kişi/oda modeli). Artık metnin yanında **fotoğraf** (Firestore/base64, Storage'sız), **video/
+  sesli mesaj** (Firebase Storage) gönderilebiliyor ve **sesli/görüntülü arama** yapılabiliyor
+  (Stream Video, ayrı bir üçüncü parti hesap gerektirir).
+- **Backend:** Firebase (proje adı `kaanchatmercan`) — Auth (anonim + email/şifre), Firestore ve
+  Storage kullanılıyor. Arama için ayrıca Stream Video (Firebase'in parçası değil, ayrı bir hesap).
 - **Şifreleme yok:** "Gizli" olan şey mesaj içeriği değil, sohbete erişimin UI içinde saklanmış olması
   (security-through-obscurity). Detaylar için [[04-Security-Notes]].
 
