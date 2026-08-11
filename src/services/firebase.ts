@@ -1,0 +1,74 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { initializeApp } from 'firebase/app';
+// Imported from the scoped @firebase/auth package (not the "firebase" convenience
+// wrapper): only @firebase/auth's package.json declares a "react-native" export
+// condition, which is what makes Metro resolve a build with persistent
+// (AsyncStorage-backed) auth sessions instead of the browser/node build.
+import * as FirebaseAuth from '@firebase/auth';
+import { initializeAuth, onAuthStateChanged, Persistence, signInAnonymously, User } from '@firebase/auth';
+import { initializeFirestore } from 'firebase/firestore';
+import { FIREBASE_CONFIG } from '../config/firebaseConfig';
+
+// getReactNativePersistence is exported by @firebase/auth's "react-native"
+// build at runtime, but its .d.ts isn't picked up by TypeScript's package
+// exports resolution here (the package's top-level "types" entry — which
+// TS matches before any conditional branch — points at the default/browser
+// declarations, which omit it). This cast bridges that types-only gap.
+const getReactNativePersistence = (
+  FirebaseAuth as unknown as {
+    getReactNativePersistence: (storage: typeof AsyncStorage) => Persistence;
+  }
+).getReactNativePersistence;
+
+const app = initializeApp(FIREBASE_CONFIG);
+
+export const auth = initializeAuth(app, {
+  persistence: getReactNativePersistence(AsyncStorage),
+});
+
+// Long polling avoids gRPC streaming issues some Android network stacks have
+// with Firestore's default WebChannel transport.
+export const db = initializeFirestore(app, {
+  experimentalForceLongPolling: true,
+});
+
+let authReadyPromise: Promise<User> | null = null;
+
+/**
+ * Ensures the device has an anonymous Firebase identity, signing in if
+ * needed, and resolves once a user is available. The resulting uid is used
+ * only to tell "my messages" apart from "the other person's" in the shared
+ * chat — no profile or account system is built on top of it.
+ */
+export function ensureAnonymousAuth(): Promise<User> {
+  if (auth.currentUser) {
+    return Promise.resolve(auth.currentUser);
+  }
+
+  if (!authReadyPromise) {
+    authReadyPromise = new Promise<User>((resolve, reject) => {
+      const unsubscribe = onAuthStateChanged(
+        auth,
+        user => {
+          if (user) {
+            unsubscribe();
+            resolve(user);
+          }
+        },
+        error => {
+          unsubscribe();
+          authReadyPromise = null;
+          reject(error);
+        },
+      );
+
+      signInAnonymously(auth).catch(error => {
+        unsubscribe();
+        authReadyPromise = null;
+        reject(error);
+      });
+    });
+  }
+
+  return authReadyPromise;
+}

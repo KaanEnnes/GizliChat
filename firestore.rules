@@ -1,0 +1,61 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // roomId is `${uidA}__${uidB}` with uidA/uidB sorted (see getRoomId() in
+    // src/services/chatService.ts) — a user may only touch a room's messages
+    // if their own uid is one of the two halves of that id.
+    function isRoomMember(roomId) {
+      let parts = roomId.split('__');
+      return isSignedIn() && parts.size() == 2 &&
+        (request.auth.uid == parts[0] || request.auth.uid == parts[1]);
+    }
+
+    match /users/{userId} {
+      // Contact-adding looks users up by their shareable code
+      // (findUserByCode in src/services/userService.ts), which needs read
+      // access beyond just your own profile. Anyone signed in (including
+      // anonymous) can therefore read any profile's name/code — this is a
+      // known trade-off, not a bug: see ObsidianVault/04-Security-Notes.md.
+      allow read: if isSignedIn();
+      // Only the profile's own owner may create/update it.
+      allow create, update: if isSignedIn() && request.auth.uid == userId;
+      allow delete: if false;
+
+      match /contacts/{contactId} {
+        // A contact list is fully private to its owner.
+        allow read, write: if isSignedIn() && request.auth.uid == userId;
+      }
+    }
+
+    match /rooms/{roomId}/messages/{messageId} {
+      allow read: if isRoomMember(roomId);
+      allow create: if isRoomMember(roomId) &&
+        request.resource.data.senderId == request.auth.uid;
+      // Messages are append-only: no editing or deleting after the fact.
+      allow update, delete: if false;
+    }
+
+    match /highscores/{scoreId} {
+      // Leaderboard is intentionally public read; anyone signed in can add
+      // one entry, but never edit/delete existing ones (including their
+      // own). Note: nothing here verifies the score was actually earned in
+      // a real game — a client can submit any number it wants. That's an
+      // inherent limitation of a client-authoritative game with no backend,
+      // not something these rules can close.
+      allow read: if true;
+      allow create: if isSignedIn() &&
+        request.resource.data.keys().hasAll(['name', 'score', 'createdAt']) &&
+        request.resource.data.name is string &&
+        request.resource.data.name.size() > 0 &&
+        request.resource.data.name.size() <= 24 &&
+        request.resource.data.score is number &&
+        request.resource.data.score >= 0;
+      allow update, delete: if false;
+    }
+  }
+}
