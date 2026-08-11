@@ -80,6 +80,21 @@ tarafı da değişir** — bir önceki APK'nın üstüne "JS bundle güncellemes
    adım olmalı (bkz. yukarıdaki "Karşılaşılan sorun" notu).
 5. `gradlew assembleRelease --no-daemon` ile yeniden derle.
 
+## Firebase Console'da Email/Password girişini etkinleştirme — ÖNEMLİ, elle yapılmalı
+
+Kullanıcı adı/şifre hesap sistemi (`src/services/userService.ts`), arka planda Firebase Auth'un
+**Email/Password** sağlayıcısını kullanıyor. Bu sağlayıcı Firebase Console'da elle açılmadıysa,
+kayıt/giriş denemeleri `auth/operation-not-allowed` gibi bir hatayla başarısız olur.
+
+1. https://console.firebase.google.com → `kaanchatmercan` projesi → **Authentication** →
+   **Sign-in method** sekmesi.
+2. Sağlayıcılar listesinde **Email/Password**'ü bul, **Enable** ile aç, kaydet.
+3. (Anonim giriş — leaderboard için kullanılıyor — muhtemelen zaten açıktı, chat sisteminin ilk
+   hâli ona dayanıyordu; değilse onu da aç.)
+
+Bu adım atlanırsa: Firestore kuralları doğru deploy edilmiş olsa bile, `AccountScreen`'deki
+giriş/kayıt formu çalışmaz.
+
 ## Firestore kurallarını deploy etme
 
 `firestore.rules` (proje kökünde) yazılı ama Firebase'e **elle gönderilmesi gerekiyor** — bu repoda

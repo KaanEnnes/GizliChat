@@ -2,24 +2,22 @@ import React, { useEffect, useState } from 'react';
 import { BackHandler } from 'react-native';
 import HomeScreen from '../screens/HomeScreen';
 import AdminLoginScreen from '../screens/AdminLoginScreen';
+import AccountScreen from '../screens/AccountScreen';
 import ContactsScreen from '../screens/ContactsScreen';
 import ChatRoomScreen from '../screens/ChatRoomScreen';
 import { Contact } from '../services/contactService';
+import { Account, logoutAccount } from '../services/userService';
 
-type Screen = 'HOME' | 'ADMIN_LOGIN' | 'CONTACTS' | 'CHAT_ROOM';
-
-interface ActiveRoom {
-  myUid: string;
-  contact: Contact;
-}
+type Screen = 'HOME' | 'ADMIN_LOGIN' | 'ACCOUNT' | 'CONTACTS' | 'CHAT_ROOM';
 
 function AppNavigator(): React.JSX.Element {
   const [screen, setScreen] = useState<Screen>('HOME');
-  const [activeRoom, setActiveRoom] = useState<ActiveRoom | null>(null);
+  const [account, setAccount] = useState<Account | null>(null);
+  const [activeContact, setActiveContact] = useState<Contact | null>(null);
 
   useEffect(() => {
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
-      if (screen === 'ADMIN_LOGIN' || screen === 'CONTACTS') {
+      if (screen === 'ADMIN_LOGIN' || screen === 'ACCOUNT' || screen === 'CONTACTS') {
         setScreen('HOME');
         return true;
       }
@@ -37,29 +35,47 @@ function AppNavigator(): React.JSX.Element {
   if (screen === 'ADMIN_LOGIN') {
     return (
       <AdminLoginScreen
-        onLoginSuccess={() => setScreen('CONTACTS')}
+        onLoginSuccess={() => setScreen('ACCOUNT')}
         onCancel={() => setScreen('HOME')}
       />
     );
   }
 
-  if (screen === 'CONTACTS') {
+  if (screen === 'ACCOUNT') {
     return (
-      <ContactsScreen
-        onOpenRoom={(myUid, contact) => {
-          setActiveRoom({ myUid, contact });
-          setScreen('CHAT_ROOM');
+      <AccountScreen
+        onAuthenticated={loggedInAccount => {
+          setAccount(loggedInAccount);
+          setScreen('CONTACTS');
         }}
-        onLogout={() => setScreen('HOME')}
+        onCancel={() => setScreen('HOME')}
       />
     );
   }
 
-  if (screen === 'CHAT_ROOM' && activeRoom) {
+  if (screen === 'CONTACTS' && account) {
+    return (
+      <ContactsScreen
+        account={account}
+        onOpenRoom={contact => {
+          setActiveContact(contact);
+          setScreen('CHAT_ROOM');
+        }}
+        onLogout={() => {
+          logoutAccount().finally(() => {
+            setAccount(null);
+            setScreen('HOME');
+          });
+        }}
+      />
+    );
+  }
+
+  if (screen === 'CHAT_ROOM' && account && activeContact) {
     return (
       <ChatRoomScreen
-        myUid={activeRoom.myUid}
-        contact={activeRoom.contact}
+        myUid={account.uid}
+        contact={activeContact}
         onBack={() => setScreen('CONTACTS')}
       />
     );

@@ -27,16 +27,25 @@ security-through-obscurity yaklaşımı:
   tarafından okunabilir/yazılabilir olabilir.
 - Mesajlarda uçtan uca şifreleme yok; Firestore verisine erişimi olan biri (konsol üzerinden veya
   kuralları zayıfsa istemciden) tüm sohbet geçmişini düz metin görebilir.
-- **Kişi kodu (`users/{uid}.code`) kaba kuvvetle denenebilir.** Kod sadece 6 karakter ve
-  `findUserByCode()` sorgusunda hız sınırlama (rate limiting) yok — Firestore kuralları izin
-  veriyorsa biri art arda rastgele kod deneyerek gerçek kullanıcıları bulup kendi kişi listesine
-  ekleyebilir (bu, karşı tarafın senin kişi listende olmasını sağlamaz ama senin adını/varlığını
-  öğrenmesini sağlar). Kod alanına Firestore tarafında bir index/sorgu limiti veya kural bazlı
-  yavaşlatma eklenmesi düşünülebilir.
-- `users` koleksiyonuna herkes `where('code','==',...)` ile sorgu atabildiği için (kurallar izin
-  veriyorsa), teorik olarak koleksiyon tamamen taranıp tüm kullanıcı isim+kodları toplu
-  çıkarılabilir (enumeration). Firestore kuralları bunu sadece "giriş yapmış olma" şartına
-  bağlıyorsa yeterli değildir; ideal olarak sorgu sadece tek bir `code` eşleşmesine izin vermeli.
+- **Kullanıcı adları tahmin edilebilir/numaralandırılabilir.** `findUserByUsername()` sorgusunda hız
+  sınırlama (rate limiting) yok — Firestore kuralları izin verdiği sürece biri art arda yaygın
+  kullanıcı adları deneyerek gerçek hesapların var olup olmadığını öğrenebilir (bu, karşı tarafın
+  senin kişi listende olmasını sağlamaz ama hesabının varlığını doğrulamasını sağlar). Eski rastgele
+  6 haneli kod sistemine göre bu daha kolay tahmin edilebilir bir yüzey — kullanıcı adı seçimi
+  kullanıcıya bırakıldığı için "ahmet", "test" gibi yaygın adlar denenebilir.
+- `users` koleksiyonuna herkes `where('usernameLower','==',...)` ile sorgu atabildiği için (kurallar
+  izin veriyorsa), teorik olarak koleksiyon tamamen taranıp tüm kullanıcı adları toplu çıkarılabilir
+  (enumeration). Firestore kuralları bunu sadece "giriş yapmış olma" şartına bağlıyorsa yeterli
+  değildir; ideal olarak sorgu sadece tek bir `usernameLower` eşleşmesine izin vermeli.
+- **Şifre kurtarma mekanizması yok.** Kullanıcı adı, Firebase Auth'a sahte bir e-posta
+  (`kullaniciadi@gizlichat.local`) olarak veriliyor — bu adrese gerçekten e-posta gönderilemez.
+  Firebase'in "şifremi unuttum" (`sendPasswordResetEmail`) akışı bu yüzden **kullanılamaz**: şifresini
+  unutan bir kullanıcı o hesaba bir daha asla giremez, verisi (kişi listesi, sohbetleri) fiilen
+  erişilemez hâle gelir. Bu, tasarım gereği kabul edilen bir sınırlama (gerçek e-posta/telefon
+  toplamamak için) ama kullanıcıya net şekilde iletilmesi gereken bir risk.
+- Şifreler client tarafında herhangi bir ek işleme tabi tutulmadan doğrudan Firebase Auth'a
+  gönderiliyor (Firebase SDK'sı bunları kendi tarafında hashliyor/saklıyor, uygulama kodu şifreyi
+  hiçbir yerde düz metin olarak saklamıyor) — bu kısım standart ve güvenli.
 
 ## Bu notların amacı
 

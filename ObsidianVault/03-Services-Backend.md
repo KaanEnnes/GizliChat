@@ -7,39 +7,60 @@ Bağlam için önce [[00-START-HERE]] dosyasına bak.
 Google Firebase projesi `kaanchatmercan` (config: `src/config/firebaseConfig.ts`). İki Firebase
 servisi kullanılıyor, hiçbir custom backend/API sunucusu yok:
 
-- **Auth** — sadece anonim giriş (`signInAnonymously`). Email/şifre, Google, telefon auth yok.
+- **Auth** — **iki farklı kullanım şekli aynı anda var:**
+  1. Anonim giriş (`signInAnonymously`) — sadece skor tablosuna (`highscores`) yazma izni için,
+     `leaderboardService.submitScore()` içinde otomatik tetikleniyor.
+  2. Email/şifre giriş (`createUserWithEmailAndPassword`/`signInWithEmailAndPassword`) — kişi/sohbet
+     sisteminin gerçek kimliği. Kullanıcı asla gerçek bir e-posta görmüyor: girdiği "kullanıcı adı"
+     dahili olarak `kullaniciadi@gizlichat.local` sahte adresine çevrilip Firebase'e email/şifre
+     hesabı gibi veriliyor (`src/services/userService.ts`).
+
+  **⚠️ Firebase Console'da Authentication → Sign-in method altında "Email/Password" sağlayıcısının
+  etkinleştirilmesi gerekiyor** — bu repodan yapılamaz, elle bir adım (bkz. [[05-Build-Deployment]]).
+  Anonim giriş muhtemelen daha önceden zaten etkindi (chat sistemi ilk hâliyle ona dayanıyordu).
+
 - **Firestore** — `users`, `users/{uid}/contacts`, `rooms/{roomId}/messages`, `highscores`
   koleksiyonları.
 
 ## Auth akışı
 
-`src/services/firebase.ts` → `ensureAnonymousAuth()`:
-1. `initializeAuth` ile AsyncStorage destekli kalıcı oturum kurulur
-   (`getReactNativePersistence(AsyncStorage)` — tip cast gerekiyor çünkü RN export condition
-   altında TS tipleri açık değil).
-2. Zaten giriş yapılmamışsa `signInAnonymously` çağrılır.
-3. Dönen `uid` artık iki amaçla kullanılıyor: (a) mesaj gönderirken `senderId` / `isMine` hizalama,
-   (b) `users/{uid}` altındaki kalıcı kişi/kod profilinin anahtarı. Uygulama yeniden kurulmadığı
-   sürece aynı uid, aynı profil ve aynı kod korunur.
+**Skor gönderme (anonim, hafif):** `leaderboardService.submitScore()` içinde
+`ensureAnonymousAuth()` çağrılır — zaten herhangi bir oturum (anonim veya gerçek hesap) varsa hiçbir
+şey yapmaz, yoksa sessizce anonim giriş yapar. Oyunu oynayan ama gizli sohbete hiç girmeyen
+kullanıcılar için leaderboard'un çalışmasını sağlayan tek amaç bu.
+
+**Hesap girişi (gerçek, kalıcı — kişi/sohbet sistemi):** `src/screens/AccountScreen.tsx` →
+`src/services/userService.ts`:
+1. `registerAccount(username, password)` — `usernameToEmail()` ile sahte e-postaya çevrilip
+   `createUserWithEmailAndPassword` çağrılır, sonra `users/{uid}`'e `{ username, usernameLower,
+   createdAt }` yazılır.
+2. `loginAccount(username, password)` — aynı sahte e-posta ile `signInWithEmailAndPassword`,
+   sonra `users/{uid}`'den kayıtlı `username` okunur.
+3. Bu oturum da `initializeAuth`'un AsyncStorage kalıcılığı sayesinde uygulama kapatılıp
+   açıldığında korunur — ama artık **hesap kimliği kullanıcı adı+şifreye bağlı, cihaza değil**:
+   aynı bilgilerle başka bir telefonda giriş yapan biri aynı `uid`'e, dolayısıyla aynı kişi
+   listesine ve sohbetlere ulaşır.
+4. `logoutAccount()` (`ContactsScreen`'deki "Çıkış") gerçekten `signOut(auth)` çağırır — bir
+   sonraki gizli girişte tekrar kullanıcı adı/şifre istenir.
 
 ## Firestore veri modeli
 
-### `users/{uid}` — kullanıcı profili (kişi sistemi)
+### `users/{uid}` — kullanıcı hesabı profili (kişi sistemi)
 
 ```ts
 {
-  name: string;      // varsayılan "Kullanıcı", updateMyName() ile değiştirilebilir (henüz UI'da yok)
-  code: string;      // 6 haneli, paylaşılabilir, benzersiz olması beklenen kod
+  username: string;       // orijinal büyük/küçük harfle, ekranda gösterilen
+  usernameLower: string;  // küçük harfli, findUserByUsername() sorgusunun eşleştirdiği alan
   createdAt: number;
 }
 ```
 
-- `ensureUserProfile(uid, defaultName)` (`src/services/userService.ts`) — yoksa oluşturur, varsa
-  getirir.
-- `findUserByCode(code)` — `where('code', '==', code)` sorgusu, kişi eklerken kullanılıyor.
-- Kodlar rastgele üretiliyor, **benzersizlik garantisi Firestore/kod seviyesinde yok** — çok düşük
-  ama sıfır olmayan bir çakışma ihtimali var (6 karakter, 33 karakterlik alfabe → ~1.3 milyar
-  kombinasyon, küçük kullanıcı sayısında pratik risk yok).
+- Doküman `registerAccount()` sırasında bir kere yazılıyor, sonrasında değiştirilmiyor (isim
+  değiştirme UI'ı yok).
+- `findUserByUsername(username)` — `where('usernameLower', '==', ...)` sorgusu, kişi eklerken
+  kullanılıyor. Kullanıcı adının **benzersizliği Firebase Auth tarafından garanti ediliyor** (aynı
+  sahte e-posta ile ikinci kayıt `auth/email-already-in-use` hatası alır) — eski rastgele kod
+  sisteminin aksine çakışma ihtimali yok.
 
 ### `users/{uid}/contacts/{contactUid}` — kişi listesi
 
@@ -105,8 +126,8 @@ edilmedikçe hiçbir etkisi olmaz**, kod bu dosyayı otomatik olarak Firebase'e 
 kurallarını deploy etme" bölümüne bak.
 
 Kuralların özeti:
-- `users/{uid}`: Herkes (giriş yapmış = anonim dahil) okuyabilir — çünkü kişi eklerken kod ile arama
-  (`findUserByCode`) buna ihtiyaç duyuyor. Sadece profilin sahibi kendi profilini
+- `users/{uid}`: Herkes (giriş yapmış = anonim dahil) okuyabilir — çünkü kişi eklerken kullanıcı
+  adıyla arama (`findUserByUsername`) buna ihtiyaç duyuyor. Sadece profilin sahibi kendi profilini
   oluşturabilir/güncelleyebilir.
 - `users/{uid}/contacts/**`: Tamamen özel, sadece sahibi okuyabilir/yazabilir.
 - `rooms/{roomId}/messages/**`: Sadece `roomId`'nin içindeki iki uid'den biri olan kullanıcı

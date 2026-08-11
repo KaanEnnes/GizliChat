@@ -11,115 +11,81 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { addContact, Contact, subscribeToContacts } from '../services/contactService';
-import { ensureAnonymousAuth } from '../services/firebase';
-import { ensureUserProfile, findUserByCode, UserProfile } from '../services/userService';
+import { Account, findUserByUsername } from '../services/userService';
 
 interface Props {
-  onOpenRoom: (myUid: string, contact: Contact) => void;
+  account: Account;
+  onOpenRoom: (contact: Contact) => void;
   onLogout: () => void;
 }
 
-function ContactsScreen({ onOpenRoom, onLogout }: Props): React.JSX.Element {
+function ContactsScreen({ account, onOpenRoom, onLogout }: Props): React.JSX.Element {
   const insets = useSafeAreaInsets();
-  const [profile, setProfile] = useState<UserProfile | null>(null);
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const [addModalVisible, setAddModalVisible] = useState(false);
-  const [codeDraft, setCodeDraft] = useState('');
+  const [usernameDraft, setUsernameDraft] = useState('');
   const [nicknameDraft, setNicknameDraft] = useState('');
   const [adding, setAdding] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
 
   useEffect(() => {
-    let cancelled = false;
-    let unsubscribeContacts: (() => void) | null = null;
-
-    ensureAnonymousAuth()
-      .then(user => ensureUserProfile(user.uid, 'Kullanıcı'))
-      .then(myProfile => {
-        if (cancelled) {
-          return;
-        }
-        setProfile(myProfile);
-        unsubscribeContacts = subscribeToContacts(
-          myProfile.uid,
-          nextContacts => {
-            if (!cancelled) {
-              setContacts(nextContacts);
-              setLoadError(null);
-            }
-          },
-          error => {
-            if (!cancelled) {
-              setLoadError(`Kişiler yüklenemedi: ${error.message}`);
-            }
-          },
-        );
-      })
-      .catch(error => {
-        if (!cancelled) {
-          setLoadError(`Profil hazırlanamadı: ${error.message}`);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-      if (unsubscribeContacts) {
-        unsubscribeContacts();
-      }
-    };
-  }, []);
+    const unsubscribe = subscribeToContacts(
+      account.uid,
+      nextContacts => {
+        setContacts(nextContacts);
+        setLoadError(null);
+      },
+      error => setLoadError(`Kişiler yüklenemedi: ${error.message}`),
+    );
+    return unsubscribe;
+  }, [account.uid]);
 
   const handleAddContact = useCallback(async () => {
-    if (!profile || adding) {
+    if (adding) {
       return;
     }
-    const code = codeDraft.trim().toUpperCase();
-    if (!code) {
-      setAddError('Bir kod gir.');
+    const usernameQuery = usernameDraft.trim();
+    if (!usernameQuery) {
+      setAddError('Bir kullanıcı adı gir.');
       return;
     }
     setAdding(true);
     setAddError(null);
     try {
-      const found = await findUserByCode(code);
+      const found = await findUserByUsername(usernameQuery);
       if (!found) {
-        setAddError('Bu kodla bir kullanıcı bulunamadı.');
+        setAddError('Bu kullanıcı adıyla bir hesap bulunamadı.');
         return;
       }
-      if (found.uid === profile.uid) {
-        setAddError('Kendi kodunu ekleyemezsin.');
+      if (found.uid === account.uid) {
+        setAddError('Kendini ekleyemezsin.');
         return;
       }
-      const nickname = nicknameDraft.trim() || found.name;
-      await addContact(profile.uid, found.uid, nickname);
+      const nickname = nicknameDraft.trim() || found.username;
+      await addContact(account.uid, found.uid, nickname);
       setAddModalVisible(false);
-      setCodeDraft('');
+      setUsernameDraft('');
       setNicknameDraft('');
     } catch (error) {
       setAddError(`Kişi eklenemedi: ${(error as Error).message}`);
     } finally {
       setAdding(false);
     }
-  }, [profile, adding, codeDraft, nicknameDraft]);
+  }, [adding, usernameDraft, nicknameDraft, account.uid]);
 
   return (
     <View style={styles.container}>
       <View style={[styles.header, { paddingTop: insets.top + 12 }]}>
-        <Text style={styles.headerTitle}>Kişiler</Text>
+        <View>
+          <Text style={styles.headerTitle}>Kişiler</Text>
+          <Text style={styles.headerSubtitle}>@{account.username}</Text>
+        </View>
         <Pressable onPress={onLogout} hitSlop={8}>
           <Text style={styles.logoutText}>Çıkış</Text>
         </Pressable>
       </View>
-
-      {profile && (
-        <View style={styles.myCodeBanner}>
-          <Text style={styles.myCodeLabel}>Senin kodun</Text>
-          <Text style={styles.myCodeValue}>{profile.code}</Text>
-          <Text style={styles.myCodeHint}>Bu kodu paylaşarak seni kişi olarak eklemelerini sağla.</Text>
-        </View>
-      )}
 
       {loadError && (
         <View style={styles.errorBanner}>
@@ -127,43 +93,35 @@ function ContactsScreen({ onOpenRoom, onLogout }: Props): React.JSX.Element {
         </View>
       )}
 
-      {!profile && !loadError ? (
-        <View style={styles.loadingWrap}>
-          <ActivityIndicator color="#3B7CFF" />
-          <Text style={styles.loadingText}>Hazırlanıyor...</Text>
-        </View>
-      ) : (
-        <FlatList
-          data={contacts}
-          keyExtractor={item => item.uid}
-          contentContainerStyle={styles.listContent}
-          ListEmptyComponent={
-            <Text style={styles.emptyText}>Henüz kişin yok. Aşağıdan bir kod ile ekle.</Text>
-          }
-          renderItem={({ item }) => (
-            <Pressable
-              style={({ pressed }) => [styles.contactRow, pressed && styles.contactRowPressed]}
-              onPress={() => profile && onOpenRoom(profile.uid, item)}>
-              <View style={styles.contactAvatar}>
-                <Text style={styles.contactAvatarText}>
-                  {item.name.slice(0, 1).toUpperCase()}
-                </Text>
-              </View>
-              <Text style={styles.contactName}>{item.name}</Text>
-            </Pressable>
-          )}
-        />
-      )}
+      <FlatList
+        data={contacts}
+        keyExtractor={item => item.uid}
+        contentContainerStyle={styles.listContent}
+        ListEmptyComponent={
+          <Text style={styles.emptyText}>
+            Henüz kişin yok. Aşağıdan bir kullanıcı adı ile ekle.
+          </Text>
+        }
+        renderItem={({ item }) => (
+          <Pressable
+            style={({ pressed }) => [styles.contactRow, pressed && styles.contactRowPressed]}
+            onPress={() => onOpenRoom(item)}>
+            <View style={styles.contactAvatar}>
+              <Text style={styles.contactAvatarText}>{item.name.slice(0, 1).toUpperCase()}</Text>
+            </View>
+            <Text style={styles.contactName}>{item.name}</Text>
+          </Pressable>
+        )}
+      />
 
       <Pressable
         style={[styles.addButton, { marginBottom: insets.bottom + 16 }]}
         onPress={() => {
           setAddError(null);
-          setCodeDraft('');
+          setUsernameDraft('');
           setNicknameDraft('');
           setAddModalVisible(true);
-        }}
-        disabled={!profile}>
+        }}>
         <Text style={styles.addButtonText}>+ Kişi Ekle</Text>
       </Pressable>
 
@@ -177,13 +135,13 @@ function ContactsScreen({ onOpenRoom, onLogout }: Props): React.JSX.Element {
             <Text style={styles.modalTitle}>Kişi Ekle</Text>
             <TextInput
               style={styles.modalInput}
-              placeholder="Kişinin kodu (örn. AB12CD)"
+              placeholder="Kullanıcı adı"
               placeholderTextColor="rgba(245,245,247,0.4)"
-              value={codeDraft}
-              onChangeText={setCodeDraft}
-              autoCapitalize="characters"
+              value={usernameDraft}
+              onChangeText={setUsernameDraft}
+              autoCapitalize="none"
               autoCorrect={false}
-              maxLength={6}
+              maxLength={20}
               editable={!adding}
             />
             <TextInput
@@ -239,37 +197,14 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '700',
   },
+  headerSubtitle: {
+    color: 'rgba(245,245,247,0.45)',
+    fontSize: 12,
+    marginTop: 2,
+  },
   logoutText: {
     color: '#FF6B6B',
     fontSize: 14,
-  },
-  myCodeBanner: {
-    marginHorizontal: 16,
-    marginTop: 14,
-    backgroundColor: '#1C1F2A',
-    borderRadius: 14,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.06)',
-  },
-  myCodeLabel: {
-    color: 'rgba(245,245,247,0.5)',
-    fontSize: 11,
-    fontWeight: '600',
-    letterSpacing: 0.5,
-  },
-  myCodeValue: {
-    color: '#6BCB77',
-    fontSize: 22,
-    fontWeight: '800',
-    letterSpacing: 2,
-    marginTop: 2,
-  },
-  myCodeHint: {
-    color: 'rgba(245,245,247,0.4)',
-    fontSize: 11,
-    marginTop: 4,
   },
   errorBanner: {
     backgroundColor: 'rgba(255,107,107,0.12)',
@@ -282,16 +217,6 @@ const styles = StyleSheet.create({
   errorBannerText: {
     color: '#FF6B6B',
     fontSize: 12.5,
-  },
-  loadingWrap: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  loadingText: {
-    color: 'rgba(245,245,247,0.5)',
-    fontSize: 13,
-    marginTop: 10,
   },
   listContent: {
     paddingHorizontal: 16,

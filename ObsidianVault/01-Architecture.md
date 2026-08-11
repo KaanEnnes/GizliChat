@@ -50,15 +50,22 @@ Bağlam için önce [[00-START-HERE]] dosyasına bak.
   köşesindeki `⚙` dişli ikonuna 3.5 saniye içinde 10 kez dokununca `onAdminTriggerReached()` çağrılır
   — uygulamanın admin/gizli giriş tetikleyicisi burada gizli.
 - `src/screens/AdminLoginScreen.tsx` — Kullanıcı adı/şifre formu, `authService.ts`'deki `loginAdmin`'i
-  çağırır; başarılıysa `onLoginSuccess()` (→ `CONTACTS`), iptal ile `onCancel()` (→ home). Yükleniyor
-  spinner'ı ve satır içi hata mesajı gösterir.
-- `src/screens/ContactsScreen.tsx` — Kişi listesi ekranı (eski tek-odalı `AdminChatScreen`'in yerini
-  aldı). Mount olunca `ensureAnonymousAuth()` → `ensureUserProfile()` ile kullanıcının Firestore
-  profilini (isim + paylaşılabilir 6 haneli kod) hazırlar/getirir, ekranın üstünde "Senin kodun"
-  banner'ında gösterir. `subscribeToContacts()` ile kişi listesini canlı dinler. "+ Kişi Ekle"
-  butonu bir modal açar: girilen kod `findUserByCode()` ile aranır, bulunursa `addContact()` ile
-  kişi listesine eklenir (tek yönlü — karşı taraf da seni eklemek için senin kodunu girmeli). Bir
-  kişiye dokununca `onOpenRoom(myUid, contact)` çağrılır.
+  çağırır; başarılıysa `onLoginSuccess()` (→ `ACCOUNT`), iptal ile `onCancel()` (→ home). Yükleniyor
+  spinner'ı ve satır içi hata mesajı gösterir. **Bu hâlâ mock/decoy bir katman** — gerçek hesap
+  sistemi bir sonraki ekranda.
+- `src/screens/AccountScreen.tsx` — Gerçek Firebase Auth (email/şifre) tabanlı giriş/kayıt ekranı.
+  Mount olunca `getRestoredAccountUser()` ile cihazda zaten kalıcı gerçek bir oturum olup olmadığı
+  sessizce kontrol edilir; varsa form hiç gösterilmeden doğrudan `onAuthenticated()` çağrılır. Yoksa
+  kullanıcı adı + şifre ile giriş/kayıt formu gösterilir (`userService.loginAccount`/
+  `registerAccount`). Başarılı olunca `onAuthenticated({ uid, username })` çağrılır.
+- `src/screens/ContactsScreen.tsx` — Kişi listesi ekranı. `account` (`{ uid, username }`) prop
+  olarak `AppNavigator`'dan gelir (artık kendi başına auth yapmıyor — `AccountScreen` sonrasında
+  zaten gerçek bir hesapla giriliyor). Üstte `@kullaniciadi` gösterilir. `subscribeToContacts()`
+  ile kişi listesini canlı dinler. "+ Kişi Ekle" butonu bir modal açar: girilen **kullanıcı adı**
+  `findUserByUsername()` ile aranır, bulunursa `addContact()` ile kişi listesine eklenir (tek
+  yönlü — karşı taraf da seni eklemek için senin kullanıcı adını girmeli). Bir kişiye dokununca
+  `onOpenRoom(contact)` çağrılır. "Çıkış" artık gerçekten `logoutAccount()` çağırıp Firebase
+  oturumunu kapatıyor (eski anonim tasarımda sadece navigasyon değişiyordu).
 - `src/screens/ChatRoomScreen.tsx` — Gerçek 1-1 sohbet ekranı (eski `AdminChatScreen`'in oda-farkında
   hâli). `getRoomId(myUid, contact.uid)` ile deterministik bir oda id'si hesaplar,
   `subscribeToMessages(roomId, ...)` ile o odaya özel mesajları dinler, `FlatList` + `MessageBubble`
@@ -70,13 +77,25 @@ Bağlam için önce [[00-START-HERE]] dosyasına bak.
   AsyncStorage destekli kalıcı `auth` (`initializeAuth` + `getReactNativePersistence`, tip
   cast'i ile — RN export condition altında TS tipleri açık değil), `experimentalForceLongPolling: true`
   ile Firestore `db` (bazı Android ağlarında gRPC streaming sorunlarını aşmak için). `ensureAnonymousAuth()`
-  export eder: cihazı anonim olarak Firebase'e giriş yaptırır; bu uid artık hem "benim mesajım / karşı
-  tarafın mesajı" ayrımı için, hem de `users/{uid}` altındaki kalıcı kişi/kod profili için kullanılıyor.
-- `src/services/userService.ts` — Kullanıcının Firestore kimliği (`users/{uid}`: `{ name, code,
-  createdAt }`). `ensureUserProfile(uid, defaultName)` profili getirir/oluşturur (yoksa rastgele 6
-  haneli, karıştırılması zor karakterlerden oluşan bir `code` üretir). `findUserByCode(code)` — kişi
-  eklerken kodla kullanıcı arar (`where('code','==',...)` sorgusu). `updateMyName()` de var ama şu an
-  hiçbir ekran tarafından çağrılmıyor (isim değiştirme UI'ı henüz yok).
+  export eder: cihazı anonim olarak Firebase'e giriş yaptırır — artık **sadece** skor tablosuna yazma
+  izni için kullanılıyor (leaderboard'a puan göndermek `request.auth != null` gerektiriyor, ama oyunu
+  oynayan herkes gizli sohbete girmiş/hesap açmış olmuyor). Kişi/sohbet sistemi artık anonim auth'a
+  değil `userService.ts`'teki gerçek email/şifre hesaplarına dayanıyor. `getRestoredAccountUser()` da
+  export edilir: mevcut oturumun (varsa) **gerçek** (anonim olmayan) bir hesap olup olmadığını
+  sessizce kontrol eder, `AccountScreen`'in otomatik-giriş akışında kullanılır.
+- `src/services/userService.ts` — **Gerçek hesap sistemi.** Firebase Auth'un email/şifre sağlayıcısı,
+  bir "kullanıcı adı" arayüzünün arkasına gizlenerek kullanılıyor: kullanıcı adı, dahili olarak
+  `kullaniciadi@gizlichat.local` sahte bir e-postaya çevrilip (`usernameToEmail()`)
+  `createUserWithEmailAndPassword`/`signInWithEmailAndPassword`'a öyle veriliyor — kullanıcı hiçbir
+  zaman gerçek bir e-posta girmiyor/görmüyor. `registerAccount(username, password)` hesabı oluşturur
+  ve `users/{uid}`'e `{ username, usernameLower, createdAt }` yazar; `loginAccount()` giriş yapar;
+  `logoutAccount()` çıkış yapar; `findUserByUsername()` kişi eklerken `usernameLower` alanına göre
+  arar (büyük/küçük harf duyarsız). `fetchAccountUsername(uid)` zaten oturum açık bir uid için
+  kayıtlı kullanıcı adını getirir (`AccountScreen`'in sessiz oturum geri yükleme akışında kullanılır).
+  Bu hesap kimliği artık **cihaza değil kullanıcı adı+şifreye bağlı** — aynı hesapla başka bir
+  telefonda/kurulumda giriş yapılınca aynı `uid`, aynı kişi listesi ve sohbetler geri geliyor.
+  **Şifre kurtarma yok** (gerçek e-posta olmadığı için Firebase'in "şifremi unuttum" e-postası
+  gönderilemiyor) — bkz. [[04-Security-Notes]].
 - `src/services/contactService.ts` — Kişi listesi katmanı. `users/{myUid}/contacts/{contactUid}`:
   `{ name, addedAt }`. `addContact()` (tek yönlü ekleme) ve `subscribeToContacts()` (canlı, isme göre
   sıralı liste) export eder. `Contact` tipi burada tanımlı, `ChatRoomScreen`/`AppNavigator` tarafından

@@ -1,5 +1,44 @@
 # Değişiklik Günlüğü
 
+## 2026-08-11 — Rastgele-kod sistemi kaldırıldı, gerçek kullanıcı adı + şifre hesap sistemi eklendi
+
+Kullanıcı isteği: kişi/kimlik sisteminin cihaza değil gerçek bir hesaba (kullanıcı adı + şifre)
+bağlı olması, böylece uygulama silinse/telefon değişse bile aynı hesapla giriş yapılıp aynı kişi
+listesine/sohbetlere ulaşılabilsin.
+
+**Yaklaşım:** Firebase Auth'un email/şifre sağlayıcısı, kullanıcıya hiç e-posta göstermeden
+kullanıldı — girilen kullanıcı adı dahili olarak `kullaniciadi@gizlichat.local` sahte bir adrese
+çevrilip Firebase'e email/şifre hesabı gibi veriliyor. Eski "anonim giriş + rastgele 6 haneli kod"
+sistemi (bir önceki oturumda eklenmişti) **tamamen kaldırıldı**.
+
+**Yeni dosyalar:**
+- `src/screens/AccountScreen.tsx` — giriş/kayıt formu, zaten oturum açıksa formu atlayan sessiz
+  kontrol dahil.
+
+**Değiştirilen dosyalar:**
+- `src/services/userService.ts` — tamamen yeniden yazıldı: `ensureUserProfile`/`generateCode`/
+  `findUserByCode` kaldırıldı, yerine `registerAccount`/`loginAccount`/`logoutAccount`/
+  `findUserByUsername`/`fetchAccountUsername`/`validateUsername` geldi.
+- `src/services/firebase.ts` — `getRestoredAccountUser()` eklendi (mevcut gerçek oturumu sessizce
+  kontrol eder, sign-in tetiklemez).
+- `src/services/leaderboardService.ts` — `submitScore()` artık skoru göndermeden önce
+  `ensureAnonymousAuth()` çağırıyor (yeni Firestore kuralları `auth != null` şartı koştuğu için;
+  önceden bu çağrı hiçbir yerde yoktu, gizli sohbete hiç girmemiş oyuncularda skor gönderimi
+  sessizce başarısız olabilirdi — bu oturumda fark edilip düzeltildi).
+- `src/screens/ContactsScreen.tsx` — kendi başına auth yapmıyor, `account` prop olarak alıyor; kod
+  yerine kullanıcı adıyla kişi arama; "Çıkış" artık gerçekten `logoutAccount()` çağırıyor.
+- `src/navigation/AppNavigator.tsx` — `ADMIN_LOGIN` başarılı olunca artık doğrudan `CONTACTS`'a değil,
+  yeni `ACCOUNT` ekranına gidiyor.
+
+**Doğrulama:** `npx tsc --noEmit` temiz, `npx jest` geçti.
+
+**⚠️ Elle yapılması gereken yeni adım:** Firebase Console → Authentication → Sign-in method →
+**Email/Password** sağlayıcısının etkinleştirilmesi gerekiyor, yoksa giriş/kayıt formu
+`auth/operation-not-allowed` hatası verir. Detay: [[05-Build-Deployment]].
+
+**Bilinçli kabul edilen yeni sınırlama:** Şifre kurtarma yok (sahte e-posta olduğu için Firebase'in
+"şifremi unuttum" akışı çalışmaz) — bkz. [[04-Security-Notes]].
+
 ## 2026-08-11 — Proje GitHub'a gönderildi
 
 İlk kez git ile versiyonlandı ve `https://github.com/KaanEnnes/GizliChat` (private) reposuna push

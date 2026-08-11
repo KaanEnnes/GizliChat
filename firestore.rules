@@ -16,10 +16,10 @@ service cloud.firestore {
     }
 
     match /users/{userId} {
-      // Contact-adding looks users up by their shareable code
-      // (findUserByCode in src/services/userService.ts), which needs read
-      // access beyond just your own profile. Anyone signed in (including
-      // anonymous) can therefore read any profile's name/code — this is a
+      // Contact-adding looks users up by username
+      // (findUserByUsername in src/services/userService.ts), which needs
+      // read access beyond just your own profile. Anyone signed in
+      // (including anonymous) can therefore read any profile's username —
       // known trade-off, not a bug: see ObsidianVault/04-Security-Notes.md.
       allow read: if isSignedIn();
       // Only the profile's own owner may create/update it.

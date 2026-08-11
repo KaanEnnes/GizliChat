@@ -72,3 +72,18 @@ export function ensureAnonymousAuth(): Promise<User> {
 
   return authReadyPromise;
 }
+
+/**
+ * Resolves once Firebase Auth has finished restoring any persisted session
+ * (from a previous real account login), without ever triggering a sign-in.
+ * Returns the restored user only if it's a real (non-anonymous) account —
+ * used by AccountScreen to skip the login form when already signed in.
+ */
+export function getRestoredAccountUser(): Promise<User | null> {
+  return new Promise(resolve => {
+    const unsubscribe = onAuthStateChanged(auth, user => {
+      unsubscribe();
+      resolve(user && !user.isAnonymous ? user : null);
+    });
+  });
+}

@@ -1,64 +1,128 @@
-import { collection, doc, getDoc, getDocs, limit, query, setDoc, updateDoc, where } from 'firebase/firestore';
-import { db } from './firebase';
+import {
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  signOut,
+} from '@firebase/auth';
+import { collection, doc, getDoc, getDocs, limit, query, setDoc, where } from 'firebase/firestore';
+import { auth, db } from './firebase';
 
-export interface UserProfile {
+export interface Account {
   uid: string;
-  name: string;
-  code: string;
+  username: string;
 }
 
-// Ambiguous-looking characters (0/O, 1/I) are left out so a code is easy to
-// read aloud or copy correctly.
-const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-const CODE_LENGTH = 6;
+// Firebase Auth here is used purely as an email/password backend; there's no
+// real email involved. A username is mapped to a synthetic address so a
+// human just sees "username" + "password" while Firebase still gets the
+// email/password shape it expects. This is what makes an account portable
+// across devices/reinstalls (unlike the old per-install anonymous identity):
+// logging in with the same username+password anywhere restores the same uid.
+const USERNAME_EMAIL_DOMAIN = '@gizlichat.local';
+const USERNAME_PATTERN = /^[a-zA-Z0-9_]{3,20}$/;
 
-function generateCode(): string {
-  let code = '';
-  for (let i = 0; i < CODE_LENGTH; i++) {
-    code += CODE_CHARS[Math.floor(Math.random() * CODE_CHARS.length)];
+function usernameToEmail(username: string): string {
+  return `${username.trim().toLowerCase()}${USERNAME_EMAIL_DOMAIN}`;
+}
+
+export function validateUsername(username: string): string | null {
+  if (!USERNAME_PATTERN.test(username.trim())) {
+    return 'Kullanıcı adı 3-20 karakter olmalı, sadece harf/rakam/_ içerebilir.';
   }
-  return code;
+  return null;
 }
 
-/**
- * Loads this device's chat identity (users/{uid}), creating it with a fresh
- * shareable code on first use. The uid comes from Firebase anonymous auth
- * (persisted via AsyncStorage), so the same profile/code is reused across
- * app restarts as long as the app isn't reinstalled.
- */
-export async function ensureUserProfile(uid: string, defaultName: string): Promise<UserProfile> {
-  const ref = doc(db, 'users', uid);
-  const snap = await getDoc(ref);
-  if (snap.exists()) {
-    const data = snap.data();
-    return {
-      uid,
-      name: typeof data.name === 'string' && data.name ? data.name : defaultName,
-      code: typeof data.code === 'string' && data.code ? data.code : generateCode(),
-    };
+function mapAuthError(error: unknown): string {
+  const code = (error as { code?: string }).code ?? '';
+  switch (code) {
+    case 'auth/email-already-in-use':
+      return 'Bu kullanıcı adı zaten alınmış.';
+    case 'auth/weak-password':
+      return 'Şifre en az 6 karakter olmalı.';
+    case 'auth/user-not-found':
+    case 'auth/wrong-password':
+    case 'auth/invalid-credential':
+      return 'Kullanıcı adı veya şifre hatalı.';
+    case 'auth/invalid-email':
+      return 'Geçersiz kullanıcı adı.';
+    default:
+      return (error as Error).message ?? 'Beklenmeyen bir hata oluştu.';
   }
-  const code = generateCode();
-  await setDoc(ref, { name: defaultName, code, createdAt: Date.now() });
-  return { uid, name: defaultName, code };
 }
 
-export async function updateMyName(uid: string, name: string): Promise<void> {
-  await updateDoc(doc(db, 'users', uid), { name });
+export async function registerAccount(username: string, password: string): Promise<Account> {
+  const cleanUsername = username.trim();
+  const usernameError = validateUsername(cleanUsername);
+  if (usernameError) {
+    throw new Error(usernameError);
+  }
+  try {
+    const credential = await createUserWithEmailAndPassword(
+      auth,
+      usernameToEmail(cleanUsername),
+      password,
+    );
+    await setDoc(doc(db, 'users', credential.user.uid), {
+      username: cleanUsername,
+      usernameLower: cleanUsername.toLowerCase(),
+      createdAt: Date.now(),
+    });
+    return { uid: credential.user.uid, username: cleanUsername };
+  } catch (error) {
+    throw new Error(mapAuthError(error));
+  }
 }
 
-export async function findUserByCode(
-  code: string,
-): Promise<{ uid: string; name: string } | null> {
-  const cleanCode = code.trim().toUpperCase();
-  if (!cleanCode) {
+export async function loginAccount(username: string, password: string): Promise<Account> {
+  const cleanUsername = username.trim();
+  try {
+    const credential = await signInWithEmailAndPassword(
+      auth,
+      usernameToEmail(cleanUsername),
+      password,
+    );
+    const snap = await getDoc(doc(db, 'users', credential.user.uid));
+    const savedUsername =
+      snap.exists() && typeof snap.data().username === 'string'
+        ? (snap.data().username as string)
+        : cleanUsername;
+    return { uid: credential.user.uid, username: savedUsername };
+  } catch (error) {
+    throw new Error(mapAuthError(error));
+  }
+}
+
+export async function logoutAccount(): Promise<void> {
+  await signOut(auth);
+}
+
+/** Looks up a saved (non-anonymous) account's username for an already-signed-in uid. */
+export async function fetchAccountUsername(uid: string): Promise<string | null> {
+  const snap = await getDoc(doc(db, 'users', uid));
+  if (!snap.exists()) {
     return null;
   }
-  const usersQuery = query(collection(db, 'users'), where('code', '==', cleanCode), limit(1));
+  const data = snap.data();
+  return typeof data.username === 'string' ? data.username : null;
+}
+
+export async function findUserByUsername(username: string): Promise<Account | null> {
+  const cleanUsername = username.trim().toLowerCase();
+  if (!cleanUsername) {
+    return null;
+  }
+  const usersQuery = query(
+    collection(db, 'users'),
+    where('usernameLower', '==', cleanUsername),
+    limit(1),
+  );
   const snapshot = await getDocs(usersQuery);
   if (snapshot.empty) {
     return null;
   }
   const found = snapshot.docs[0];
   const data = found.data();
-  return { uid: found.id, name: typeof data.name === 'string' ? data.name : 'Kullanıcı' };
+  return {
+    uid: found.id,
+    username: typeof data.username === 'string' ? data.username : cleanUsername,
+  };
 }
