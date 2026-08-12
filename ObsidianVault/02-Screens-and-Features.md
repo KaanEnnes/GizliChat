@@ -7,7 +7,9 @@ Bağlam için önce [[00-START-HERE]] dosyasına bak. Dosya detayları için [[0
 Kütüphanesiz, `src/navigation/AppNavigator.tsx` içinde elle yazılmış durum makinesi:
 
 ```
-HOME (HomeScreen — oyun)
+HOME (GameHubScreen — oyun seçme menüsü)
+  ├─ bir oyun kartına dokun → o oyun tam ekran (Blok Çılgınlığı / 2048 / Yılan / Renk Hafızası /
+  │    Köstebek Vurma) → "‹ Menü" ile GameHubScreen'e döner
   └─ dişli ikonuna 3.5 sn içinde 10 dokunuş → ACCOUNT (AccountScreen — gerçek kullanıcı adı/şifre girişi)
        ├─ zaten kayıtlı bir oturum varsa → form atlanır, otomatik → CONTACTS
        ├─ giriş/kayıt başarılı → CONTACTS (ContactsScreen — kişi listesi)
@@ -16,6 +18,9 @@ HOME (HomeScreen — oyun)
        │    └─ "Çıkış" → gerçekten Firebase oturumu kapanır (logoutAccount) → HOME
        └─ "Vazgeç" → HOME
 ```
+
+(Dişliye tek dokunuş, ~550ms gecikmeyle, Ayarlar'ı açar — 10'lu seriyi bozmadan. Bkz. aşağıda
+"GameHubScreen — oyun seçme menüsü".)
 
 Android donanım geri tuşu: `ACCOUNT`/`CONTACTS` → `HOME`, `CHAT_ROOM` → `CONTACTS`.
 
@@ -26,7 +31,20 @@ gizli tetikleyici doğrudan gerçek Firebase Auth girişine açılıyor. Gizlili
 kendisi (dişliye 10 dokunuş) ve bunun görünmez olması, ama artık arkasında sahte bir şifre kontrolü
 yok.
 
-## HomeScreen — "BLOK ÇILGINLIĞI" oyunu (görünen yüz)
+## GameHubScreen — oyun seçme menüsü (görünen yüz)
+
+- Uygulamanın gerçek "ön kapısı" — `HOME` durumunda render edilen ekran artık bu, doğrudan Blok
+  Çılgınlığı değil. Giriş animasyonlu (`Animated.stagger`, sırayla beliren kartlar) bir 2 sütunlu
+  ızgarada 5 oyun kartı: Blok Çılgınlığı 🧩, 2048 🔢, Yılan 🐍, Renk Hafızası 🎵, Köstebek Vurma 🔨.
+- Bir karta dokununca `playTapSound()` çalar ve o oyun tam ekran render edilir (`{ onBack }` prop'u
+  ile — her oyun kendi "‹ Menü" linkiyle buraya geri döner).
+- **Gizli tetikleyici burada yaşıyor:** köşedeki `⚙` ikonuna `REQUIRED_TAPS` (10) kez `TAP_RESET_MS`
+  (3.5 sn) içinde dokununca `onAdminTriggerReached()` çağrılır — eskiden bu mekanizma Blok
+  Çılgınlığı'nın kendi menü ekranındaydı (yani sadece o oyunun menüsündeyken erişilebilirdi); artık
+  hub'da olduğu için hangi oyunu en son oynadığından bağımsız her zaman erişilebilir. Aynı ikona
+  gecikmeli (550ms) tek dokunuş `SettingsModal`'ı açar.
+
+## HomeScreen — "BLOK ÇILGINLIĞI" oyunu
 
 - 8x8 tahta, parçalar `PanResponder` + `Animated` ile sürüklenip bırakılıyor.
 - 3 zorluk seviyesinde ağırlıklı rastgele parça üretimi.
@@ -42,8 +60,30 @@ yok.
   bir daha sorulmaz); isim zaten kayıtlıysa hiçbir prompt olmadan otomatik olarak
   `leaderboardService.submitScore(name, finalScore)` çağrılır. Oyun bitti kartındaki "🏆 Skor
   Tablosu" butonu `fetchTopScores()` ile en yüksek 20 skoru bir modalda listeler.
-- Gizli tetikleyici: köşedeki `⚙` ikonuna `REQUIRED_TAPS` (10) kez `TAP_RESET_MS` (3.5 sn) içinde
-  dokununca `onAdminTriggerReached()` çağrılıyor.
+- Artık `GameHubScreen` tarafından render ediliyor (`{ onBack }` prop'u ile) — gizli tetikleyici ve
+  Ayarlar dişlisi burada değil, bkz. yukarıdaki "GameHubScreen" bölümü.
+
+## Diğer mini oyunlar (2048, Yılan, Renk Hafızası, Köstebek Vurma)
+
+Hepsi `GameHubScreen`'den `{ onBack }` prop'uyla açılan, kendi `AsyncStorage` en-yüksek-skor
+anahtarına sahip, bağımsız ekranlar. Ortak desen: `useTheme()` ile tema-duyarlı, ses efektleri
+`soundService`'ten, oyun bitince `hapticsService.vibrateMedium()`.
+
+- **Game2048** (`src/screens/Game2048.tsx`) — 4x4 klasik 2048. Her taş kararlı bir `id` taşıyor
+  (`TileData[]`), bu sayede `moveTiles()` her taşın kayma/birleşme hedefini döndürebiliyor ve her
+  taş kendi `Animated.ValueXY`'siyle (native driver) kayarak taşınıyor; birleşince pop/bounce,
+  doğunca scale-in, "yutulan" taş hedefe kayıp solarak kayboluyor (`GhostTileView`). İlk kez 2048'e
+  ulaşınca `playWinSound()` + kısa bir banner (oyun devam ediyor, klasik 2048 gibi).
+- **Yılan** (`src/screens/SnakeGame.tsx`) — 14x14 kafes. Akıcı hareket için tüm yılan segmentleri
+  **tek bir paylaşılan** `Animated.Value` (`progress`, 0→1) üzerinden interpolate ediliyor — her
+  tick'te `{from,to}` çiftleri hesaplanıp `progress` sıfırlanıp yeniden animate ediliyor, segment
+  başına ayrı bir component/ref gerekmiyor. Yem yendikçe tick hızı artıyor (zorluk).
+- **Renk Hafızası** (`src/screens/ColorMemoryGame.tsx`) — Simon tarzı: 4 renkli ped, her turda
+  dizi bir eleman büyüyor, oynatılırken her ped kendi notasını çalıyor (`playNoteSound(index)`),
+  kullanıcı aynı sırayla dokunmalı; yanlışta `playWrongSound()` + oyun biter.
+- **Köstebek Vurma** (`src/screens/WhackAMoleGame.tsx`) — 3x3 delik, 30 saniyelik tur. Tek seferde
+  bir köstebek aktif, süre boyunca görünme süresi kısalıyor (zorlaşıyor). Kaçırılan köstebek
+  (zaman aşımı) `playMissSound()` çalar ama puan kaybettirmiyor.
 
 ## AccountScreen — gerçek hesap girişi/kaydı
 
@@ -87,7 +127,24 @@ yok.
   `callService.ts` üzerinden Stream Video'da o kişiyle `ring: true` bir çağrı oluşturur — arama
   ekranı bu ekrandan değil, `CallProvider`'ın global `IncomingCallWatcher`'ı üzerinden açılır (bkz.
   aşağıdaki "Sesli/görüntülü arama" bölümü).
+- **Çevrimdışı uyarısı:** `useNetworkStatus()` (`@react-native-community/netinfo`) `false` dönerse
+  üstte "📡 İnternet bağlantısı yok" banner'ı gösterilir (aynısı `ContactsScreen`'de de var).
 - Geri ok → `onBack()` ile `CONTACTS`'a döner.
+
+## NotificationCenter — uygulama-içi "oyun bildirimi"
+
+- `AppNavigator`'da `CallProvider`'ın hemen içinde, `CONTACTS`/`CHAT_ROOM` ekranlarını sarmalar
+  (tek sefer kurulur, ekran değişince yeniden kurulmaz — bkz. [[01-Architecture]]).
+- Her kişinin odasını `chatService.subscribeToLatestMessage()` ile dinler; kendi mesajlarını, mount
+  öncesi geçmişi, ve şu an açık olan sohbetin (`activeContactUid`) mesajlarını filtreler.
+- Kalan yeni mesaj için ekranın üstünde 🎮 rozetli, kişi adı + kısa önizgeli, oyuna özgü hissettiren
+  bir toast gösterir (Android'in standart "X kişisinden Y bildirimi geldi" formatından bilinçli
+  olarak farklı — kullanıcı isteği) + `sfx_notification` sesi + kısa titreşim. Dokununca o sohbeti
+  açar.
+- **Sadece uygulama açık/arka planda çalışırken tetiklenir** — uygulama tamamen kapalıyken bildirim
+  gelmez. Bu bilinçli bir seçim (gerçek arka plan push, Firebase Cloud Messaging + Blaze plan +
+  Cloud Function gerektiriyordu); bkz. `YAPILACAKLAR.txt`'in sonundaki opsiyonel bölüm.
+- Ayarlar'dan (`notificationService`) tamamen kapatılabilir.
 
 ## Sesli/görüntülü arama (Stream Video)
 
@@ -111,10 +168,17 @@ yok.
   `startVideoCall()` ayrıca çağrı oluşturulur oluşturulmaz `call.camera.enable()` çağırır (sesli
   aramada bunun yerine `call.camera.disable()`); `CallScreen` da `JOINED` durumuna geçilince
   `call.microphone.enable()` çağırıyor (hem arayan hem aranan tarafında).
-- **⚠️ BİLİNEN AÇIK SORUN: Sesli aramada ses gelmiyor.** Kamera fix'i (`camera.enable()`) video
-  için işe yaramıştı, aynı mantıkla `microphone.enable()` denendi ama sorunu çözmedi — bkz.
-  [[Changelog]] "Arama bitince direkt kapanma + mikrofon fix denemesi" kaydındaki araştırma
-  notları. Bir sonraki oturumda gerçek zamanlı logcat ile devam edilmeli.
+- **Sesli aramada ses gelmiyordu — muhtemel kök neden bulundu, cihazda doğrulanmadı.** Asıl sorun
+  hiçbir yerde Stream'in native ses oturumu/yönlendirme yöneticisinin (`callManager`) başlatılmamış
+  olmasıydı; `CallScreen.tsx`'te artık `call` her JOINED olduğunda `callManager.start({ audioRole:
+  'communicator', deviceEndpointType: 'speaker' })` çağrılıyor (cleanup'ta `callManager.stop()`).
+  `deviceEndpointType` başta sesli aramalarda `'earpiece'` idi (gerçek telefon gibi) ama bunun
+  aramanın **dışında da** (oyun/bildirim sesleri) kulak hoparlörüne yapışkanlaştığı görüldü — artık
+  her iki arama türünde de `'speaker'`. **Hiçbiri henüz gerçek cihazda denenmedi**, bir sonraki
+  oturumda doğrulanmalı.
+- **Çağrı geçmişi:** çağrı bitince (`CallScreen`'in `onLeave(summary: CallSummary)`'i) `CallProvider`
+  sohbete WhatsApp tarzı bir "çağrı geçmişi" kaydı düşer (`chatService.sendCallLogMessage`,
+  `MessageBubble`'da özel bir kapsül olarak render edilir) — süre, video/sesli, tamamlandı/cevapsız.
 - **Elle yapılması gereken adım:** Stream Dashboard'da bir "Video & Audio" app oluşturup API
   key/secret'ı `src/config/streamConfig.ts`'e girmek gerekiyor, yoksa arama butonları sessizce
   başarısız olur. Detay: [[05-Build-Deployment]].

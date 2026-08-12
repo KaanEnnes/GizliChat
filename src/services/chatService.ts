@@ -11,7 +11,8 @@ import {
 } from 'firebase/firestore';
 import { db } from './firebase';
 
-export type MessageType = 'text' | 'image' | 'video' | 'audio';
+export type MessageType = 'text' | 'image' | 'video' | 'audio' | 'call';
+export type CallLogStatus = 'completed' | 'missed';
 
 export interface ChatMessage {
   id: string;
@@ -28,8 +29,12 @@ export interface ChatMessage {
    * both URL shapes transparently via the same `uri` prop.
    */
   mediaUrl?: string;
-  /** Present for audio messages: recording length in seconds, for the player UI. */
+  /** Present for audio messages: recording length in seconds, for the player UI. Also reused for 'call' messages (see below). */
   durationSeconds?: number;
+  /** Present for 'call' messages: whether it was a video or voice call. */
+  callVideo?: boolean;
+  /** Present for 'call' messages: 'missed' if the call ended before ever being joined (declined/no answer/cancelled). */
+  callStatus?: CallLogStatus;
 }
 
 // Each 1-1 conversation gets its own room under rooms/{roomId}/messages.
@@ -64,24 +69,52 @@ export function subscribeToMessages(
   return onSnapshot(
     messagesQuery,
     snapshot => {
-      const messages = snapshot.docs.map((docSnap): ChatMessage => {
-        const data = docSnap.data();
-        const createdAt =
-          data.createdAt instanceof Timestamp ? data.createdAt.toMillis() : Date.now();
-        return {
-          id: docSnap.id,
-          type: (data.type as MessageType) || 'text',
-          text: typeof data.text === 'string' ? data.text : '',
-          senderId: typeof data.senderId === 'string' ? data.senderId : '',
-          createdAt,
-          mediaUrl: typeof data.mediaUrl === 'string' ? data.mediaUrl : undefined,
-          durationSeconds:
-            typeof data.durationSeconds === 'number' ? data.durationSeconds : undefined,
-        };
-      });
-      onMessages(messages);
+      onMessages(snapshot.docs.map(docToMessage));
     },
     error => onError(error as Error),
+  );
+}
+
+function docToMessage(docSnap: { id: string; data: () => Record<string, unknown> }): ChatMessage {
+  const data = docSnap.data();
+  const createdAt = data.createdAt instanceof Timestamp ? data.createdAt.toMillis() : Date.now();
+  return {
+    id: docSnap.id,
+    type: (data.type as MessageType) || 'text',
+    text: typeof data.text === 'string' ? data.text : '',
+    senderId: typeof data.senderId === 'string' ? data.senderId : '',
+    createdAt,
+    mediaUrl: typeof data.mediaUrl === 'string' ? data.mediaUrl : undefined,
+    durationSeconds: typeof data.durationSeconds === 'number' ? data.durationSeconds : undefined,
+    callVideo: typeof data.callVideo === 'boolean' ? data.callVideo : undefined,
+    callStatus:
+      data.callStatus === 'completed' || data.callStatus === 'missed'
+        ? (data.callStatus as CallLogStatus)
+        : undefined,
+  };
+}
+
+/**
+ * Lightweight single-document listener (vs. subscribeToMessages' full
+ * 300-message history) used by NotificationCenter to watch many rooms at
+ * once without pulling each room's whole history just to spot new arrivals.
+ */
+export function subscribeToLatestMessage(
+  roomId: string,
+  onMessage: (message: ChatMessage | null) => void,
+): Unsubscribe {
+  const latestQuery = query(
+    collection(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION),
+    orderBy('createdAt', 'desc'),
+    limit(1),
+  );
+  return onSnapshot(
+    latestQuery,
+    snapshot => {
+      const docSnap = snapshot.docs[0];
+      onMessage(docSnap ? docToMessage(docSnap) : null);
+    },
+    () => onMessage(null),
   );
 }
 
@@ -95,6 +128,23 @@ export async function sendMessage(roomId: string, text: string, senderId: string
     text: trimmed,
     senderId,
     createdAt: serverTimestamp(),
+  });
+}
+
+/** Logs a finished call as a WhatsApp-style entry in the chat (rendered specially by MessageBubble). */
+export async function sendCallLogMessage(
+  roomId: string,
+  senderId: string,
+  info: { video: boolean; status: CallLogStatus; durationSeconds: number },
+): Promise<void> {
+  await addDoc(collection(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION), {
+    type: 'call',
+    text: '',
+    senderId,
+    createdAt: serverTimestamp(),
+    callVideo: info.video,
+    callStatus: info.status,
+    durationSeconds: info.durationSeconds,
   });
 }
 

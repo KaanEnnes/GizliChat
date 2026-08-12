@@ -4,6 +4,8 @@ const React = require('react');
 
 const fakeCall = {
   ringing: false,
+  isCreatedByMe: true,
+  state: { custom: {} },
   camera: { disable: async () => {}, enable: async () => {} },
   microphone: { enable: async () => {}, disable: async () => {} },
 };
@@ -31,7 +33,14 @@ module.exports = {
   CallingState: {
     IDLE: 'idle',
     RINGING: 'ringing',
+    JOINING: 'joining',
     JOINED: 'joined',
     LEFT: 'left',
+    RECONNECTING: 'reconnecting',
+    RECONNECTING_FAILED: 'reconnecting-failed',
+  },
+  callManager: {
+    start: () => {},
+    stop: () => {},
   },
 };

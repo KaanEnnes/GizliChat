@@ -1,5 +1,24 @@
 import { Platform } from 'react-native';
 import Sound from 'react-native-sound';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+const SOUND_ENABLED_KEY = 'gizlichat_sound_enabled';
+let soundEnabled = true;
+
+AsyncStorage.getItem(SOUND_ENABLED_KEY).then(value => {
+  if (value === '0') {
+    soundEnabled = false;
+  }
+});
+
+export function isSoundEnabled(): boolean {
+  return soundEnabled;
+}
+
+export function setSoundEnabled(enabled: boolean): void {
+  soundEnabled = enabled;
+  AsyncStorage.setItem(SOUND_ENABLED_KEY, enabled ? '1' : '0').catch(() => undefined);
+}
 
 // Files live in android/app/src/main/res/raw as raw PCM WAVs (generated
 // synthetically, no third-party audio assets involved). react-native-sound
@@ -7,12 +26,39 @@ import Sound from 'react-native-sound';
 // this project is only built/tested for Android so far.
 Sound.setCategory('Playback');
 
-type SoundKey = 'place' | 'clear' | 'gameover';
+type SoundKey =
+  | 'place'
+  | 'clear'
+  | 'gameover'
+  | 'tap'
+  | 'merge'
+  | 'eat'
+  | 'noteA'
+  | 'noteB'
+  | 'noteC'
+  | 'noteD'
+  | 'wrong'
+  | 'hit'
+  | 'miss'
+  | 'notification'
+  | 'win';
 
 const SOUND_FILES: Record<SoundKey, string> = {
   place: 'sfx_place.wav',
   clear: 'sfx_clear.wav',
   gameover: 'sfx_gameover.wav',
+  tap: 'sfx_tap.wav',
+  merge: 'sfx_merge.wav',
+  eat: 'sfx_eat.wav',
+  noteA: 'sfx_note_a.wav',
+  noteB: 'sfx_note_b.wav',
+  noteC: 'sfx_note_c.wav',
+  noteD: 'sfx_note_d.wav',
+  wrong: 'sfx_wrong.wav',
+  hit: 'sfx_hit.wav',
+  miss: 'sfx_miss.wav',
+  notification: 'sfx_notification.wav',
+  win: 'sfx_win.wav',
 };
 
 const loadedSounds: Partial<Record<SoundKey, Sound>> = {};
@@ -29,6 +75,9 @@ if (Platform.OS === 'android') {
 }
 
 function play(key: SoundKey): void {
+  if (!soundEnabled) {
+    return;
+  }
   const sound = loadedSounds[key];
   if (!sound) {
     return;
@@ -46,4 +95,42 @@ export function playClearSound(): void {
 
 export function playGameOverSound(): void {
   play('gameover');
+}
+
+export function playTapSound(): void {
+  play('tap');
+}
+
+export function playMergeSound(): void {
+  play('merge');
+}
+
+export function playEatSound(): void {
+  play('eat');
+}
+
+/** Simon-style memory pad tones — one per pad index (0-3). */
+export function playNoteSound(padIndex: number): void {
+  const keys: SoundKey[] = ['noteA', 'noteB', 'noteC', 'noteD'];
+  play(keys[padIndex % keys.length]);
+}
+
+export function playWrongSound(): void {
+  play('wrong');
+}
+
+export function playHitSound(): void {
+  play('hit');
+}
+
+export function playMissSound(): void {
+  play('miss');
+}
+
+export function playNotificationSound(): void {
+  play('notification');
+}
+
+export function playWinSound(): void {
+  play('win');
 }

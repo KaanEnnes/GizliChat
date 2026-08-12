@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { Account, fetchAccountUsername, loginAccount, registerAccount } from '../services/userService';
 import { getRestoredAccountUser } from '../services/firebase';
+import { useTheme } from '../theme/ThemeContext';
 
 interface Props {
   onAuthenticated: (account: Account) => void;
@@ -20,6 +21,7 @@ interface Props {
 type Mode = 'checking' | 'login' | 'register';
 
 function AccountScreen({ onAuthenticated, onCancel }: Props): React.JSX.Element {
+  const { theme } = useTheme();
   const [mode, setMode] = useState<Mode>('checking');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -78,28 +80,33 @@ function AccountScreen({ onAuthenticated, onCancel }: Props): React.JSX.Element 
 
   if (mode === 'checking') {
     return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator color="#3B7CFF" />
+      <View style={[styles.loadingContainer, { backgroundColor: theme.background }]}>
+        <ActivityIndicator color={theme.accent} />
       </View>
     );
   }
 
   return (
     <KeyboardAvoidingView
-      style={styles.container}
+      style={[styles.container, { backgroundColor: theme.background }]}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-      <View style={styles.card}>
-        <Text style={styles.title}>{mode === 'login' ? 'Giriş Yap' : 'Hesap Oluştur'}</Text>
-        <Text style={styles.subtitle}>
+      <View style={[styles.card, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+        <Text style={[styles.title, { color: theme.text }]}>
+          {mode === 'login' ? 'Giriş Yap' : 'Hesap Oluştur'}
+        </Text>
+        <Text style={[styles.subtitle, { color: theme.textMuted }]}>
           {mode === 'login'
             ? 'Kişilerine ve sohbetlerine ulaşmak için giriş yap.'
             : 'Bu hesapla başka bir telefonda da giriş yapabilirsin.'}
         </Text>
 
         <TextInput
-          style={styles.input}
+          style={[
+            styles.input,
+            { backgroundColor: theme.inputBackground, color: theme.text, borderColor: theme.border },
+          ]}
           placeholder="Kullanıcı adı"
-          placeholderTextColor="rgba(245,245,247,0.4)"
+          placeholderTextColor={theme.textFaint}
           value={username}
           onChangeText={setUsername}
           autoCapitalize="none"
@@ -108,9 +115,12 @@ function AccountScreen({ onAuthenticated, onCancel }: Props): React.JSX.Element 
         />
 
         <TextInput
-          style={styles.input}
+          style={[
+            styles.input,
+            { backgroundColor: theme.inputBackground, color: theme.text, borderColor: theme.border },
+          ]}
           placeholder="Şifre"
-          placeholderTextColor="rgba(245,245,247,0.4)"
+          placeholderTextColor={theme.textFaint}
           value={password}
           onChangeText={setPassword}
           secureTextEntry
@@ -121,9 +131,12 @@ function AccountScreen({ onAuthenticated, onCancel }: Props): React.JSX.Element 
 
         {mode === 'register' && (
           <TextInput
-            style={styles.input}
+            style={[
+              styles.input,
+              { backgroundColor: theme.inputBackground, color: theme.text, borderColor: theme.border },
+            ]}
             placeholder="Şifre (tekrar)"
-            placeholderTextColor="rgba(245,245,247,0.4)"
+            placeholderTextColor={theme.textFaint}
             value={confirmPassword}
             onChangeText={setConfirmPassword}
             secureTextEntry

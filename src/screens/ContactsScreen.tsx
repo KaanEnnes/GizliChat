@@ -12,6 +12,8 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { addContact, Contact, subscribeToContacts } from '../services/contactService';
 import { Account, findUserByUsername } from '../services/userService';
+import { useTheme } from '../theme/ThemeContext';
+import { useNetworkStatus } from '../hooks/useNetworkStatus';
 
 interface Props {
   account: Account;
@@ -21,6 +23,8 @@ interface Props {
 
 function ContactsScreen({ account, onOpenRoom, onLogout }: Props): React.JSX.Element {
   const insets = useSafeAreaInsets();
+  const { theme } = useTheme();
+  const isOnline = useNetworkStatus();
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -76,16 +80,22 @@ function ContactsScreen({ account, onOpenRoom, onLogout }: Props): React.JSX.Ele
   }, [adding, usernameDraft, nicknameDraft, account.uid]);
 
   return (
-    <View style={styles.container}>
-      <View style={[styles.header, { paddingTop: insets.top + 12 }]}>
+    <View style={[styles.container, { backgroundColor: theme.background }]}>
+      <View style={[styles.header, { borderBottomColor: theme.border, paddingTop: insets.top + 12 }]}>
         <View>
-          <Text style={styles.headerTitle}>Kişiler</Text>
-          <Text style={styles.headerSubtitle}>@{account.username}</Text>
+          <Text style={[styles.headerTitle, { color: theme.text }]}>Kişiler</Text>
+          <Text style={[styles.headerSubtitle, { color: theme.textFaint }]}>@{account.username}</Text>
         </View>
         <Pressable onPress={onLogout} hitSlop={8}>
           <Text style={styles.logoutText}>Çıkış</Text>
         </Pressable>
       </View>
+
+      {!isOnline && (
+        <View style={styles.offlineBanner}>
+          <Text style={styles.offlineBannerText}>📡 İnternet bağlantısı yok — sohbetler güncellenemiyor</Text>
+        </View>
+      )}
 
       {loadError && (
         <View style={styles.errorBanner}>
@@ -98,18 +108,22 @@ function ContactsScreen({ account, onOpenRoom, onLogout }: Props): React.JSX.Ele
         keyExtractor={item => item.uid}
         contentContainerStyle={styles.listContent}
         ListEmptyComponent={
-          <Text style={styles.emptyText}>
+          <Text style={[styles.emptyText, { color: theme.textFaint }]}>
             Henüz kişin yok. Aşağıdan bir kullanıcı adı ile ekle.
           </Text>
         }
         renderItem={({ item }) => (
           <Pressable
-            style={({ pressed }) => [styles.contactRow, pressed && styles.contactRowPressed]}
+            style={({ pressed }) => [
+              styles.contactRow,
+              { backgroundColor: theme.surface, borderColor: theme.border },
+              pressed && styles.contactRowPressed,
+            ]}
             onPress={() => onOpenRoom(item)}>
             <View style={styles.contactAvatar}>
               <Text style={styles.contactAvatarText}>{item.name.slice(0, 1).toUpperCase()}</Text>
             </View>
-            <Text style={styles.contactName}>{item.name}</Text>
+            <Text style={[styles.contactName, { color: theme.text }]}>{item.name}</Text>
           </Pressable>
         )}
       />
@@ -130,13 +144,16 @@ function ContactsScreen({ account, onOpenRoom, onLogout }: Props): React.JSX.Ele
         transparent
         animationType="fade"
         onRequestClose={() => setAddModalVisible(false)}>
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Kişi Ekle</Text>
+        <View style={[styles.modalOverlay, { backgroundColor: theme.overlay }]}>
+          <View style={[styles.modalCard, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+            <Text style={[styles.modalTitle, { color: theme.text }]}>Kişi Ekle</Text>
             <TextInput
-              style={styles.modalInput}
+              style={[
+                styles.modalInput,
+                { backgroundColor: theme.inputBackground, color: theme.text, borderColor: theme.border },
+              ]}
               placeholder="Kullanıcı adı"
-              placeholderTextColor="rgba(245,245,247,0.4)"
+              placeholderTextColor={theme.textFaint}
               value={usernameDraft}
               onChangeText={setUsernameDraft}
               autoCapitalize="none"
@@ -145,9 +162,12 @@ function ContactsScreen({ account, onOpenRoom, onLogout }: Props): React.JSX.Ele
               editable={!adding}
             />
             <TextInput
-              style={styles.modalInput}
+              style={[
+                styles.modalInput,
+                { backgroundColor: theme.inputBackground, color: theme.text, borderColor: theme.border },
+              ]}
               placeholder="Takma ad (opsiyonel)"
-              placeholderTextColor="rgba(245,245,247,0.4)"
+              placeholderTextColor={theme.textFaint}
               value={nicknameDraft}
               onChangeText={setNicknameDraft}
               maxLength={24}
@@ -217,6 +237,19 @@ const styles = StyleSheet.create({
   errorBannerText: {
     color: '#FF6B6B',
     fontSize: 12.5,
+  },
+  offlineBanner: {
+    backgroundColor: 'rgba(255,184,77,0.14)',
+    marginHorizontal: 16,
+    marginTop: 12,
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
+  offlineBannerText: {
+    color: '#FFB84D',
+    fontSize: 12.5,
+    fontWeight: '600',
   },
   listContent: {
     paddingHorizontal: 16,

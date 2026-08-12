@@ -27,6 +27,8 @@ import {
 import { localFileToDataUri, uploadRoomMedia } from '../services/mediaService';
 import { startVoiceCall, startVideoCall } from '../services/callService';
 import { requestMicrophonePermission } from '../services/permissionsService';
+import { useTheme } from '../theme/ThemeContext';
+import { useNetworkStatus } from '../hooks/useNetworkStatus';
 
 interface Props {
   myUid: string;
@@ -45,6 +47,8 @@ const MIN_RECORDING_MS = 600;
 
 function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JSX.Element {
   const insets = useSafeAreaInsets();
+  const { theme } = useTheme();
+  const isOnline = useNetworkStatus();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState('');
   const [connectionError, setConnectionError] = useState<string | null>(null);
@@ -230,14 +234,14 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
 
   return (
     <KeyboardAvoidingView
-      style={styles.container}
+      style={[styles.container, { backgroundColor: theme.background }]}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       keyboardVerticalOffset={0}>
-      <View style={[styles.header, { paddingTop: insets.top + 12 }]}>
+      <View style={[styles.header, { borderBottomColor: theme.border, paddingTop: insets.top + 12 }]}>
         <Pressable onPress={onBack} hitSlop={8} style={styles.backButton}>
-          <Text style={styles.backText}>‹</Text>
+          <Text style={[styles.backText, { color: theme.textMuted }]}>‹</Text>
         </Pressable>
-        <Text style={styles.headerTitle} numberOfLines={1}>
+        <Text style={[styles.headerTitle, { color: theme.text }]} numberOfLines={1}>
           {contact.name}
         </Text>
         <Pressable
@@ -253,6 +257,12 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
           <Text style={styles.headerIconText}>🎥</Text>
         </Pressable>
       </View>
+
+      {!isOnline && (
+        <View style={styles.offlineBanner}>
+          <Text style={styles.offlineBannerText}>📡 İnternet bağlantısı yok</Text>
+        </View>
+      )}
 
       {connectionError && (
         <View style={styles.errorBanner}>
@@ -285,14 +295,22 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
         </View>
       )}
 
-      <View style={[styles.inputBar, { paddingBottom: Math.max(insets.bottom, 12) }]}>
+      <View
+        style={[
+          styles.inputBar,
+          { backgroundColor: theme.background, borderTopColor: theme.border },
+          { paddingBottom: Math.max(insets.bottom, 12) },
+        ]}>
         <Pressable onPress={handleAttachPress} hitSlop={8} style={styles.attachButton} disabled={uploadingMedia}>
           <Text style={styles.attachIcon}>📎</Text>
         </Pressable>
         <TextInput
-          style={styles.input}
+          style={[
+            styles.input,
+            { backgroundColor: theme.surface, color: theme.text, borderColor: theme.border },
+          ]}
           placeholder="Mesaj yaz..."
-          placeholderTextColor="rgba(245,245,247,0.4)"
+          placeholderTextColor={theme.textFaint}
           value={draft}
           onChangeText={setDraft}
           multiline
@@ -308,7 +326,11 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
           </Pressable>
         ) : (
           <Pressable
-            style={[styles.micButton, isRecording && styles.micButtonActive]}
+            style={[
+              styles.micButton,
+              { backgroundColor: theme.surface, borderColor: theme.border },
+              isRecording && styles.micButtonActive,
+            ]}
             onPressIn={handleStartRecording}
             onPressOut={handleStopRecording}
             disabled={uploadingMedia}>
@@ -369,6 +391,16 @@ const styles = StyleSheet.create({
   errorBannerText: {
     color: '#FF6B6B',
     fontSize: 12.5,
+  },
+  offlineBanner: {
+    backgroundColor: 'rgba(255,184,77,0.14)',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+  },
+  offlineBannerText: {
+    color: '#FFB84D',
+    fontSize: 12.5,
+    fontWeight: '600',
   },
   listContent: {
     paddingHorizontal: 14,

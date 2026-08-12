@@ -4,19 +4,30 @@
  */
 
 import React from 'react';
-import { StatusBar, StyleSheet, useColorScheme, View } from 'react-native';
+import { StatusBar, StyleSheet, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import AppNavigator from './src/navigation/AppNavigator';
+import { ThemeProvider, useTheme } from './src/theme/ThemeContext';
 
-function App(): React.JSX.Element {
-  const isDarkMode = useColorScheme() === 'dark';
+function AppContent(): React.JSX.Element {
+  const { theme, mode } = useTheme();
 
   return (
-    <SafeAreaProvider>
-      <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
-      <View style={styles.container}>
+    <>
+      <StatusBar barStyle={mode === 'dark' ? 'light-content' : 'dark-content'} />
+      <View style={[styles.container, { backgroundColor: theme.background }]}>
         <AppNavigator />
       </View>
+    </>
+  );
+}
+
+function App(): React.JSX.Element {
+  return (
+    <SafeAreaProvider>
+      <ThemeProvider>
+        <AppContent />
+      </ThemeProvider>
     </SafeAreaProvider>
   );
 }

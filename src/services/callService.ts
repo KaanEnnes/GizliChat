@@ -60,6 +60,10 @@ async function startCall(
     ring: true,
     data: {
       members: [{ user_id: myUid }, { user_id: contact.uid }],
+      // Read back on both sides in CallScreen to pick the right audio route
+      // (earpiece for voice calls, speaker for video calls) — the callee has
+      // no other way to know which kind of call this is before joining.
+      custom: { isVideo: video },
     },
   });
   if (video) {

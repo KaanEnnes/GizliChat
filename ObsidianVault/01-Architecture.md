@@ -23,12 +23,26 @@ Bağlam için önce [[00-START-HERE]] dosyasına bak.
 - `src/components/MessageBubble.tsx` — Tek bir sohbet mesajı satırı. Gönderen kullanıcı ise (`isMine`)
   sağa yaslı/mavi, karşı taraf ise sola yaslı/gri stil. `message.createdAt`'ten `HH:MM` saat damgası
   render eder. `message.type`'a göre dallanır: `text` → düz metin, `image`/`video` → küçük önizleme
-  (tam ekran görüntüleyici modal'ı açar, dokununca), `audio` → `AudioMessagePlayer`.
+  (tam ekran görüntüleyici modal'ı açar, dokununca), `audio` → `AudioMessagePlayer`, `call` → normal
+  balon yerine ortalanmış bir WhatsApp-tarzı "çağrı geçmişi" kapsülü (📞/🎥 ikon, yön oku, süre ya
+  da "Cevapsız arama").
 - `src/components/AudioMessagePlayer.tsx` — Tek bir sesli mesaj balonu için oynat/duraklat kontrolü,
   `react-native-nitro-sound`'ın (singleton export, `Sound`) oynatma API'sini kullanır.
 - `src/components/CallProvider.tsx` — Hesap girişi yapılmış ekranları (`CONTACTS`, `CHAT_ROOM`)
   sarmalayan `StreamVideo` provider'ı. İçindeki `IncomingCallWatcher`, `useCalls()` ile her
-  `ringing` çağrıyı (hem gelen hem bu cihazın başlattığı) yakalayıp tam ekran `CallScreen` açar.
+  `ringing` çağrıyı (hem gelen hem bu cihazın başlattığı) yakalayıp tam ekran `CallScreen` açar; çağrı
+  bitince `CallScreen`'in verdiği `CallSummary`'den `chatService.sendCallLogMessage()` ile sohbete bir
+  çağrı-geçmişi kaydı düşer.
+- `src/components/NotificationCenter.tsx` — `CallProvider` ile birlikte `AppNavigator`'da
+  `CONTACTS`/`CHAT_ROOM` etrafını **tek seferlik** (ekran değişince yeniden kurulmadan) sarmalar.
+  Her kişinin odasını `chatService.subscribeToLatestMessage()` ile dinler, kendi mesajlarını/geçmişi/
+  o an açık olan sohbeti filtreler, kalan yeni mesajlar için "oyun bildirimi" görünümlü bir toast
+  gösterir (`notificationService`/`soundService`/`hapticsService` ile aç/kapa + ses + titreşim).
+  Sadece uygulama açık/arka planda çalışırken tetikleniyor — gerçek arka plan push değil, bkz.
+  [[Changelog]] ve `YAPILACAKLAR.txt`.
+- `src/components/SettingsModal.tsx` — Tema, ses efekti, bildirim, titreşim aç/kapa switch'leri +
+  basit bir sürüm bilgisi satırı. `GameHubScreen`'deki gizli dişli ikonuna gecikmeli tek dokunuşla
+  açılır (10'lu seri gizli admin jestini bozmadan).
 
 ### src/config
 - `src/config/firebaseConfig.ts` — Sabit kodlanmış Firebase Web SDK config objesi
@@ -40,22 +54,35 @@ Bağlam için önce [[00-START-HERE]] dosyasına bak.
 
 ### src/navigation
 - `src/navigation/AppNavigator.tsx` — Uygulamanın tüm "navigasyon" katmanı. Kütüphane yok; elle
-  yazılmış `useState<'HOME'|'ACCOUNT'|'CONTACTS'|'CHAT_ROOM'>` ile ekran anahtarlama. Aktif oda
-  (`{ myUid, contact }`) `activeRoom` state'inde tutulur, `ContactsScreen`'den bir kişiye dokununca
-  doldurulur. Android donanım geri tuşu (`BackHandler`): `ACCOUNT`/`CONTACTS` → `HOME`,
+  yazılmış `useState<'HOME'|'ACCOUNT'|'CONTACTS'|'CHAT_ROOM'>` ile ekran anahtarlama. `HOME`
+  durumunda `GameHubScreen` render edilir (bkz. aşağıda). Aktif oda (`{ myUid, contact }`)
+  `activeRoom` state'inde tutulur, `ContactsScreen`'den bir kişiye dokununca doldurulur. `CONTACTS`/
+  `CHAT_ROOM` artık **tek bir** `CallProvider`+`NotificationCenter` sarmalayıcısı içinde (ikisi de
+  ekran değişince yeniden kurulmuyor — eskiden her ikisinin de kendi ayrı `CallProvider` render'ı
+  vardı). Android donanım geri tuşu (`BackHandler`): `ACCOUNT`/`CONTACTS` → `HOME`,
   `CHAT_ROOM` → `CONTACTS`.
 
 ### src/screens
-- `src/screens/HomeScreen.tsx` — Projenin en büyük dosyası. Tamamen component içinde yazılmış bir
-  **Block-Blast tarzı bulmaca oyunu** ("BLOK ÇILGINLIĞI"): 8x8 tahta, 3 zorluk seviyesinde ağırlıklı
-  rastgele parça üretimi, `PanResponder`/`Animated` ile sürükle-bırak, satır temizleme, skor, modül
-  içinde tutulan (kalıcı olmayan) `bestScore`. Parça yerleştirmede/satır temizlemede/oyun bitişinde
-  `soundService`'ten ses çalar. Oyun bitince, daha önce isim kaydedilmemişse bir modal ile bir kere
-  isim sorar (`playerNameStorage`'a kaydeder), sonra `leaderboardService.submitScore()` ile skoru
-  gönderir; "🏆 Skor Tablosu" butonu `fetchTopScores()` ile top 20'yi bir modalda listeler. Ekranın
-  köşesindeki `⚙` dişli ikonuna 3.5 saniye içinde 10 kez dokununca `onAdminTriggerReached()` çağrılır
-  — bu, uygulamanın gizli giriş tetikleyicisi, doğrudan `AccountScreen`'e geçirir (eskiden burada
-  bir sahte/mock admin şifre ekranı vardı, tamamen kaldırıldı — bkz. [[Changelog]]).
+- `src/screens/GameHubScreen.tsx` — Uygulamanın görünen ana ekranı (disguise'ın "ön kapısı"): 5
+  oyunu (Blok Çılgınlığı, 2048, Yılan, Renk Hafızası, Köstebek Vurma) gösteren, giriş animasyonlu
+  bir kart ızgarası. Gizli 10-dokunuş admin tetikleyicisi + tek-dokunuşla-Ayarlar mekanizması
+  burada yaşıyor (eskiden `HomeScreen`'in kendi menü ekranındaydı, artık hangi oyun en son
+  oynandığından bağımsız). Bir karta dokununca o oyunu `{ onBack }` prop'uyla tam ekran render eder.
+- `src/screens/HomeScreen.tsx` — Tamamen component içinde yazılmış bir **Block-Blast tarzı bulmaca
+  oyunu** ("BLOK ÇILGINLIĞI"): 8x8 tahta, 3 zorluk seviyesinde ağırlıklı rastgele parça üretimi,
+  `PanResponder`/`Animated` ile sürükle-bırak, satır temizleme, skor, modül içinde tutulan (kalıcı
+  olmayan) `bestScore`. Parça yerleştirmede/satır temizlemede/oyun bitişinde `soundService`'ten ses
+  çalar. Oyun bitince, daha önce isim kaydedilmemişse bir modal ile bir kere isim sorar
+  (`playerNameStorage`'a kaydeder), sonra `leaderboardService.submitScore()` ile skoru gönderir;
+  "🏆 Skor Tablosu" butonu `fetchTopScores()` ile top 20'yi bir modalda listeler. Artık `GameHubScreen`
+  tarafından render edilen, `{ onBack }` alan sıradan bir oyun ekranı (admin tetikleyici/Ayarlar
+  burada değil, bkz. `GameHubScreen`).
+- `src/screens/Game2048.tsx` — 4x4 2048 motoru, kararlı `id`'li `TileData[]` temsili sayesinde her
+  taş kendi `Animated.ValueXY`'siyle kayarak taşınıyor/birleşiyor/doğuyor (bkz. [[Changelog]]).
+- `src/screens/SnakeGame.tsx` — Klasik Yılan, 14x14 kafes, tüm segmentlerin tek bir paylaşılan
+  `Animated.Value` üzerinden senkron kaymasıyla akıcı hareket.
+- `src/screens/ColorMemoryGame.tsx` — Simon tarzı 4 pedli büyüyen dizi hafıza oyunu.
+- `src/screens/WhackAMoleGame.tsx` — 3x3 delik, 30 saniyelik köstebek-vurma turu.
 - `src/screens/AccountScreen.tsx` — Gerçek Firebase Auth (email/şifre) tabanlı giriş/kayıt ekranı.
   Mount olunca `getRestoredAccountUser()` ile cihazda zaten kalıcı gerçek bir oturum olup olmadığı
   sessizce kontrol edilir; varsa form hiç gösterilmeden doğrudan `onAuthenticated()` çağrılır. Yoksa
@@ -79,7 +106,10 @@ Bağlam için önce [[00-START-HERE]] dosyasına bak.
   `mediaService.uploadRoomMedia()` ile Storage'a yüklenip `sendMediaMessage()` ile gönderilir.
 - `src/screens/CallScreen.tsx` — Bir `Call` nesnesini `StreamCall` ile sarar, `CallingState`'e göre
   `RingingCallContent` (çalıyor/arıyor ekranı) ile `CallContent` (aktif görüşme: kamera/mikrofon
-  kontrolleri) arasında geçiş yapar.
+  kontrolleri) arasında geçiş yapar. `onLeave` artık parametresiz değil — çağrı bitince bir
+  `CallSummary` (`otherUserId`, `isVideo`, `isCreatedByMe`, `wasJoined`, `durationSeconds`) verir,
+  `CallProvider` bunu sohbete çağrı-geçmişi kaydı düşmek için kullanır. Sesli/görüntülü arama her
+  zaman `'speaker'` (hoparlör) rotası kullanıyor — bkz. [[Changelog]] "hoparlör düzeltmesi".
 
 ### src/services
 - `src/services/firebase.ts` — Firebase başlatma modülü. `initializeApp(FIREBASE_CONFIG)`,
@@ -113,8 +143,11 @@ Bağlam için önce [[00-START-HERE]] dosyasına bak.
   (eskiden tek sabit `'messages'` koleksiyonuydu — o eski tasarım/veri artık kullanılmıyor, bkz.
   [[Changelog]]). `getRoomId(uidA, uidB)` iki uid'i sıralayıp birleştirerek deterministik bir oda id'si
   üretir (kim kimi açarsa açsın aynı id). Mesajlar `rooms/{roomId}/messages` altında (limit 300,
-  `createdAt asc`). `ChatMessage { id, text, senderId, createdAt }`, `subscribeToMessages(roomId, ...)`
-  ve `sendMessage(roomId, text, senderId)` export eder.
+  `createdAt asc`). `MessageType` artık `'text'|'image'|'video'|'audio'|'call'`; `sendCallLogMessage()`
+  bir çağrının bitişini (`callVideo`/`callStatus: 'completed'|'missed'`/`durationSeconds`) sohbete
+  yazar. `subscribeToLatestMessage(roomId, ...)` — `subscribeToMessages`'ın hafif kardeşi, tek belge
+  (`orderBy desc, limit 1`), `NotificationCenter`'ın N oda dinlemesi için (300'lük tam geçmişi N kere
+  çekmek yerine).
 - `src/services/leaderboardService.ts` — Herkese açık, paylaşılan skor tablosu. Sabit koleksiyon
   `'highscores'`: `{ name, score, createdAt }`. `submitScore(name, score)` ve
   `fetchTopScores()` (top 20, skora göre azalan) export eder. Kullanıcı kimliğine/uid'e bağlı değil —
@@ -122,11 +155,17 @@ Bağlam için önce [[00-START-HERE]] dosyasına bak.
 - `src/services/playerNameStorage.ts` — Oyuncunun leaderboard'da görünecek adını AsyncStorage'da
   saklar (`gizlichat_player_name` anahtarı). `getSavedPlayerName()`/`savePlayerName()`. Bu, chat
   sistemindeki `userService`'ten tamamen ayrı — oyun ismi ile kişi/chat profili birbirine bağlı değil.
-- `src/services/soundService.ts` — `react-native-sound` ile ses efektleri. Üç sentetik (üçüncü parti
-  ses varlığı olmayan, programatik üretilmiş) WAV dosyasını (`sfx_place`, `sfx_clear`, `sfx_gameover`)
-  `android/app/src/main/res/raw/`'dan yükler; `playPlaceSound()`/`playClearSound()`/`playGameOverSound()`
-  export eder. Şu an sadece Android'de etkin (`Platform.OS === 'android'` kontrolü) — iOS için ses
-  dosyaları Xcode projesine eklenmedi.
+- `src/services/soundService.ts` — `react-native-sound` ile ses efektleri. 15 sentetik (üçüncü parti
+  ses varlığı olmayan, programatik üretilmiş sinüs/kare dalga) WAV dosyasını `android/app/src/main/
+  res/raw/`'dan yükler ve karşılık gelen `playXSound()` fonksiyonlarını export eder (`place`/`clear`/
+  `gameover`/`tap`/`merge`/`eat`/`noteA-D`/`wrong`/`hit`/`miss`/`notification`/`win` — hangi oyunun
+  hangisini kullandığı için [[Changelog]]'a bak). `isSoundEnabled()`/`setSoundEnabled()` ile
+  Ayarlar'dan aç/kapa (AsyncStorage `gizlichat_sound_enabled`). Şu an sadece Android'de etkin
+  (`Platform.OS === 'android'` kontrolü) — iOS için ses dosyaları Xcode projesine eklenmedi.
+- `src/services/notificationService.ts` / `src/services/hapticsService.ts` — `soundService`'le aynı
+  desen (modül seviyesinde cache'lenmiş bayrak + AsyncStorage kalıcılık): sırasıyla `NotificationCenter`
+  toast'larının ve oyun-bitti/bildirim titreşimlerinin (`Vibration`, ekstra bağımlılık yok) Ayarlar'dan
+  aç/kapa edilmesini sağlar.
 - `src/services/mediaService.ts` — `uploadRoomMedia(roomId, kind, localUri, extension)`: bir
   `file://` uri'sini Firebase Storage'a `rooms/{roomId}/media/{kind}/` altına yükler, indirme
   URL'ini döner. Sadece video mesajları için kullanılıyor — fotoğraflar artık Storage'a hiç
@@ -144,8 +183,9 @@ Bağlam için önce [[00-START-HERE]] dosyasına bak.
 **dependencies:**
 - `firebase` (^12.17.1) — Auth (anonim + email/şifre), Firestore, ve artık **Storage**
   (`mediaService.ts`) kullanılıyor. Functions/Analytics/Remote Config/Crashlytics kullanılmıyor.
-- `@react-native-async-storage/async-storage` (^3.1.1) — sadece Firebase Auth persistence için
-  kullanılıyor, başka hiçbir yerde local cache/storage yok.
+- `@react-native-async-storage/async-storage` (^3.1.1) — Firebase Auth persistence'ın yanı sıra artık
+  tema modu, ses/bildirim/titreşim aç-kapa tercihleri, ve her mini oyunun en-yüksek-skoru için de
+  kullanılıyor (bkz. [[Changelog]]).
 - `react-native-safe-area-context` (^5.5.2) — `SafeAreaProvider`/`useSafeAreaInsets`,
   `App.tsx`/`HomeScreen.tsx`/`ContactsScreen.tsx`/`ChatRoomScreen.tsx`'te.
 - `react-native-sound` — native ses çalma modülü, `src/services/soundService.ts`'te kullanılıyor
@@ -162,9 +202,13 @@ Bağlam için önce [[00-START-HERE]] dosyasına bak.
   'react-native-nitro-sound'`, `new` ile çağrılmaz).
 - `crypto-js` — sadece Stream arama token'ları için HMAC-SHA256 imzalama (`callService.ts`). Saf JS,
   native modül değil.
-- `@stream-io/video-react-native-sdk`, `@stream-io/react-native-webrtc`, `react-native-svg`,
-  `@react-native-community/netinfo` — sesli/görüntülü arama (Stream Video SDK ve zorunlu peer
-  bağımlılıkları). Native WebRTC modülü içerir, APK rebuild'i gerektirir.
+- `@stream-io/video-react-native-sdk`, `@stream-io/react-native-webrtc`, `react-native-svg` —
+  sesli/görüntülü arama (Stream Video SDK ve zorunlu peer bağımlılıkları). Native WebRTC modülü
+  içerir, APK rebuild'i gerektirir.
+- `@react-native-community/netinfo` (^12.0.1) — Stream Video SDK'nın zorunlu peer bağımlılığı olarak
+  zaten kuruluydu ama kullanılmıyordu; `src/hooks/useNetworkStatus.ts` ile artık gerçekten devrede
+  (çevrimdışı banner'ı, bkz. [[Changelog]]). Jest mock'u: `__mocks__/@react-native-community/
+  netinfo.js` (paketin kendi resmi mock'unu re-export ediyor).
 - Native modül içeren tüm yukarıdaki paketler için (`react-native-sound`, `-image-picker`,
   `-nitro-sound`, `-video`, `@stream-io/video-react-native-sdk`) Jest'te native taraf olmadığından
   `__mocks__/` altında manuel mock'lar var (bkz. [[05-Build-Deployment]]).

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   Animated,
+  Easing,
   FlatList,
   GestureResponderEvent,
   Modal,
@@ -16,15 +17,15 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { playClearSound, playGameOverSound, playPlaceSound } from '../services/soundService';
+import { vibrateMedium } from '../services/hapticsService';
 import { getSavedPlayerName, savePlayerName } from '../services/playerNameStorage';
 import { fetchTopScores, HighScoreEntry, submitScore } from '../services/leaderboardService';
+import { useTheme } from '../theme/ThemeContext';
 
 interface Props {
-  onAdminTriggerReached: () => void;
+  /** Returns to GameHubScreen's game-picker grid (the gear/settings/secret trigger live there now). */
+  onBack: () => void;
 }
-
-const REQUIRED_TAPS = 10;
-const TAP_RESET_MS = 3500;
 
 // ---------------------------------------------------------------------------
 // Game constants & types
@@ -373,45 +374,10 @@ function renderDecorCells(cellSize: number) {
 // Component
 // ---------------------------------------------------------------------------
 
-function HomeScreen({ onAdminTriggerReached }: Props): React.JSX.Element {
+function HomeScreen({ onBack }: Props): React.JSX.Element {
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
-
-  // --- Preserved admin tap-trigger mechanism (unchanged logic) -------------
-  const [, setTapCount] = useState(0);
-  const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const clearResetTimer = useCallback(() => {
-    if (resetTimer.current) {
-      clearTimeout(resetTimer.current);
-      resetTimer.current = null;
-    }
-  }, []);
-
-  const handleIconPress = useCallback(() => {
-    clearResetTimer();
-
-    setTapCount(prev => {
-      const next = prev + 1;
-
-      if (next >= REQUIRED_TAPS) {
-        setTimeout(() => onAdminTriggerReached(), 0);
-        return 0;
-      }
-
-      resetTimer.current = setTimeout(() => {
-        setTapCount(0);
-        resetTimer.current = null;
-      }, TAP_RESET_MS);
-
-      return next;
-    });
-  }, [clearResetTimer, onAdminTriggerReached]);
-
-  useEffect(() => {
-    return () => clearResetTimer();
-  }, [clearResetTimer]);
-  // --------------------------------------------------------------------------
+  const { theme } = useTheme();
 
   // --- Game state ------------------------------------------------------------
   const [screen, setScreen] = useState<ScreenState>('menu');
@@ -454,6 +420,7 @@ function HomeScreen({ onAdminTriggerReached }: Props): React.JSX.Element {
     (finalScore: number) => {
       finalScoreRef.current = finalScore;
       playGameOverSound();
+      vibrateMedium();
       setScreen('gameover');
       if (playerName) {
         submitFinalScore(playerName, finalScore);
@@ -719,9 +686,13 @@ function HomeScreen({ onAdminTriggerReached }: Props): React.JSX.Element {
         triggerShake();
         const origin = dragOriginRef.current;
         if (origin) {
-          Animated.spring(ghostPos, {
+          // A snappy timing animation (not a spring) so an invalid drop
+          // returns to the tray immediately instead of visibly hovering in
+          // place before drifting back.
+          Animated.timing(ghostPos, {
             toValue: { x: origin.x, y: origin.y },
-            friction: 6,
+            duration: 140,
+            easing: Easing.out(Easing.quad),
             useNativeDriver: true,
           }).start(() => setDragIndex(null));
         } else {
@@ -795,32 +766,41 @@ function HomeScreen({ onAdminTriggerReached }: Props): React.JSX.Element {
   const draggedPiece = dragIndex !== null ? pieces[dragIndex] : null;
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: theme.background }]}>
       {screen === 'menu' && (
         <View
           style={[
             styles.menuContent,
             { paddingTop: insets.top + 16, paddingBottom: insets.bottom + 16 },
           ]}>
+          <View style={styles.hubBackRow}>
+            <Pressable onPress={onBack} hitSlop={8} accessibilityRole="button" accessibilityLabel="Oyunlara dön">
+              <Text style={[styles.menuLink, { color: theme.textMuted }]}>‹ Oyunlar</Text>
+            </Pressable>
+          </View>
+
           <View style={styles.header}>
-            <Text style={styles.title}>BLOK ÇILGINLIĞI</Text>
-            <Text style={styles.subtitle}>Blokları birleştir, sıraları temizle!</Text>
+            <Text style={[styles.title, { color: theme.text }]}>BLOK ÇILGINLIĞI</Text>
+            <Text style={[styles.subtitle, { color: theme.textMuted }]}>
+              Blokları birleştir, sıraları temizle!
+            </Text>
           </View>
 
           <View style={styles.statsRow}>
-            <View style={styles.statCard}>
-              <Text style={styles.statLabel}>SON SKOR</Text>
-              <Text style={styles.statValue}>{score}</Text>
+            <View style={[styles.statCard, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+              <Text style={[styles.statLabel, { color: theme.textFaint }]}>SON SKOR</Text>
+              <Text style={[styles.statValue, { color: theme.text }]}>{score}</Text>
             </View>
-            <View style={styles.statCard}>
-              <Text style={styles.statLabel}>EN YÜKSEK</Text>
-              <Text style={styles.statValue}>{bestScore}</Text>
+            <View style={[styles.statCard, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+              <Text style={[styles.statLabel, { color: theme.textFaint }]}>EN YÜKSEK</Text>
+              <Text style={[styles.statValue, { color: theme.text }]}>{bestScore}</Text>
             </View>
           </View>
 
           <Animated.View
             style={[
               styles.boardCard,
+              { backgroundColor: theme.surfaceAlt, borderColor: theme.border },
               { width: boardSize, height: boardSize, transform: [{ scale: decorPulse }] },
             ]}>
             <View style={{ width: innerBoardSize, height: innerBoardSize }}>
@@ -850,11 +830,13 @@ function HomeScreen({ onAdminTriggerReached }: Props): React.JSX.Element {
             style={styles.difficultyBack}
             accessibilityRole="button"
             accessibilityLabel="Ana menüye dön">
-            <Text style={styles.menuLink}>‹ Menü</Text>
+            <Text style={[styles.menuLink, { color: theme.textMuted }]}>‹ Menü</Text>
           </Pressable>
 
-          <Text style={styles.difficultyTitle}>ZORLUK SEÇ</Text>
-          <Text style={styles.subtitle}>Oyuna başlamadan önce bir seviye seç.</Text>
+          <Text style={[styles.difficultyTitle, { color: theme.text }]}>ZORLUK SEÇ</Text>
+          <Text style={[styles.subtitle, { color: theme.textMuted }]}>
+            Oyuna başlamadan önce bir seviye seç.
+          </Text>
 
           <View style={styles.difficultyList}>
             {DIFFICULTY_ORDER.map(level => {
@@ -865,7 +847,7 @@ function HomeScreen({ onAdminTriggerReached }: Props): React.JSX.Element {
                   onPress={() => startNewGame(level)}
                   style={({ pressed }) => [
                     styles.difficultyCard,
-                    { borderColor: meta.accent },
+                    { backgroundColor: theme.surface, borderColor: meta.accent },
                     pressed && styles.difficultyCardPressed,
                   ]}
                   accessibilityRole="button"
@@ -875,7 +857,9 @@ function HomeScreen({ onAdminTriggerReached }: Props): React.JSX.Element {
                     <Text style={[styles.difficultyLabel, { color: meta.accent }]}>
                       {meta.label}
                     </Text>
-                    <Text style={styles.difficultyDescription}>{meta.description}</Text>
+                    <Text style={[styles.difficultyDescription, { color: theme.textMuted }]}>
+                      {meta.description}
+                    </Text>
                   </View>
                 </Pressable>
               );
@@ -896,17 +880,19 @@ function HomeScreen({ onAdminTriggerReached }: Props): React.JSX.Element {
               hitSlop={8}
               accessibilityRole="button"
               accessibilityLabel="Ana menüye dön">
-              <Text style={styles.menuLink}>‹ Menü</Text>
+              <Text style={[styles.menuLink, { color: theme.textMuted }]}>‹ Menü</Text>
             </Pressable>
-            <Animated.Text style={[styles.scoreText, { transform: [{ scale: scorePulse }] }]}>
+            <Animated.Text
+              style={[styles.scoreText, { color: theme.text }, { transform: [{ scale: scorePulse }] }]}>
               {score}
             </Animated.Text>
-            <Text style={styles.bestText}>En iyi: {bestScore}</Text>
+            <Text style={[styles.bestText, { color: theme.textFaint }]}>En iyi: {bestScore}</Text>
           </View>
 
           <Animated.View
             style={[
               styles.boardCard,
+              { backgroundColor: theme.surfaceAlt, borderColor: theme.border },
               {
                 width: boardSize,
                 height: boardSize,
@@ -962,6 +948,7 @@ function HomeScreen({ onAdminTriggerReached }: Props): React.JSX.Element {
                 {...(piece ? panResponderFor(index).panHandlers : {})}
                 style={[
                   styles.pieceCard,
+                  { backgroundColor: theme.surface, borderColor: theme.border },
                   !piece && styles.pieceCardEmpty,
                   dragIndex === index && styles.pieceCardDragging,
                 ]}>
@@ -972,10 +959,16 @@ function HomeScreen({ onAdminTriggerReached }: Props): React.JSX.Element {
 
           {screen === 'gameover' && (
             <View style={styles.gameOverOverlay}>
-              <View style={styles.gameOverCard}>
-                <Text style={styles.gameOverTitle}>OYUN BİTTİ</Text>
-                <Text style={styles.gameOverScore}>Skor: {score}</Text>
-                <Text style={styles.gameOverBest}>En yüksek: {bestScore}</Text>
+              <View
+                style={[
+                  styles.gameOverCard,
+                  { backgroundColor: theme.surface, borderColor: theme.border },
+                ]}>
+                <Text style={[styles.gameOverTitle, { color: theme.text }]}>OYUN BİTTİ</Text>
+                <Text style={[styles.gameOverScore, { color: theme.text }]}>Skor: {score}</Text>
+                <Text style={[styles.gameOverBest, { color: theme.textMuted }]}>
+                  En yüksek: {bestScore}
+                </Text>
                 <Pressable
                   onPress={() => startNewGame(difficulty)}
                   style={({ pressed }) => [
@@ -991,10 +984,14 @@ function HomeScreen({ onAdminTriggerReached }: Props): React.JSX.Element {
                   onPress={handleShowLeaderboard}
                   hitSlop={8}
                   style={styles.secondaryButton}>
-                  <Text style={styles.secondaryButtonText}>🏆 Skor Tablosu</Text>
+                  <Text style={[styles.secondaryButtonText, { color: theme.textMuted }]}>
+                    🏆 Skor Tablosu
+                  </Text>
                 </Pressable>
                 <Pressable onPress={handleBackToMenu} hitSlop={8} style={styles.secondaryButton}>
-                  <Text style={styles.secondaryButtonText}>Ana Menü</Text>
+                  <Text style={[styles.secondaryButtonText, { color: theme.textMuted }]}>
+                    Ana Menü
+                  </Text>
                 </Pressable>
               </View>
             </View>
@@ -1021,30 +1018,24 @@ function HomeScreen({ onAdminTriggerReached }: Props): React.JSX.Element {
         </Animated.View>
       )}
 
-      <Pressable
-        onPress={handleIconPress}
-        accessibilityRole="button"
-        accessibilityLabel="Admin girişi"
-        style={[styles.adminIcon, { bottom: insets.bottom + 20, right: insets.right + 20 }]}
-        hitSlop={10}>
-        <Text style={styles.adminIconText}>⚙</Text>
-      </Pressable>
-
       <Modal
         visible={nameModalVisible}
         transparent
         animationType="fade"
         onRequestClose={() => {}}>
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Skor tablosuna adını ekle</Text>
-            <Text style={styles.modalSubtitle}>
+        <View style={[styles.modalOverlay, { backgroundColor: theme.overlay }]}>
+          <View style={[styles.modalCard, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+            <Text style={[styles.modalTitle, { color: theme.text }]}>Skor tablosuna adını ekle</Text>
+            <Text style={[styles.modalSubtitle, { color: theme.textMuted }]}>
               Bu isim bir daha sorulmayacak, sonraki oyunlarda otomatik kullanılacak.
             </Text>
             <TextInput
-              style={styles.modalInput}
+              style={[
+                styles.modalInput,
+                { backgroundColor: theme.inputBackground, color: theme.text, borderColor: theme.border },
+              ]}
               placeholder="Adın"
-              placeholderTextColor="rgba(245,245,247,0.4)"
+              placeholderTextColor={theme.textFaint}
               value={nameDraft}
               onChangeText={setNameDraft}
               maxLength={24}
@@ -1071,11 +1062,11 @@ function HomeScreen({ onAdminTriggerReached }: Props): React.JSX.Element {
         transparent
         animationType="fade"
         onRequestClose={() => setLeaderboardVisible(false)}>
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>🏆 Skor Tablosu</Text>
+        <View style={[styles.modalOverlay, { backgroundColor: theme.overlay }]}>
+          <View style={[styles.modalCard, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+            <Text style={[styles.modalTitle, { color: theme.text }]}>🏆 Skor Tablosu</Text>
             {leaderboardLoading && (
-              <ActivityIndicator color="#4D96FF" style={styles.leaderboardLoader} />
+              <ActivityIndicator color={theme.accent} style={styles.leaderboardLoader} />
             )}
             {leaderboardError && <Text style={styles.errorTextModal}>{leaderboardError}</Text>}
             {!leaderboardLoading && !leaderboardError && (
@@ -1084,12 +1075,16 @@ function HomeScreen({ onAdminTriggerReached }: Props): React.JSX.Element {
                 keyExtractor={item => item.id}
                 style={styles.leaderboardList}
                 ListEmptyComponent={
-                  <Text style={styles.leaderboardEmpty}>Henüz skor yok, ilk sen ol!</Text>
+                  <Text style={[styles.leaderboardEmpty, { color: theme.textFaint }]}>
+                    Henüz skor yok, ilk sen ol!
+                  </Text>
                 }
                 renderItem={({ item, index }) => (
-                  <View style={styles.leaderboardRow}>
-                    <Text style={styles.leaderboardRank}>{index + 1}.</Text>
-                    <Text style={styles.leaderboardName} numberOfLines={1}>
+                  <View style={[styles.leaderboardRow, { borderBottomColor: theme.border }]}>
+                    <Text style={[styles.leaderboardRank, { color: theme.textFaint }]}>
+                      {index + 1}.
+                    </Text>
+                    <Text style={[styles.leaderboardName, { color: theme.text }]} numberOfLines={1}>
                       {item.name}
                     </Text>
                     <Text style={styles.leaderboardScore}>{item.score}</Text>
@@ -1101,7 +1096,7 @@ function HomeScreen({ onAdminTriggerReached }: Props): React.JSX.Element {
               onPress={() => setLeaderboardVisible(false)}
               hitSlop={8}
               style={styles.secondaryButton}>
-              <Text style={styles.secondaryButtonText}>Kapat</Text>
+              <Text style={[styles.secondaryButtonText, { color: theme.textMuted }]}>Kapat</Text>
             </Pressable>
           </View>
         </View>
@@ -1121,6 +1116,11 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     paddingHorizontal: 20,
+  },
+  hubBackRow: {
+    width: '100%',
+    maxWidth: 340,
+    marginBottom: 8,
   },
   header: {
     alignItems: 'center',
@@ -1561,23 +1561,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     textAlign: 'center',
     marginVertical: 16,
-  },
-
-  // --- Admin trigger icon (unchanged) ----------------------------------------
-  adminIcon: {
-    position: 'absolute',
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: '#1C1F26',
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-  },
-  adminIconText: {
-    fontSize: 18,
-    color: 'rgba(245,245,247,0.85)',
   },
 });
 

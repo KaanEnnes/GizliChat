@@ -57,3 +57,32 @@ gibi bir hata verir, hesap oluşturulamaz.
 
 Daha fazla teknik detay için: ObsidianVault/ klasöründeki notlara bak,
 özellikle ObsidianVault/00-START-HERE.md ve ObsidianVault/Changelog.md.
+
+5) (OPSİYONEL, İLERİDE) GERÇEK ARKA PLAN PUSH BİLDİRİMİ
+-----------------------------------------------------------
+Şu an bildirimler sadece uygulama açık/arka planda çalışırken geliyor
+(`src/components/NotificationCenter.tsx`, uygulama-içi toast) — bu bilinçli
+bir seçimdi, çünkü gerçek push (uygulama tamamen kapalıyken de bildirim,
+WhatsApp gibi) aşağıdaki elle yapılması gereken adımları gerektiriyor:
+
+- Firebase Console'da bu proje için Cloud Messaging'i aç, `google-services.json`
+  dosyasını indirip `android/app/`'e ekle.
+- Projeyi Blaze (kullandıkça öde) plana yükselt — kişisel kullanımda
+  muhtemelen $0 kalır ama bir ödeme yöntemi eklemen gerekir. Cloud
+  Functions bu plan olmadan deploy edilemiyor.
+- `@react-native-firebase/app` + `@react-native-firebase/messaging` (veya
+  benzeri) kur, native Android tarafında bildirim izni (Android 13+
+  `POST_NOTIFICATIONS`) ve bir bildirim kanalı ekle.
+- Her kullanıcının cihaz push token'ını `users/{uid}` altına yazacak bir
+  kayıt akışı ekle.
+- Yeni mesaj yazıldığında tetiklenen bir Firestore Cloud Function yaz
+  (`rooms/{roomId}/messages` üzerine `onCreate`), alıcının token'ına FCM
+  push gönderiyor.
+- `firebase deploy --only functions` ile fonksiyonu yayınla (Firebase
+  CLI'da giriş yapmış olman gerekir).
+
+Bu adımlar tamamlanınca kod tarafında `NotificationCenter`'ın tetikleme
+mekanizması (şu an Firestore `subscribeToLatestMessage` dinleyicileri)
+bir FCM arka plan mesaj handler'ıyla değiştirilebilir — toast UI'ı, ses
+(`soundService.playNotificationSound`) ve titreşim (`hapticsService.
+vibrateShort`) zaten hazır, aynen kullanılabilir.

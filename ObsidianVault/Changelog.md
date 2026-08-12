@@ -1,5 +1,206 @@
 # Değişiklik Günlüğü
 
+## 2026-08-12 — Oyun seçme menüsü + 3 yeni oyun, arama/ses düzeltmeleri, çağrı geçmişi, çevrimdışı uyarısı, uygulama-içi bildirim, ayarlar genişletmesi
+
+Kullanıcı isteği: (1) bir oyun seçme menüsü, 2048'e ses efekti/animasyon ekleyip "premium" hâle
+getirme, kumar/kart tarzı **olmayan** 3 yeni oyun daha ekleyip hepsini menüye entegre etme; (2)
+internet yokken sohbete bağlanırken uyarı; (3) arama bitince WhatsApp'taki gibi arama detaylarının
+(süre, cevapsız/tamamlandı) görünmesi; (4) çalışmayan bildirim sistemini "X kişisinden Y bildirimi
+geldi" tarzı değil, oyun bildirimi gibi görünecek şekilde kurma; (5) ayarlara birkaç madde daha
+ekleme; (6) sonradan eklenen bug: uygulama sesleri kulak hoparlöründen geliyormuş, düzeltme.
+
+**Bildirim sistemi kararı — kullanıcıyla netleştirildi:** Gerçek arka-plan push (uygulama kapalıyken
+de bildirim) Firebase Cloud Messaging + bir Cloud Function + Blaze plana geçiş + `google-services.json`
+gibi elle yapılması gereken adımlar gerektiriyordu. Kullanıcı **uygulama-içi (foreground/arka planda
+açık) bildirimi** seçti, "notlara yaz, ileride öbür sistemi de ekleyebileceğimiz şekilde yap" dedi.
+Bu yüzden `NotificationCenter` bilinçli olarak tek bir `showToast()` giriş noktası etrafında
+kuruldu — ileride gerçek push eklenirse (bkz. `YAPILACAKLAR.txt` sonundaki opsiyonel bölüm), sadece
+"ne zaman tetiklenir" kısmı (Firestore dinleyicileri yerine bir FCM mesaj handler'ı) değişir, toast
+UI'ı ve `soundService`/`hapticsService` entegrasyonu aynı kalabilir.
+
+**⚠️ Bu oturumda da cihaz/emülatör testi yapılamadı** — bu ortamda Android build/çalıştırma imkânı
+yok. Tüm değişiklikler `npx tsc --noEmit`, `npx eslint src`, `npx jest` ile doğrulandı; gerçek
+cihazda (özellikle ses efektleri, titreşim, ve arama sesi yönlendirmesi) henüz denenmedi.
+
+**1) Oyun seçme menüsü — `HomeScreen` ikiye ayrıldı.** Yeni `src/screens/GameHubScreen.tsx`:
+5 oyunu (Blok Çılgınlığı, 2048, Yılan, Renk Hafızası, Köstebek Vurma) gösteren, giriş animasyonlu
+(`Animated.stagger` ile sırayla beliren) bir kart ızgarası. Gizli 10-dokunuş admin tetikleyicisi +
+tek-dokunuşla-Ayarlar mekanizması **`HomeScreen`'den `GameHubScreen`'e taşındı** (artık hangi oyunu
+en son oynadığından bağımsız çalışıyor — önceden sadece Blok Çılgınlığı'nın kendi menü ekranındaydı).
+`HomeScreen` artık sadece Blok Çılgınlığı'nın kendisi: `onAdminTriggerReached` prop'u gitti,
+`{ onBack }` aldı (diğer oyunlarla aynı imza). `AppNavigator`, `HOME` durumunda artık `HomeScreen`
+yerine `GameHubScreen` render ediyor.
+
+**2) 2048 "premium" hâle getirildi.** `src/screens/Game2048.tsx` tamamen yeniden yazıldı: grid artık
+`number[][]` değil, kararlı `id`'li `TileData[]` — `moveTiles()` her taşınan/birleşen taşın nereden
+nereye gittiğini döndürüyor, her taş kendi `Animated.ValueXY`'siyle (native driver) kayarak
+taşınıyor, birleşen taş pop/bounce yapıyor, yeni doğan taş scale-in ile beliriyor, birleşmede
+"yutulan" taş hedef hücreye kayıp solarak kayboluyor (`GhostTileView`). Ses: `sfx_merge`
+(birleşmede), `sfx_win` + kısa "2048'e ulaştın" banner'ı (ilk 2048 taşında), `sfx_gameover`
+(bitişte). `soundService`'e `playMergeSound`/`playWinSound`/`playTapSound` eklendi.
+
+**3) İki yeni oyun (kumar/kart değil).** `src/screens/SnakeGame.tsx` (Yılan — 14x14 kafes, tek bir
+paylaşılan `Animated.Value` üzerinden tüm segmentlerin senkron kaymasıyla akıcı hareket, yem
+büyüdükçe hız artışı, `sfx_eat`/`sfx_gameover`) ve `src/screens/ColorMemoryGame.tsx` (Renk Hafızası
+— Simon tarzı 4 pedli büyüyen dizi hafıza oyunu, her ped kendi notasını çalıyor —
+`sfx_note_a/b/c/d` —, yanlışta `sfx_wrong`). **Üçüncü oyun:** `src/screens/WhackAMoleGame.tsx`
+(Köstebek Vurma — 3x3 delik, 30 saniyelik tur, zamanla kısalan görünme süresi, `sfx_hit`/`sfx_miss`).
+Dördü de kendi `AsyncStorage` en-yüksek-skor anahtarına sahip (`gizlichat_snake_best`,
+`gizlichat_colormemory_best`, `gizlichat_whackamole_best`, `gizlichat_2048_best`).
+
+**4) Yeni sentetik ses efektleri.** `android/app/src/main/res/raw/` altına (eski `sfx_place/clear/
+gameover` gibi, üçüncü parti ses varlığı olmadan, programatik sinüs/kare dalga üretimiyle) 12 yeni
+WAV eklendi: `sfx_tap`, `sfx_merge`, `sfx_eat`, `sfx_note_a..d`, `sfx_wrong`, `sfx_hit`, `sfx_miss`,
+`sfx_notification`, `sfx_win`. Üretim scripti oturuma özel scratchpad'te kaldı (repo'ya girmedi,
+tekrar üretmek gerekirse benzer bir Node scripti yazılabilir). `soundService.ts`'e karşılık gelen
+`playXSound()` fonksiyonları eklendi.
+
+**5) Sesli arama hoparlör düzeltmesi.** `CallScreen.tsx`'teki `callManager.start()` çağrısı önceki
+oturumda sesli aramalar için `deviceEndpointType: 'earpiece'` kullanıyordu (gerçek telefon gibi
+kulaklığa yakın hoparlör) — kullanıcı bunun **arama dışında da** (oyun/bildirim sesleri) kulak
+hoparlöründen çıkmaya devam ettiğini bildirdi (native ses oturumunun "varsayılan" rotası olarak
+yapışkanlaştığı görülüyor). Hem sesli hem görüntülü aramada artık her zaman `'speaker'` kullanılıyor.
+
+**6) Çağrı geçmişi (WhatsApp tarzı).** `chatService.ts`: `MessageType`'a `'call'` eklendi,
+`ChatMessage`'a `callVideo`/`callStatus` alanları, yeni `sendCallLogMessage()`. `CallScreen.tsx`
+artık `onLeave`'e bir `CallSummary` (`otherUserId`, `isVideo`, `isCreatedByMe`, `wasJoined`,
+`durationSeconds`) veriyor — `elapsedSeconds`'ın effect kapanışında bayatlamaması için ayrı bir
+`elapsedSecondsRef` eklendi. **Önemli düzeltme:** `CallContent`'in `onHangupCallHandler`'ı zaten
+`call.leave()`'den SONRA kendisi çağrılıyordu ve bu da `callingState === LEFT` efektini zaten
+tetikliyordu — ikisine birden `onLeave` bağlamak her manuel kapatmada çağrıyı **iki kere** loglardı;
+`onHangupCallHandler` tamamen kaldırıldı, tek kaynak `LEFT`/`RECONNECTING_FAILED` efektleri.
+`CallProvider.tsx`'teki `IncomingCallWatcher` artık `myUid` alıyor, `onLeave`'de `getRoomId()` +
+`sendCallLogMessage()` ile (best-effort, hatası yutulan) bir log yazıyor. `MessageBubble.tsx`
+`'call'` tipini normal balon yerine ortalanmış bir "çağrı geçmişi" kapsülü olarak çiziyor (📞/🎥
+ikon, yön oku, süre ya da "Cevapsız arama"/"Cevap verilmedi").
+
+**7) Çevrimdışı uyarısı.** Yeni `src/hooks/useNetworkStatus.ts` (zaten kurulu ama kullanılmayan
+`@react-native-community/netinfo`'yu ilk kez devreye soktu). `ContactsScreen` ve `ChatRoomScreen`'de
+`📡 İnternet bağlantısı yok` banner'ı. Jest'in native modülü mock'lamasına ihtiyacı vardı:
+`__mocks__/@react-native-community/netinfo.js` eklendi (paketin kendi resmi jest mock'unu re-export
+ediyor) — projedeki diğer native modül mock'larıyla aynı konvansiyon.
+
+**8) Uygulama-içi "oyun bildirimi" tarzı bildirimler.** Yeni `src/components/NotificationCenter.tsx`:
+`AppNavigator`'da `CONTACTS`/`CHAT_ROOM` arasında **artık yeniden kurulmayan tek bir** `CallProvider`+
+`NotificationCenter` sarmalayıcısı içinde (önceden iki ayrı `CallProvider` render'ı vardı, ekran
+değişince yeniden kuruluyordu — bu da Firestore dinleyicilerinin gereksiz yere kapatılıp
+açılmasına yol açardı). Her kişinin odasını `chatService.subscribeToLatestMessage()` (yeni, hafif —
+300 mesajlık tam geçmiş yerine sadece son mesaj) ile dinliyor; kendi mesajları, geçmiş mesajlar
+(mount'tan önceki), ve şu an açık olan sohbetin mesajları filtreleniyor. Kalan yeni mesajlar için
+"oyun bildirimi" görünümlü bir toast (🎮 rozet, kişi adı + önizleme, `sfx_notification` sesi, kısa
+titreşim) — WhatsApp/Android'in "X kişisinden Y bildirimi geldi" formatından bilinçli olarak
+farklı. Toast'a dokununca ilgili sohbet açılıyor. Yeni `src/services/notificationService.ts`
+(Ayarlar'dan aç/kapa, `soundService` ile aynı desen).
+
+**9) Ayarlar genişletildi.** `SettingsModal.tsx`'e Bildirimler (yukarıdaki toggle) ve Titreşim
+switch'leri + basit bir "Mini Oyunlar · v1.0" bilgi satırı eklendi. Yeni `src/services/
+hapticsService.ts` (RN'in yerleşik `Vibration` API'si, ekstra bağımlılık yok) — her oyunun
+oyun-bitti anında ve bildirim toast'ında kısa titreşim tetikliyor.
+
+**Etkilenen/yeni dosyalar (özet):** `src/screens/GameHubScreen.tsx` (yeni), `src/screens/
+SnakeGame.tsx` (yeni), `src/screens/ColorMemoryGame.tsx` (yeni), `src/screens/WhackAMoleGame.tsx`
+(yeni), `src/screens/Game2048.tsx` (yeniden yazıldı), `src/screens/HomeScreen.tsx` (hub kısmı
+çıkarıldı), `src/screens/CallScreen.tsx`, `src/components/CallProvider.tsx`, `src/components/
+NotificationCenter.tsx` (yeni), `src/components/MessageBubble.tsx`, `src/components/
+SettingsModal.tsx`, `src/services/chatService.ts`, `src/services/soundService.ts`, `src/services/
+notificationService.ts` (yeni), `src/services/hapticsService.ts` (yeni), `src/hooks/
+useNetworkStatus.ts` (yeni), `src/screens/ContactsScreen.tsx`, `src/screens/ChatRoomScreen.tsx`,
+`src/navigation/AppNavigator.tsx`, `android/app/src/main/res/raw/*.wav` (12 yeni), `jest.config.js`,
+`__mocks__/@react-native-community/netinfo.js` (yeni).
+
+## 2026-08-12 — Açık/koyu tema, ayarlar, 2048, blok geri-dönüş fix'i, ve olası sesli arama çözümü
+
+Kullanıcı isteği: oyun tarafına eklenebilecek her şey (animasyonlar, yeni bir oyun — kumar/kart
+hariç), açık/koyu tema, sağ alttaki dişli ikonuna gecikmeli tek dokunuşla açılan bir Ayarlar
+ekranı (10 dokunuşluk gizli jesti bozmadan), blok oyununda geçersiz bırakılan parçanın kutusuna
+daha hızlı dönmesi, sesli aramadaki ses sorununun düzeltilmesi, ve kulağa götürünce ekranın
+kapanması (hoparlör kapalıyken).
+
+**⚠️ Bu oturumda cihaz/emülatör testi yapılamadı** (bu ortamda Android build/çalıştırma imkânı
+yok) — aşağıdaki değişiklikler `npx tsc --noEmit`, `npx eslint src`, `npx jest` ile doğrulandı
+ama gerçek cihazda henüz denenmedi. Özellikle sesli arama fix'i bir sonraki oturumda/kullanıcı
+tarafından gerçek cihazda doğrulanmalı.
+
+**1) Açık/koyu tema sistemi.** Yeni `src/theme/ThemeContext.tsx`: `ThemeProvider` +
+`useTheme()` hook'u, `AsyncStorage`'da (`gizlichat_theme_mode`) kalıcı, `App.tsx`'te en dışta
+sarmalanıyor. `HomeScreen`, `AccountScreen`, `ContactsScreen`, `ChatRoomScreen`, `Game2048`
+tema tokenlarını (`background`/`surface`/`text`/`accent`/... ) kullanacak şekilde güncellendi —
+tam pixel-perfect değil (blok renkleri, gölgeler gibi bazı dekoratif detaylar sabit kaldı) ama
+tüm ana ekranlarda arka plan/metin/kart renkleri artık temaya göre değişiyor.
+
+**2) Ayarlar ekranı + dişli ikonu davranışı değişti.** Yeni `src/components/SettingsModal.tsx`
+(tema aç/kapa + ses efekti aç/kapa switch'leri). `HomeScreen`'deki dişli ikonu artık **hem** eski
+10-dokunuş/3.5sn gizli admin jestini **hem de** tek dokunuşla (550ms gecikmeli) Ayarlar'ı açıyor:
+her yeni dokunuş bir önceki "Ayarlar'ı aç" zamanlayıcısını iptal edip yeniden kuruyor, bu yüzden
+gerçek bir 10'lu seri asla Ayarlar'ı tetiklemiyor (`SETTINGS_OPEN_DELAY_MS = 550`,
+`src/screens/HomeScreen.tsx`). Ses efektleri artık kapatılabilir: `src/services/soundService.ts`'e
+`isSoundEnabled()`/`setSoundEnabled()` eklendi (AsyncStorage'da `gizlichat_sound_enabled`).
+
+**3) Blok oyunu: geçersiz bırakılan parça artık anında kutusuna dönüyor.** `finalizeDrag()`'teki
+`Animated.spring(..., friction: 6)` (yavaş başlayan, sallanarak yerleşen bir hareket) yerine
+`Animated.timing(..., duration: 140, easing: Easing.out(Easing.quad))` kondu — parça artık havada
+"bekliyormuş" hissi vermeden hızlıca tepsisine geri kayıyor.
+
+**4) Yeni oyun: 2048 (kumar/kart değil).** Yeni `src/screens/Game2048.tsx` — 4x4 tam bir 2048
+motoru (satır/sütun birleştirme, tek seferlik merge kuralı, skor, `AsyncStorage`'da kalıcı en
+yüksek skor `gizlichat_2048_best`, oyun bitti algılama, "Yeniden Başla"), kaydırma `PanResponder`
+ile algılanıyor (harici bir gesture kütüphanesi eklenmedi). `HomeScreen`'in ana menüsüne
+"🎮 2048 Oyna" butonu eklendi (`ScreenState`'e `'game2048'` eklendi); dişli ikonu/Ayarlar/tema
+hepsi ortak `HomeScreen` sarmalayıcısından geldiği için 2048 ekranında da aynı şekilde çalışıyor.
+
+**5) Sesli arama sessizlik sorunu için olası kök neden bulundu ve düzeltildi.** Kod incelemesinde
+`@stream-io/video-react-native-sdk`'nın **native ses yönlendirme/oturum yöneticisinin
+(`callManager`, eski adıyla `StreamInCallManager`) hiçbir yerde başlatılmadığı** görüldü —
+`CallContent`'in kendi otomatik-başlatma mantığı yalnızca artık deprecated olan
+`react-native-incall-manager` paketi kuruluysa çalışıyor (bu projede kurulu değil), yeni
+`callManager` API'si **manuel çağrılmadıkça devreye girmiyor**. Kamera fix'i işe yaramıştı çünkü
+WebRTC video track'leri OS ses oturumundan bağımsız render oluyor, ama ses çıkışı tamamen bu
+başlatılmamış katmana bağlıydı — muhtemelen sessizliğin asıl sebebi buydu, önceki oturumdaki
+`microphone.enable()` denemeleri (hâlâ doğru ve gerekli) bu daha temel eksikliği çözmüyordu.
+**Fix:** `src/screens/CallScreen.tsx`'te çağrı objesi var olur olmaz
+`callManager.start({ audioRole: 'communicator', deviceEndpointType: isVideoCall ? 'speaker' :
+'earpiece' })` çağrılıyor, `onLeave`'de `callManager.stop()`. `isVideoCall`, çağrı oluşturulurken
+`callService.ts`'in `getOrCreate({ data: { custom: { isVideo } } })` ile gömdüğü custom veriden
+okunuyor (arayan/aranan ikisi de aynı şekilde bilsin diye — kamera durumundan çıkarım güvenilir
+değildi, çünkü aranan taraf kamerasını her hâlükârda kapalı başlatıyor).
+
+**6) Kulağa götürünce ekran kapanması artık native olarak devrede.** Yukarıdaki fix'in yan
+etkisi: Stream SDK'sının Android tarafında zaten hazır bir `ProximityManager.kt`'si var — aktif
+ses rotası **earpiece** olduğunda otomatik olarak yakınlık sensörünü dinleyip
+`PROXIMITY_SCREEN_OFF_WAKE_LOCK` alıp bırakıyor (kulağa götürünce ekran kapanır, çekince açılır).
+Bu davranış sadece `callManager.start()` hiç çağrılmadığı için pasifti; artık sesli aramalarda
+(`deviceEndpointType: 'earpiece'`) otomatik çalışıyor olmalı — ekstra JS/native kod yazmaya gerek
+kalmadı. Görüntülü aramalarda kasıtlı olarak `'speaker'` kullanılıyor (video call'da ekranı
+kapatmak istemeyiz).
+
+**7) Arama ekranı animasyonları geliştirildi.** `CallScreen.tsx`: RINGING durumunda
+`RingingCallContent`'in üstüne nabız gibi atan bir noktayla "Aranıyor…" (arayan) / "Telefon
+çalıyor…" (aranan) banner'ı eklendi; JOINING durumu için ayrı bir "Bağlanıyor…" dönen-halka
+ekranı eklendi (önceden bu durum sessizce boş/siyah bir `CallContent` gösteriyordu);
+RECONNECTING için turuncu bir "Bağlantı zayıf, yeniden bağlanılıyor…" banner'ı; ve
+RECONNECTING_FAILED (bağlantı koptu, normal kapatmadan farklı bir durum) için ~1.6 saniyeliğine
+"Görüşme koptu" mesajı gösterip sonra kapanıyor — normal kapatma (LEFT) hâlâ eskisi gibi anında
+kapanıyor, bu değişmedi (önceki oturumda kullanıcı isteğiyle kaldırılmıştı).
+
+**Yeni dosyalar:** `src/theme/ThemeContext.tsx`, `src/components/SettingsModal.tsx`,
+`src/screens/Game2048.tsx`, `__mocks__/@react-native-async-storage/async-storage.js` (eksikti,
+`soundService`'in modül yüklenirken senkron `AsyncStorage.getItem` çağırması Jest'i patlatıyordu).
+
+**Değişen dosyalar:** `App.tsx`, `src/screens/HomeScreen.tsx`, `src/screens/AccountScreen.tsx`,
+`src/screens/ContactsScreen.tsx`, `src/screens/ChatRoomScreen.tsx`, `src/screens/CallScreen.tsx`,
+`src/services/callService.ts`, `src/services/soundService.ts`,
+`__mocks__/@stream-io/video-react-native-sdk.js` (`callManager`, `call.state.custom`,
+`isCreatedByMe`, ek `CallingState` değerleri eklendi).
+
+**Doğrulama:** `npx tsc --noEmit` ✅, `npx eslint src App.tsx` ✅ (0 hata, 2 önceden de var olan
+türden dinamik-inline-style uyarısı), `npx jest` ✅. **APK bu değişikliklerle henüz yeniden
+derlenmedi/cihazda denenmedi** — bir sonraki adım `gradlew assembleRelease --no-daemon` ile
+rebuild edip özellikle sesli arama + kulak sensörü + tema geçişini gerçek cihazda doğrulamak.
+
+**Sonraki aşamalar (yapılmadı, backlog):** kumar dışı ikinci bir oyun (istenirse), 2048'e
+kayan-tile animasyonu (şu an sadece pop/pulse var, tam "slide" animasyonu yok), blok oyunu
+hücrelerinin (`cellEmpty` vb.) tam piksel-piksel temalanması.
+
 ## 2026-08-11 — Arama bitince direkt kapanma + mikrofon fix denemesi (SES SORUNU HÂLÂ AÇIK)
 
 Kullanıcı iki şey istedi: (1) arama bitince "Görüşme sona erdi" bekleme ekranı olmadan direkt

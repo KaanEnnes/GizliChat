@@ -3,7 +3,8 @@ import { Modal } from 'react-native';
 import { Call, StreamVideo, useCalls } from '@stream-io/video-react-native-sdk';
 import { getOrCreateStreamClient } from '../services/callService';
 import { requestCallPermissions } from '../services/permissionsService';
-import CallScreen from '../screens/CallScreen';
+import { getRoomId, sendCallLogMessage } from '../services/chatService';
+import CallScreen, { CallSummary } from '../screens/CallScreen';
 
 interface Props {
   myUid: string;
@@ -17,7 +18,7 @@ interface Props {
  * Must live inside <StreamVideo>, which is why it's a separate component
  * from CallProvider itself.
  */
-function IncomingCallWatcher(): React.JSX.Element | null {
+function IncomingCallWatcher({ myUid }: { myUid: string }): React.JSX.Element | null {
   const calls = useCalls();
   const [activeCall, setActiveCall] = useState<Call | null>(null);
 
@@ -35,13 +36,27 @@ function IncomingCallWatcher(): React.JSX.Element | null {
     }
   }, [calls, activeCall]);
 
+  const handleLeave = (summary: CallSummary) => {
+    setActiveCall(null);
+    // Logged like WhatsApp's in-chat call entries — non-critical, so a
+    // failure here (e.g. offline) is swallowed rather than surfaced.
+    if (summary.otherUserId) {
+      const roomId = getRoomId(myUid, summary.otherUserId);
+      sendCallLogMessage(roomId, myUid, {
+        video: summary.isVideo,
+        status: summary.wasJoined ? 'completed' : 'missed',
+        durationSeconds: summary.durationSeconds,
+      }).catch(() => undefined);
+    }
+  };
+
   if (!activeCall) {
     return null;
   }
 
   return (
     <Modal visible animationType="slide" onRequestClose={() => setActiveCall(null)}>
-      <CallScreen call={activeCall} onLeave={() => setActiveCall(null)} />
+      <CallScreen call={activeCall} onLeave={handleLeave} />
     </Modal>
   );
 }
@@ -53,7 +68,7 @@ function CallProvider({ myUid, myUsername, children }: Props): React.JSX.Element
   return (
     <StreamVideo client={client}>
       {children}
-      <IncomingCallWatcher />
+      <IncomingCallWatcher myUid={myUid} />
     </StreamVideo>
   );
 }
