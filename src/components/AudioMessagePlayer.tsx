@@ -1,7 +1,8 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import Sound, { PlayBackType } from 'react-native-nitro-sound';
 import PlaybackWaveform from './PlaybackWaveform';
+import { clearAudioPlayerIfActive, setActiveAudioPlayer } from '../services/audioPlaybackRegistry';
 
 interface Props {
   uri: string;
@@ -22,21 +23,35 @@ function AudioMessagePlayer({ uri, durationSeconds, tint }: Props): React.JSX.El
   const [isPlaying, setIsPlaying] = useState(false);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
+  // Stable across re-renders (empty deps — state setters never change) so the
+  // shared registry can reliably tell "this exact player" apart from others.
+  const resetPlaybackState = useCallback(() => {
+    setIsPlaying(false);
+    setElapsedSeconds(0);
+  }, []);
+
   useEffect(() => {
     return () => {
       Sound.stopPlayer().catch(() => undefined);
       Sound.removePlayBackListener();
+      clearAudioPlayerIfActive(resetPlaybackState);
     };
-  }, []);
+  }, [resetPlaybackState]);
 
   const togglePlayback = async () => {
     if (isPlaying) {
       await Sound.pausePlayer();
       setIsPlaying(false);
+      clearAudioPlayerIfActive(resetPlaybackState);
       return;
     }
 
     try {
+      // react-native-nitro-sound's player is a single app-wide singleton, not
+      // one per component — starting playback here without first telling any
+      // other currently-"playing" bubble to reset would silently steal its
+      // listener, leaving that other bubble's play button stuck forever.
+      setActiveAudioPlayer(resetPlaybackState);
       await Sound.startPlayer(uri);
       setIsPlaying(true);
       Sound.addPlayBackListener((status: PlayBackType) => {
@@ -44,12 +59,14 @@ function AudioMessagePlayer({ uri, durationSeconds, tint }: Props): React.JSX.El
         if (status.currentPosition >= status.duration && status.duration > 0) {
           Sound.stopPlayer().catch(() => undefined);
           Sound.removePlayBackListener();
+          clearAudioPlayerIfActive(resetPlaybackState);
           setIsPlaying(false);
           setElapsedSeconds(0);
         }
       });
     } catch {
       setIsPlaying(false);
+      clearAudioPlayerIfActive(resetPlaybackState);
     }
   };
 

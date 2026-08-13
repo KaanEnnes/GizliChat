@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Contact, subscribeToContacts } from '../services/contactService';
-import { ChatMessage, getRoomId, subscribeToLatestMessage } from '../services/chatService';
+import { getRoomId, markMessageDelivered, subscribeToLatestMessage } from '../services/chatService';
 import { playNotificationSound } from '../services/soundService';
 import { isNotificationsEnabled } from '../services/notificationService';
 import { vibrateShort } from '../services/hapticsService';
@@ -17,24 +17,26 @@ interface Props {
 
 interface ToastState {
   contact: Contact;
-  preview: string;
+  body: string;
 }
 
 const TOAST_VISIBLE_MS = 3200;
 
-function previewForMessage(message: ChatMessage): string {
-  switch (message.type) {
-    case 'image':
-      return '📷 Fotoğraf gönderdi';
-    case 'video':
-      return '🎬 Video gönderdi';
-    case 'audio':
-      return '🎤 Sesli mesaj gönderdi';
-    case 'call':
-      return '';
-    default:
-      return message.text.length > 60 ? `${message.text.slice(0, 60)}…` : message.text;
-  }
+// Deliberately generic, game-flavored copy — no sender name or message
+// content ever surfaces here, so a toast reveals nothing about the disguise
+// underneath even if someone else is glancing at the screen. One is picked
+// at random per notification.
+const FAKE_GAME_NOTIFICATIONS = [
+  'Günlük ödülünü almayı unutma!',
+  'Yeni bir yüksek skor kırıldı!',
+  'Bugünkü meydan okuma seni bekliyor.',
+  'Enerjin doldu, hemen oyna!',
+  'Arkadaşın seni skor tablosunda geçti!',
+  'Yeni bir mini oyun eklendi, dene!',
+];
+
+function randomFakeNotification(): string {
+  return FAKE_GAME_NOTIFICATIONS[Math.floor(Math.random() * FAKE_GAME_NOTIFICATIONS.length)];
 }
 
 /**
@@ -46,6 +48,12 @@ function previewForMessage(message: ChatMessage): string {
  * built as a self-contained watcher + a single `notify()`-shaped entry point
  * (`showToast`) so swapping in real push later only means changing *how*
  * `showToast` gets triggered, not this component's structure.
+ *
+ * At most one toast is ever "pending" at a time: once shown, no further
+ * toast fires — for that contact or any other — until the current one is
+ * actually opened (tapped, which also opens its room). This mirrors a real
+ * notification tray rather than a chat-style stream of alerts, and keeps a
+ * burst of incoming messages from stacking up multiple reveals on screen.
  */
 function NotificationCenter({ myUid, activeContactUid, onOpenRoom, children }: Props): React.JSX.Element {
   const insets = useSafeAreaInsets();
@@ -57,16 +65,30 @@ function NotificationCenter({ myUid, activeContactUid, onOpenRoom, children }: P
   const notifiedIdsRef = useRef(new Set<string>());
   const dismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const roomUnsubscribesRef = useRef<(() => void)[]>([]);
+  // True from the moment a toast appears until the user actually taps it
+  // open — while true, every other arrival is ignored outright rather than
+  // queued, so nothing "catches up" in a burst once it does reopen.
+  const hasPendingToastRef = useRef(false);
 
   const translateY = useRef(new Animated.Value(-120)).current;
 
-  const showToast = (contact: Contact, message: ChatMessage) => {
-    if (!isNotificationsEnabled()) {
+  useEffect(() => {
+    if (activeContactUid) {
+      // Opened some room (whether via the toast or by navigating there
+      // directly) — treat that as the pending notification having been dealt
+      // with, even if it was never tapped itself.
+      hasPendingToastRef.current = false;
+    }
+  }, [activeContactUid]);
+
+  const showToast = (contact: Contact) => {
+    if (!isNotificationsEnabled() || hasPendingToastRef.current) {
       return;
     }
+    hasPendingToastRef.current = true;
     playNotificationSound();
     vibrateShort();
-    setToast({ contact, preview: previewForMessage(message) });
+    setToast({ contact, body: randomFakeNotification() });
     translateY.setValue(-120);
     Animated.spring(translateY, { toValue: 0, friction: 8, tension: 60, useNativeDriver: true }).start();
 
@@ -98,6 +120,14 @@ function NotificationCenter({ myUid, activeContactUid, onOpenRoom, children }: P
             if (!message || message.type === 'call' || message.senderId === myUid) {
               return;
             }
+            // App is running and this listener just received the message —
+            // that's "delivered" (gray double tick for the sender) even if
+            // the user never opens this exact chat room. Independent of the
+            // toast/dedup logic below, which only cares about *fresh*
+            // arrivals.
+            if (!message.deliveredAt) {
+              markMessageDelivered(roomId, message.id).catch(() => undefined);
+            }
             if (message.createdAt <= mountedAtRef.current) {
               return; // pre-existing history, not a fresh arrival
             }
@@ -108,7 +138,7 @@ function NotificationCenter({ myUid, activeContactUid, onOpenRoom, children }: P
               return; // already looking at this exact chat
             }
             notifiedIdsRef.current.add(message.id);
-            showToast(contact, message);
+            showToast(contact);
           });
         });
       },
@@ -151,13 +181,11 @@ function NotificationCenter({ myUid, activeContactUid, onOpenRoom, children }: P
             </View>
             <View style={styles.toastTextWrap}>
               <Text style={styles.toastTitle} numberOfLines={1}>
-                {toast.contact.name}
+                Mini Oyunlar
               </Text>
-              {toast.preview.length > 0 && (
-                <Text style={styles.toastSubtitle} numberOfLines={1}>
-                  {toast.preview}
-                </Text>
-              )}
+              <Text style={styles.toastSubtitle} numberOfLines={1}>
+                {toast.body}
+              </Text>
             </View>
             <View style={styles.toastDot} />
           </Pressable>

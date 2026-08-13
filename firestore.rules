@@ -36,8 +36,20 @@ service cloud.firestore {
       allow read: if isRoomMember(roomId);
       allow create: if isRoomMember(roomId) &&
         request.resource.data.senderId == request.auth.uid;
-      // Messages are append-only: no editing or deleting after the fact.
-      allow update, delete: if false;
+      // Messages are otherwise append-only (no editing text/media/sender after
+      // the fact) — two narrow carve-outs:
+      // 1) emoji reactions: a room member may set/clear only their own single
+      //    key under `reactions`, nothing else.
+      // 2) delivered/read receipts: only the OTHER room member (never the
+      //    sender themself) may stamp `deliveredAt`/`readAt` on a message,
+      //    driving the sender's WhatsApp-style tick icons.
+      allow update: if isRoomMember(roomId) && (
+        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reactions']) &&
+          request.resource.data.reactions.diff(resource.data.get('reactions', {})).affectedKeys().hasOnly([request.auth.uid])) ||
+        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['deliveredAt', 'readAt']) &&
+          resource.data.senderId != request.auth.uid)
+      );
+      allow delete: if false;
     }
 
     match /highscores/{scoreId} {

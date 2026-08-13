@@ -18,6 +18,26 @@
     <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Stream Video'nun WebRTC katmanı aramalar sırasında native bir foreground
+         service başlatıyor; targetSdkVersion 36'da (Android 14+ davranışı) bu tipte
+         izinler ayrıca deklare edilmezse servis başlatılamaz/görüşme kararsızlaşır.
+         Daha önceki bir oturumda logcat'te "Missing ForegroundServicePermissions"
+         uyarısı görülmüş ama hiç eklenmemişti — bkz. Changelog. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <!-- Stream Video'nun kendi Android kurulum kılavuzu (expo config plugin'i,
+         node_modules/@stream-io/video-react-native-sdk/expo-config-plugin) bunları
+         koşulsuz (keepCallAlive'a bağlı olmadan) her zaman ekliyor — Bluetooth
+         kulaklık/hoparlöre ses yönlendirmesi için. Eksikse arama sırasında ses
+         yönlendirmesi (callManager) sessizce yanlış cihaza gidebilir/hata verebilir. -->
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+
+    <!-- Mini oyunlarda oyun-sonu titreşimi (hapticsService.vibrateMedium) için gerekli -->
+    <uses-permission android:name="android.permission.VIBRATE" />
 
     <application
       android:name=".MainApplication"

@@ -82,6 +82,7 @@ function play(key: SoundKey): void {
   if (!sound) {
     return;
   }
+  sound.setVolume(1.0);
   sound.stop(() => sound.play());
 }
 

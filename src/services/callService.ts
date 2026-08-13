@@ -73,14 +73,18 @@ async function startCall(
   }
 }
 
-export function startVoiceCall(myUid: string, myUsername: string, contact: Contact): void {
-  startCall(myUid, myUsername, contact, false).catch(error => {
-    console.warn('Sesli arama başlatılamadı:', error);
-  });
+/**
+ * Both throw on failure (permission denied, network error, Stream API
+ * error, ...) instead of swallowing it — previously these only logged a
+ * `console.warn`, so tapping the call button while e.g. offline or with a
+ * denied permission did visibly *nothing*, which is exactly what "the call
+ * button is bugged" reports from silent failures look like. Callers must
+ * catch and surface the error.
+ */
+export function startVoiceCall(myUid: string, myUsername: string, contact: Contact): Promise<void> {
+  return startCall(myUid, myUsername, contact, false);
 }
 
-export function startVideoCall(myUid: string, myUsername: string, contact: Contact): void {
-  startCall(myUid, myUsername, contact, true).catch(error => {
-    console.warn('Görüntülü arama başlatılamadı:', error);
-  });
+export function startVideoCall(myUid: string, myUsername: string, contact: Contact): Promise<void> {
+  return startCall(myUid, myUsername, contact, true);
 }

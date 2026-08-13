@@ -7,7 +7,11 @@ import AudioMessagePlayer from './AudioMessagePlayer';
 interface Props {
   message: ChatMessage;
   isMine: boolean;
+  myUid: string;
+  onToggleReaction: (message: ChatMessage, emoji: string) => void;
 }
+
+const QUICK_EMOJIS = ['❤️', '🤍', '😂', '😮', '😢', '🙏', '👍'];
 
 function formatTime(timestamp: number): string {
   const date = new Date(timestamp);
@@ -26,9 +30,31 @@ function formatCallDuration(totalSeconds: number): string {
   return `${minutes}:${seconds}`;
 }
 
-function MessageBubble({ message, isMine }: Props): React.JSX.Element {
+function MessageBubble({ message, isMine, myUid, onToggleReaction }: Props): React.JSX.Element {
   const [viewerOpen, setViewerOpen] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const tint = isMine ? '#0F1115' : '#3B7CFF';
+  const myReaction = message.reactions?.[myUid];
+  const reactionCounts = Object.values(message.reactions ?? {}).reduce<Record<string, number>>(
+    (acc, emoji) => {
+      acc[emoji] = (acc[emoji] ?? 0) + 1;
+      return acc;
+    },
+    {},
+  );
+  const hasReactions = Object.keys(reactionCounts).length > 0;
+  const status: 'pending' | 'sent' | 'delivered' | 'read' = message.pending
+    ? 'pending'
+    : message.readAt
+    ? 'read'
+    : message.deliveredAt
+    ? 'delivered'
+    : 'sent';
+
+  const handlePickEmoji = (emoji: string) => {
+    setPickerOpen(false);
+    onToggleReaction(message, emoji);
+  };
 
   // WhatsApp-style call log entry — centered, not a left/right chat bubble.
   if (message.type === 'call') {
@@ -59,8 +85,16 @@ function MessageBubble({ message, isMine }: Props): React.JSX.Element {
   }
 
   return (
-    <View style={[styles.row, isMine ? styles.rowRight : styles.rowLeft]}>
-      <View style={[styles.bubble, isMine ? styles.bubbleMine : styles.bubbleOther]}>
+    <View
+      style={[
+        styles.row,
+        isMine ? styles.rowRight : styles.rowLeft,
+        hasReactions && styles.rowWithReactions,
+      ]}>
+      <Pressable
+        onLongPress={() => setPickerOpen(true)}
+        delayLongPress={280}
+        style={[styles.bubble, isMine ? styles.bubbleMine : styles.bubbleOther]}>
         {message.type === 'image' && message.mediaUrl && (
           <Pressable onPress={() => setViewerOpen(true)}>
             <Image source={{ uri: message.mediaUrl }} style={styles.mediaImage} resizeMode="cover" />
@@ -93,8 +127,40 @@ function MessageBubble({ message, isMine }: Props): React.JSX.Element {
 
         {message.type === 'text' && <Text style={styles.messageText}>{message.text}</Text>}
 
-        <Text style={styles.timeText}>{formatTime(message.createdAt)}</Text>
-      </View>
+        <View style={styles.metaRow}>
+          <Text style={styles.timeText}>{formatTime(message.createdAt)}</Text>
+          {isMine && (
+            <Text style={[styles.statusIcon, status === 'read' && styles.statusIconRead]}>
+              {status === 'pending' ? '🕒' : status === 'sent' ? '✓' : '✓✓'}
+            </Text>
+          )}
+        </View>
+
+        {hasReactions && (
+          <View style={[styles.reactionBar, isMine ? styles.reactionBarMine : styles.reactionBarOther]}>
+            {Object.entries(reactionCounts).map(([emoji, count]) => (
+              <Text key={emoji} style={styles.reactionPillText}>
+                {emoji}
+                {count > 1 ? ` ${count}` : ''}
+              </Text>
+            ))}
+          </View>
+        )}
+      </Pressable>
+
+      <Modal visible={pickerOpen} transparent animationType="fade" onRequestClose={() => setPickerOpen(false)}>
+        <Pressable style={styles.pickerOverlay} onPress={() => setPickerOpen(false)}>
+          <View style={styles.pickerCard}>
+            {QUICK_EMOJIS.map(emoji => (
+              <Pressable key={emoji} style={styles.pickerEmojiButton} onPress={() => handlePickEmoji(emoji)}>
+                <Text style={[styles.pickerEmojiText, myReaction === emoji && styles.pickerEmojiTextActive]}>
+                  {emoji}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        </Pressable>
+      </Modal>
 
       {(message.type === 'image' || message.type === 'video') && message.mediaUrl && (
         <Modal visible={viewerOpen} transparent animationType="fade" onRequestClose={() => setViewerOpen(false)}>
@@ -127,11 +193,62 @@ const styles = StyleSheet.create({
   rowRight: {
     alignItems: 'flex-end',
   },
+  rowWithReactions: {
+    marginBottom: 14,
+  },
   bubble: {
     maxWidth: '78%',
     borderRadius: 16,
     paddingHorizontal: 14,
     paddingVertical: 8,
+  },
+  reactionBar: {
+    position: 'absolute',
+    bottom: -12,
+    flexDirection: 'row',
+    backgroundColor: '#1C1F26',
+    borderRadius: 10,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+    gap: 4,
+  },
+  reactionBarMine: {
+    right: 8,
+  },
+  reactionBarOther: {
+    left: 8,
+  },
+  reactionPillText: {
+    fontSize: 12,
+    color: '#F5F5F7',
+  },
+  pickerOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(10,11,15,0.6)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+  },
+  pickerCard: {
+    flexDirection: 'row',
+    backgroundColor: '#1C1F26',
+    borderRadius: 28,
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  pickerEmojiButton: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  pickerEmojiText: {
+    fontSize: 26,
+  },
+  pickerEmojiTextActive: {
+    opacity: 0.4,
   },
   bubbleOther: {
     backgroundColor: '#2A2D34',
@@ -146,11 +263,23 @@ const styles = StyleSheet.create({
     fontSize: 15,
     lineHeight: 20,
   },
+  metaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 4,
+    alignSelf: 'flex-end',
+  },
   timeText: {
     color: 'rgba(245,245,247,0.6)',
     fontSize: 11,
-    marginTop: 4,
-    alignSelf: 'flex-end',
+  },
+  statusIcon: {
+    color: 'rgba(245,245,247,0.6)',
+    fontSize: 11,
+    marginLeft: 4,
+  },
+  statusIconRead: {
+    color: '#34B7F1',
   },
   mediaImage: {
     width: 220,

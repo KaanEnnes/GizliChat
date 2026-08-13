@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Animated, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Animated, Pressable, StatusBar, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../theme/ThemeContext';
 import { playTapSound } from '../services/soundService';
@@ -161,20 +161,29 @@ function GameHubScreen({ onAdminTriggerReached }: Props): React.JSX.Element {
 
   const closeGame = useCallback(() => setActiveGame(null), []);
 
-  if (activeGame === 'blockBlast') {
-    return <HomeScreen onBack={closeGame} />;
-  }
-  if (activeGame === '2048') {
-    return <Game2048 onBack={closeGame} />;
-  }
-  if (activeGame === 'snake') {
-    return <SnakeGame onBack={closeGame} />;
-  }
-  if (activeGame === 'colorMemory') {
-    return <ColorMemoryGame onBack={closeGame} />;
-  }
-  if (activeGame === 'whackAMole') {
-    return <WhackAMoleGame onBack={closeGame} />;
+  if (activeGame !== null) {
+    // Full-screen while actually playing — the status bar (clock/battery/
+    // wifi icons) hides so the game gets the whole screen; it reappears on
+    // its own once this StatusBar instance unmounts (closeGame → back to the
+    // hub below, which doesn't render one).
+    let gameElement: React.ReactNode;
+    if (activeGame === 'blockBlast') {
+      gameElement = <HomeScreen onBack={closeGame} />;
+    } else if (activeGame === '2048') {
+      gameElement = <Game2048 onBack={closeGame} />;
+    } else if (activeGame === 'snake') {
+      gameElement = <SnakeGame onBack={closeGame} />;
+    } else if (activeGame === 'colorMemory') {
+      gameElement = <ColorMemoryGame onBack={closeGame} />;
+    } else {
+      gameElement = <WhackAMoleGame onBack={closeGame} />;
+    }
+    return (
+      <>
+        <StatusBar hidden />
+        {gameElement}
+      </>
+    );
   }
 
   return (

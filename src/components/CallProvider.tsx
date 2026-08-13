@@ -55,7 +55,19 @@ function IncomingCallWatcher({ myUid }: { myUid: string }): React.JSX.Element | 
   }
 
   return (
-    <Modal visible animationType="slide" onRequestClose={() => setActiveCall(null)}>
+    <Modal
+      visible
+      animationType="slide"
+      onRequestClose={() => {
+        // Was just clearing local state, leaving the underlying Stream call
+        // ringing/active on the server — the other side kept ringing forever,
+        // the audio session/wake lock never released, and the very next
+        // `calls` update could re-find the still-ringing call and pop this
+        // same modal right back up. `leave()` actually ends it; `handleLeave`
+        // (via CallContentSwitcher's LEFT-state effect) clears `activeCall`
+        // once that's actually happened.
+        activeCall.leave().catch(() => undefined);
+      }}>
       <CallScreen call={activeCall} onLeave={handleLeave} />
     </Modal>
   );

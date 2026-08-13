@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -11,9 +11,53 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { addContact, Contact, subscribeToContacts } from '../services/contactService';
+import { ChatMessage, getRoomId, subscribeToLatestMessage } from '../services/chatService';
+import { getLastReadAt, markRoomRead } from '../services/readStatusService';
 import { Account, findUserByUsername } from '../services/userService';
 import { useTheme } from '../theme/ThemeContext';
 import { useNetworkStatus } from '../hooks/useNetworkStatus';
+
+const WEEKDAYS_TR = ['Paz', 'Pzt', 'Sal', 'Çar', 'Per', 'Cum', 'Cmt'];
+
+function formatListTimestamp(timestamp: number): string {
+  const date = new Date(timestamp);
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  if (timestamp >= startOfToday) {
+    return `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
+  }
+  if (timestamp >= startOfToday - 86_400_000) {
+    return 'Dün';
+  }
+  if (timestamp >= startOfToday - 6 * 86_400_000) {
+    return WEEKDAYS_TR[date.getDay()];
+  }
+  return `${date.getDate().toString().padStart(2, '0')}.${(date.getMonth() + 1).toString().padStart(2, '0')}.${date.getFullYear().toString().slice(-2)}`;
+}
+
+function formatPreview(message: ChatMessage | null | undefined, myUid: string): string {
+  if (!message) {
+    return 'Henüz mesaj yok';
+  }
+  const prefix = message.senderId === myUid ? 'Sen: ' : '';
+  switch (message.type) {
+    case 'image':
+      return `${prefix}📷 Fotoğraf`;
+    case 'video':
+      return `${prefix}🎥 Video`;
+    case 'audio':
+      return `${prefix}🎤 Sesli mesaj`;
+    case 'call': {
+      const kind = message.callVideo ? 'Görüntülü arama' : 'Sesli arama';
+      if (message.callStatus === 'missed') {
+        return `Cevapsız ${kind.toLowerCase()}`;
+      }
+      return `${prefix}📞 ${kind}`;
+    }
+    default:
+      return `${prefix}${message.text}`;
+  }
+}
 
 interface Props {
   account: Account;
@@ -27,6 +71,9 @@ function ContactsScreen({ account, onOpenRoom, onLogout }: Props): React.JSX.Ele
   const isOnline = useNetworkStatus();
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [latestMessages, setLatestMessages] = useState<Record<string, ChatMessage | null>>({});
+  const [lastReadMap, setLastReadMap] = useState<Record<string, number>>({});
+  const roomUnsubscribesRef = useRef<(() => void)[]>([]);
 
   const [addModalVisible, setAddModalVisible] = useState(false);
   const [usernameDraft, setUsernameDraft] = useState('');
@@ -40,11 +87,40 @@ function ContactsScreen({ account, onOpenRoom, onLogout }: Props): React.JSX.Ele
       nextContacts => {
         setContacts(nextContacts);
         setLoadError(null);
+
+        // Contact list rarely changes mid-session; simplest correct approach
+        // is to tear down and rebuild every per-room listener on each update
+        // rather than diffing, same pattern as NotificationCenter.
+        roomUnsubscribesRef.current.forEach(unsub => unsub());
+        roomUnsubscribesRef.current = nextContacts.map(contact => {
+          const roomId = getRoomId(account.uid, contact.uid);
+          getLastReadAt(roomId).then(readAt => {
+            setLastReadMap(prev => (prev[contact.uid] === readAt ? prev : { ...prev, [contact.uid]: readAt }));
+          });
+          return subscribeToLatestMessage(roomId, message => {
+            setLatestMessages(prev => ({ ...prev, [contact.uid]: message }));
+          });
+        });
       },
       error => setLoadError(`Kişiler yüklenemedi: ${error.message}`),
     );
-    return unsubscribe;
+    return () => {
+      unsubscribe();
+      roomUnsubscribesRef.current.forEach(unsub => unsub());
+      roomUnsubscribesRef.current = [];
+    };
   }, [account.uid]);
+
+  const handleOpenRoom = useCallback(
+    (contact: Contact) => {
+      const roomId = getRoomId(account.uid, contact.uid);
+      const now = Date.now();
+      markRoomRead(roomId, now);
+      setLastReadMap(prev => ({ ...prev, [contact.uid]: now }));
+      onOpenRoom(contact);
+    },
+    [account.uid, onOpenRoom],
+  );
 
   const handleAddContact = useCallback(async () => {
     if (adding) {
@@ -112,20 +188,51 @@ function ContactsScreen({ account, onOpenRoom, onLogout }: Props): React.JSX.Ele
             Henüz kişin yok. Aşağıdan bir kullanıcı adı ile ekle.
           </Text>
         }
-        renderItem={({ item }) => (
-          <Pressable
-            style={({ pressed }) => [
-              styles.contactRow,
-              { backgroundColor: theme.surface, borderColor: theme.border },
-              pressed && styles.contactRowPressed,
-            ]}
-            onPress={() => onOpenRoom(item)}>
-            <View style={styles.contactAvatar}>
-              <Text style={styles.contactAvatarText}>{item.name.slice(0, 1).toUpperCase()}</Text>
-            </View>
-            <Text style={[styles.contactName, { color: theme.text }]}>{item.name}</Text>
-          </Pressable>
-        )}
+        renderItem={({ item }) => {
+          const latest = latestMessages[item.uid];
+          const lastReadAt = lastReadMap[item.uid] ?? 0;
+          const isUnread = !!latest && latest.senderId !== account.uid && latest.createdAt > lastReadAt;
+          return (
+            <Pressable
+              style={({ pressed }) => [
+                styles.contactRow,
+                { backgroundColor: theme.surface, borderColor: theme.border },
+                pressed && styles.contactRowPressed,
+              ]}
+              onPress={() => handleOpenRoom(item)}>
+              <View style={styles.contactAvatar}>
+                <Text style={styles.contactAvatarText}>{item.name.slice(0, 1).toUpperCase()}</Text>
+              </View>
+              <View style={styles.contactBody}>
+                <Text style={[styles.contactName, { color: theme.text }]} numberOfLines={1}>
+                  {item.name}
+                </Text>
+                <Text
+                  style={[
+                    styles.contactPreview,
+                    { color: isUnread ? theme.text : theme.textMuted },
+                    isUnread && styles.contactPreviewUnread,
+                  ]}
+                  numberOfLines={1}>
+                  {formatPreview(latest, account.uid)}
+                </Text>
+              </View>
+              {latest && (
+                <View style={styles.contactMeta}>
+                  <Text
+                    style={[
+                      styles.contactTime,
+                      { color: isUnread ? theme.accent : theme.textFaint },
+                      isUnread && styles.contactTimeUnread,
+                    ]}>
+                    {formatListTimestamp(latest.createdAt)}
+                  </Text>
+                  {isUnread && <View style={[styles.unreadDot, { backgroundColor: theme.accent }]} />}
+                </View>
+              )}
+            </Pressable>
+          );
+        }}
       />
 
       <Pressable
@@ -291,10 +398,40 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '800',
   },
+  contactBody: {
+    flex: 1,
+    marginRight: 8,
+  },
   contactName: {
     color: '#F5F5F7',
     fontSize: 15,
-    fontWeight: '600',
+    fontWeight: '700',
+    marginBottom: 3,
+  },
+  contactPreview: {
+    color: 'rgba(245,245,247,0.55)',
+    fontSize: 13,
+    fontWeight: '400',
+  },
+  contactPreviewUnread: {
+    fontWeight: '700',
+  },
+  contactMeta: {
+    alignItems: 'flex-end',
+  },
+  contactTime: {
+    color: 'rgba(245,245,247,0.4)',
+    fontSize: 11.5,
+  },
+  contactTimeUnread: {
+    fontWeight: '700',
+  },
+  unreadDot: {
+    width: 9,
+    height: 9,
+    borderRadius: 4.5,
+    backgroundColor: '#4D96FF',
+    marginTop: 6,
   },
   addButton: {
     marginHorizontal: 16,

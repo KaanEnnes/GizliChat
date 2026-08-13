@@ -18,12 +18,12 @@ function AppNavigator(): React.JSX.Element {
 
   useEffect(() => {
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
-      if (screen === 'ACCOUNT' || screen === 'CONTACTS') {
+      // Geri tuşu her ekrandan tek basışta doğrudan ana ekrana (oyun
+      // menüsüne) dönüyor — ara ekranlarda basamak basamak geri gitmiyor.
+      // Uygulamanın oyun-kılığı tasarımına uygun: hızlıca "gizli" kısmı
+      // gözden kaybettirmek tek bir geri basışla mümkün olsun diye.
+      if (screen !== 'HOME') {
         setScreen('HOME');
-        return true;
-      }
-      if (screen === 'CHAT_ROOM') {
-        setScreen('CONTACTS');
         return true;
       }
       // HOME ekranında varsayılan davranışa izin ver (uygulamadan çık)
@@ -33,8 +33,14 @@ function AppNavigator(): React.JSX.Element {
     return () => subscription.remove();
   }, [screen]);
 
+  const openRoom = (contact: Contact) => {
+    setActiveContact(contact);
+    setScreen('CHAT_ROOM');
+  };
+
+  let content: React.ReactNode;
   if (screen === 'ACCOUNT') {
-    return (
+    content = (
       <AccountScreen
         onAuthenticated={loggedInAccount => {
           setAccount(loggedInAccount);
@@ -43,49 +49,50 @@ function AppNavigator(): React.JSX.Element {
         onCancel={() => setScreen('HOME')}
       />
     );
+  } else if (screen === 'CONTACTS' && account) {
+    content = (
+      <ContactsScreen
+        account={account}
+        onOpenRoom={openRoom}
+        onLogout={() => {
+          logoutAccount().finally(() => {
+            setAccount(null);
+            setScreen('HOME');
+          });
+        }}
+      />
+    );
+  } else if (screen === 'CHAT_ROOM' && activeContact && account) {
+    content = (
+      <ChatRoomScreen
+        myUid={account.uid}
+        myUsername={account.username}
+        contact={activeContact}
+        onBack={() => setScreen('CONTACTS')}
+      />
+    );
+  } else {
+    content = <GameHubScreen onAdminTriggerReached={() => setScreen('ACCOUNT')} />;
   }
 
-  if ((screen === 'CONTACTS' || screen === 'CHAT_ROOM') && account) {
-    const openRoom = (contact: Contact) => {
-      setActiveContact(contact);
-      setScreen('CHAT_ROOM');
-    };
-
+  if (account) {
+    // Mounted for every screen while logged in (not just CONTACTS/CHAT_ROOM) —
+    // otherwise incoming-message toasts and calls would only ever surface
+    // while already inside the chat UI, defeating the point of the game-hub
+    // disguise being the screen you'd normally be sitting on.
     return (
       <CallProvider myUid={account.uid} myUsername={account.username}>
-        {/* Mounted once for both CONTACTS/CHAT_ROOM (rather than duplicated per-branch
-            like it used to be) so its per-room Firestore listeners aren't torn down
-            and rebuilt on every screen switch. */}
         <NotificationCenter
           myUid={account.uid}
           activeContactUid={screen === 'CHAT_ROOM' ? activeContact?.uid ?? null : null}
           onOpenRoom={openRoom}>
-          {screen === 'CONTACTS' && (
-            <ContactsScreen
-              account={account}
-              onOpenRoom={openRoom}
-              onLogout={() => {
-                logoutAccount().finally(() => {
-                  setAccount(null);
-                  setScreen('HOME');
-                });
-              }}
-            />
-          )}
-          {screen === 'CHAT_ROOM' && activeContact && (
-            <ChatRoomScreen
-              myUid={account.uid}
-              myUsername={account.username}
-              contact={activeContact}
-              onBack={() => setScreen('CONTACTS')}
-            />
-          )}
+          {content}
         </NotificationCenter>
       </CallProvider>
     );
   }
 
-  return <GameHubScreen onAdminTriggerReached={() => setScreen('ACCOUNT')} />;
+  return content;
 }
 
 export default AppNavigator;

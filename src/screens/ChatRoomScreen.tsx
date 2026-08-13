@@ -4,6 +4,8 @@ import {
   Alert,
   FlatList,
   KeyboardAvoidingView,
+  NativeScrollEvent,
+  NativeSyntheticEvent,
   Platform,
   Pressable,
   StyleSheet,
@@ -20,13 +22,19 @@ import { Contact } from '../services/contactService';
 import {
   ChatMessage,
   getRoomId,
+  INITIAL_MESSAGE_LIMIT,
+  markMessageRead,
+  MAX_MESSAGE_LIMIT,
+  MESSAGE_LIMIT_STEP,
   sendMediaMessage,
   sendMessage,
+  setMessageReaction,
   subscribeToMessages,
 } from '../services/chatService';
 import { localFileToDataUri, uploadRoomMedia } from '../services/mediaService';
 import { startVoiceCall, startVideoCall } from '../services/callService';
 import { requestMicrophonePermission } from '../services/permissionsService';
+import { markRoomRead } from '../services/readStatusService';
 import { useTheme } from '../theme/ThemeContext';
 import { useNetworkStatus } from '../hooks/useNetworkStatus';
 
@@ -50,6 +58,9 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
   const { theme } = useTheme();
   const isOnline = useNetworkStatus();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messageLimit, setMessageLimit] = useState(INITIAL_MESSAGE_LIMIT);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [reachedStart, setReachedStart] = useState(false);
   const [draft, setDraft] = useState('');
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
@@ -58,31 +69,108 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
   const [recordingLevel, setRecordingLevel] = useState(0);
   const listRef = useRef<FlatList<ChatMessage>>(null);
   const recordingStartedAtRef = useRef<number | null>(null);
+  const lastMessageIdRef = useRef<string | null>(null);
+  const isRecordingRef = useRef(false);
+  useEffect(() => {
+    isRecordingRef.current = isRecording;
+  }, [isRecording]);
+
+  // If the screen is left (back button, incoming call, ...) mid-recording,
+  // the native recorder was previously left running with an orphaned
+  // listener — nothing ever called stopRecorder()/removeRecordBackListener()
+  // for it, since handleStopRecording only runs on a normal mic-button release.
+  useEffect(() => {
+    return () => {
+      if (isRecordingRef.current) {
+        Sound.removeRecordBackListener();
+        Sound.stopRecorder().catch(() => undefined);
+      }
+    };
+  }, []);
 
   const roomId = getRoomId(myUid, contact.uid);
+
+  // Opening a different contact's room starts back at the most recent 20
+  // messages rather than carrying over how far the previous room was paged.
+  useEffect(() => {
+    setMessageLimit(INITIAL_MESSAGE_LIMIT);
+    setReachedStart(false);
+    lastMessageIdRef.current = null;
+  }, [roomId]);
 
   useEffect(() => {
     const unsubscribe = subscribeToMessages(
       roomId,
+      messageLimit,
       nextMessages => {
         setMessages(nextMessages);
         setConnectionError(null);
+        // Firestore returned fewer messages than we asked for — that's the
+        // whole room history, no point asking for more on further scroll-up.
+        setReachedStart(nextMessages.length < messageLimit);
+        setLoadingMore(false);
       },
       error => {
         setConnectionError(`Sohbete bağlanılamadı: ${error.message}`);
+        setLoadingMore(false);
       },
     );
 
     return unsubscribe;
-  }, [roomId]);
+  }, [roomId, messageLimit]);
+
+  const handleLoadMore = useCallback(() => {
+    if (loadingMore || reachedStart || messageLimit >= MAX_MESSAGE_LIMIT) {
+      return;
+    }
+    setLoadingMore(true);
+    setMessageLimit(prev => Math.min(prev + MESSAGE_LIMIT_STEP, MAX_MESSAGE_LIMIT));
+  }, [loadingMore, reachedStart, messageLimit]);
+
+  const handleScroll = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      if (event.nativeEvent.contentOffset.y < 60) {
+        handleLoadMore();
+      }
+    },
+    [handleLoadMore],
+  );
+
+  useEffect(() => {
+    // Room is open, so every incoming message from the other person is being
+    // shown on screen right now — write the shared read receipt (visible to
+    // the sender as blue double ticks) for any of their messages that don't
+    // have one yet. Already-read messages are skipped, so this doesn't loop.
+    messages.forEach(message => {
+      if (message.senderId !== myUid && message.type !== 'call' && !message.readAt) {
+        markMessageRead(roomId, message.id).catch(() => undefined);
+      }
+    });
+  }, [messages, roomId, myUid]);
+
+  useEffect(() => {
+    // Only jump to the bottom when the newest message actually changed (a
+    // fresh incoming/outgoing message) — not when older messages get
+    // prepended by scrolling up for more history, which would otherwise yank
+    // the view back down every time a page of history loads.
+    const lastId = messages.length > 0 ? messages[messages.length - 1].id : null;
+    if (lastId !== null && lastId !== lastMessageIdRef.current) {
+      const animate = lastMessageIdRef.current !== null;
+      requestAnimationFrame(() => {
+        listRef.current?.scrollToEnd({ animated: animate });
+      });
+    }
+    lastMessageIdRef.current = lastId;
+  }, [messages]);
 
   useEffect(() => {
     if (messages.length > 0) {
-      requestAnimationFrame(() => {
-        listRef.current?.scrollToEnd({ animated: true });
-      });
+      // Room is open and rendering these messages right now, so mark them
+      // read as they arrive — keeps the contacts list unread badge accurate
+      // without waiting for the user to leave and re-enter the room.
+      markRoomRead(roomId, messages[messages.length - 1].createdAt);
     }
-  }, [messages.length]);
+  }, [messages, roomId]);
 
   const handleSend = useCallback(() => {
     const trimmed = draft.trim();
@@ -230,6 +318,16 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
     }
   }, [isRecording, roomId, myUid]);
 
+  const handleToggleReaction = useCallback(
+    (message: ChatMessage, emoji: string) => {
+      const current = message.reactions?.[myUid];
+      setMessageReaction(roomId, message.id, myUid, current === emoji ? null : emoji).catch(error => {
+        setConnectionError(`Tepki eklenemedi: ${(error as Error).message}`);
+      });
+    },
+    [roomId, myUid],
+  );
+
   const canSend = draft.trim().length > 0 && !sending;
 
   return (
@@ -245,13 +343,21 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
           {contact.name}
         </Text>
         <Pressable
-          onPress={() => startVoiceCall(myUid, myUsername, contact)}
+          onPress={() => {
+            startVoiceCall(myUid, myUsername, contact).catch(error => {
+              setConnectionError(`Arama başlatılamadı: ${(error as Error).message}`);
+            });
+          }}
           hitSlop={8}
           style={styles.headerIconButton}>
           <Text style={styles.headerIconText}>📞</Text>
         </Pressable>
         <Pressable
-          onPress={() => startVideoCall(myUid, myUsername, contact)}
+          onPress={() => {
+            startVideoCall(myUid, myUsername, contact).catch(error => {
+              setConnectionError(`Arama başlatılamadı: ${(error as Error).message}`);
+            });
+          }}
           hitSlop={8}
           style={styles.headerIconButton}>
           <Text style={styles.headerIconText}>🎥</Text>
@@ -275,10 +381,25 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
         data={messages}
         keyExtractor={item => item.id}
         renderItem={({ item }) => (
-          <MessageBubble message={item} isMine={item.senderId === myUid} />
+          <MessageBubble
+            message={item}
+            isMine={item.senderId === myUid}
+            myUid={myUid}
+            onToggleReaction={handleToggleReaction}
+          />
         )}
         contentContainerStyle={styles.listContent}
-        onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: false })}
+        keyboardShouldPersistTaps="handled"
+        onScroll={handleScroll}
+        scrollEventThrottle={100}
+        maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
+        ListHeaderComponent={
+          loadingMore ? (
+            <View style={styles.loadingMoreRow}>
+              <ActivityIndicator color={theme.textFaint} size="small" />
+            </View>
+          ) : undefined
+        }
       />
 
       {uploadingMedia && (
@@ -405,6 +526,10 @@ const styles = StyleSheet.create({
   listContent: {
     paddingHorizontal: 14,
     paddingVertical: 12,
+  },
+  loadingMoreRow: {
+    paddingVertical: 10,
+    alignItems: 'center',
   },
   inputBar: {
     flexDirection: 'row',
