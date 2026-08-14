@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Animated, Easing, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTheme } from '../theme/ThemeContext';
 import { playGameOverSound, playNoteSound, playTapSound, playWrongSound } from '../services/soundService';
@@ -17,8 +17,12 @@ const BASE_STEP_MS = 520;
 const MIN_STEP_MS = 260;
 const STEP_SHRINK_PER_ROUND = 14;
 
+const MAX_PAD_GRID_SIZE = 300;
+
 function ColorMemoryGame({ onBack }: Props): React.JSX.Element {
   const { theme } = useTheme();
+  const { width } = useWindowDimensions();
+  const padGridSize = Math.min(width - 60, MAX_PAD_GRID_SIZE);
   const [phase, setPhase] = useState<Phase>('idle');
   const [score, setScore] = useState(0);
   const [bestScore, setBestScore] = useState(0);
@@ -161,7 +165,11 @@ function ColorMemoryGame({ onBack }: Props): React.JSX.Element {
 
       <Text style={[styles.status, { color: theme.textMuted }]}>{statusText}</Text>
 
-      <View style={[styles.padGrid, { opacity: phase === 'idle' || phase === 'gameover' ? 0.45 : 1 }]}>
+      <View
+        style={[
+          styles.padGrid,
+          { width: padGridSize, height: padGridSize, opacity: phase === 'idle' || phase === 'gameover' ? 0.45 : 1 },
+        ]}>
         {PAD_COLORS.map((color, index) => {
           const glowOpacity = padAnims[index].interpolate({ inputRange: [0, 1], outputRange: [0, 0.6] });
           const scale = padAnims[index].interpolate({ inputRange: [0, 1], outputRange: [1, 1.05] });
@@ -263,8 +271,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   padGrid: {
-    width: 280,
-    height: 280,
     flexDirection: 'row',
     flexWrap: 'wrap',
     justifyContent: 'space-between',

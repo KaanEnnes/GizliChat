@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Animated, Easing, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTheme } from '../theme/ThemeContext';
 import { playGameOverSound, playHitSound, playMissSound, playTapSound } from '../services/soundService';
@@ -9,16 +9,19 @@ interface Props {
   onBack: () => void;
 }
 
-type Phase = 'idle' | 'playing' | 'gameover';
+type Phase = 'idle' | 'playing' | 'paused' | 'gameover';
 
 const HOLE_COUNT = 9;
 const GAME_DURATION_MS = 30_000;
 const BEST_STORAGE_KEY = 'gizlichat_whackamole_best';
 const MAX_VISIBLE_MS = 950;
 const MIN_VISIBLE_MS = 450;
+const MAX_GRID_SIZE = 320;
 
 function WhackAMoleGame({ onBack }: Props): React.JSX.Element {
   const { theme } = useTheme();
+  const { width } = useWindowDimensions();
+  const gridSize = Math.min(width - 40, MAX_GRID_SIZE);
   const [phase, setPhase] = useState<Phase>('idle');
   const [score, setScore] = useState(0);
   const [bestScore, setBestScore] = useState(0);
@@ -137,6 +140,22 @@ function WhackAMoleGame({ onBack }: Props): React.JSX.Element {
     }
   }, [phase]);
 
+  const pauseGame = useCallback(() => {
+    playTapSound();
+    timersRef.current.forEach(clearTimeout);
+    timersRef.current = [];
+    if (activeHoleRef.current !== null) {
+      holeAnims[activeHoleRef.current].setValue(0);
+      activeHoleRef.current = null;
+    }
+    setPhase('paused');
+  }, [holeAnims]);
+
+  const resumeGame = useCallback(() => {
+    playTapSound();
+    setPhase('playing');
+  }, []);
+
   const handleStart = useCallback(() => {
     playTapSound();
     timersRef.current.forEach(clearTimeout);
@@ -170,7 +189,18 @@ function WhackAMoleGame({ onBack }: Props): React.JSX.Element {
           <Text style={[styles.menuLink, { color: theme.textMuted }]}>‹ Menü</Text>
         </Pressable>
         <Text style={[styles.title, { color: theme.text }]}>KÖSTEBEK VURMA</Text>
-        <View style={styles.headerSpacer} />
+        {phase === 'playing' || phase === 'paused' ? (
+          <Pressable
+            onPress={phase === 'paused' ? resumeGame : pauseGame}
+            hitSlop={8}
+            style={styles.pauseButton}
+            accessibilityRole="button"
+            accessibilityLabel={phase === 'paused' ? 'Devam et' : 'Duraklat'}>
+            <Text style={[styles.pauseIcon, { color: theme.textMuted }]}>{phase === 'paused' ? '▶' : '⏸'}</Text>
+          </Pressable>
+        ) : (
+          <View style={styles.headerSpacer} />
+        )}
       </View>
 
       <View style={styles.statsRow}>
@@ -188,7 +218,7 @@ function WhackAMoleGame({ onBack }: Props): React.JSX.Element {
         </View>
       </View>
 
-      <View style={[styles.grid, { opacity: phase === 'playing' ? 1 : 0.45 }]}>
+      <View style={[styles.grid, { width: gridSize, opacity: phase === 'playing' ? 1 : 0.45 }]}>
         {Array.from({ length: HOLE_COUNT }).map((_, index) => {
           const translateY = holeAnims[index].interpolate({ inputRange: [0, 1], outputRange: [30, 0] });
           const opacity = holeAnims[index];
@@ -211,6 +241,19 @@ function WhackAMoleGame({ onBack }: Props): React.JSX.Element {
           );
         })}
       </View>
+
+      {phase === 'paused' && (
+        <View style={styles.overlayArea}>
+          <Text style={[styles.overlayTitle, { color: theme.text }]}>DURAKLADI</Text>
+          <Pressable
+            onPress={resumeGame}
+            style={[styles.startButton, { backgroundColor: theme.accent }]}
+            accessibilityRole="button"
+            accessibilityLabel="Devam et">
+            <Text style={[styles.startButtonText, { color: theme.accentText }]}>DEVAM ET</Text>
+          </Pressable>
+        </View>
+      )}
 
       {(phase === 'idle' || phase === 'gameover') && (
         <View style={styles.overlayArea}>
@@ -267,6 +310,15 @@ const styles = StyleSheet.create({
   headerSpacer: {
     width: 40,
   },
+  pauseButton: {
+    width: 40,
+    height: 40,
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+  },
+  pauseIcon: {
+    fontSize: 18,
+  },
   statsRow: {
     flexDirection: 'row',
     width: '100%',
@@ -293,7 +345,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   grid: {
-    width: 300,
     flexDirection: 'row',
     flexWrap: 'wrap',
     justifyContent: 'space-between',

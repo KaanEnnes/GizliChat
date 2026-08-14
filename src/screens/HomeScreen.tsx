@@ -3,7 +3,6 @@ import {
   ActivityIndicator,
   Animated,
   Easing,
-  FlatList,
   GestureResponderEvent,
   Modal,
   PanResponder,
@@ -15,12 +14,14 @@ import {
   View,
   useWindowDimensions,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { playClearSound, playGameOverSound, playPlaceSound } from '../services/soundService';
 import { vibrateMedium } from '../services/hapticsService';
 import { getSavedPlayerName, savePlayerName } from '../services/playerNameStorage';
-import { fetchTopScores, HighScoreEntry, submitScore } from '../services/leaderboardService';
+import { submitScore } from '../services/leaderboardService';
 import { useTheme } from '../theme/ThemeContext';
+import LeaderboardModal from '../components/LeaderboardModal';
 
 interface Props {
   /** Returns to GameHubScreen's game-picker grid (the gear/settings/secret trigger live there now). */
@@ -124,11 +125,7 @@ const SHAPE_DEFS: CellCoord[][] = [
   [[0, 0], [0, 1], [1, 0], [1, 1], [2, 0], [2, 1]],
 ];
 
-// Best score is kept at module scope (not component state) so it survives
-// HomeScreen being unmounted, which happens whenever the app navigates to the
-// admin login/chat screens and back — component state alone would reset to 0
-// on every remount, but this variable lives as long as the app process does.
-let persistedBestScore = 0;
+const BEST_STORAGE_KEY = 'gizlichat_blockblast_best';
 
 function createEmptyBoard(): Board {
   return Array.from({ length: BOARD_SIZE }, () => Array(BOARD_SIZE).fill(''));
@@ -385,7 +382,7 @@ function HomeScreen({ onBack }: Props): React.JSX.Element {
   const [board, setBoard] = useState<Board>(createEmptyBoard());
   const [pieces, setPieces] = useState<(Piece | null)[]>([null, null, null]);
   const [score, setScore] = useState(0);
-  const [bestScore, setBestScore] = useState(persistedBestScore);
+  const [bestScore, setBestScore] = useState(0);
   const pieceIdRef = useRef(0);
   // Tracks the just-computed score synchronously so game-over handling (which
   // can fire either immediately or after a line-clear flash timeout) always
@@ -393,8 +390,19 @@ function HomeScreen({ onBack }: Props): React.JSX.Element {
   const finalScoreRef = useRef(0);
 
   useEffect(() => {
-    persistedBestScore = bestScore;
-  }, [bestScore]);
+    AsyncStorage.getItem(BEST_STORAGE_KEY).then(saved => {
+      if (saved) {
+        setBestScore(prev => Math.max(prev, parseInt(saved, 10) || 0));
+      }
+    });
+  }, []);
+
+  useEffect(() => {
+    if (score > bestScore) {
+      setBestScore(score);
+      AsyncStorage.setItem(BEST_STORAGE_KEY, String(score)).catch(() => undefined);
+    }
+  }, [score, bestScore]);
 
   // --- Player name (asked once) + leaderboard -----------------------------
   const [playerName, setPlayerName] = useState<string | null>(null);
@@ -402,9 +410,6 @@ function HomeScreen({ onBack }: Props): React.JSX.Element {
   const [nameDraft, setNameDraft] = useState('');
   const [savingName, setSavingName] = useState(false);
   const [leaderboardVisible, setLeaderboardVisible] = useState(false);
-  const [leaderboard, setLeaderboard] = useState<HighScoreEntry[]>([]);
-  const [leaderboardLoading, setLeaderboardLoading] = useState(false);
-  const [leaderboardError, setLeaderboardError] = useState<string | null>(null);
 
   useEffect(() => {
     getSavedPlayerName().then(setPlayerName);
@@ -447,12 +452,6 @@ function HomeScreen({ onBack }: Props): React.JSX.Element {
 
   const handleShowLeaderboard = useCallback(() => {
     setLeaderboardVisible(true);
-    setLeaderboardLoading(true);
-    setLeaderboardError(null);
-    fetchTopScores()
-      .then(setLeaderboard)
-      .catch(error => setLeaderboardError(`Skor tablosu yüklenemedi: ${error.message}`))
-      .finally(() => setLeaderboardLoading(false));
   }, []);
 
   // --- Drag & drop state -------------------------------------------------
@@ -576,7 +575,6 @@ function HomeScreen({ onBack }: Props): React.JSX.Element {
       setScore(prevScore => {
         const nextScore = prevScore + gained;
         finalScoreRef.current = nextScore;
-        setBestScore(prevBest => Math.max(prevBest, nextScore));
         return nextScore;
       });
       triggerScorePulse();
@@ -810,10 +808,14 @@ function HomeScreen({ onBack }: Props): React.JSX.Element {
 
           <Pressable
             onPress={handlePlayPress}
-            style={({ pressed }) => [styles.playButton, pressed && styles.playButtonPressed]}
+            style={({ pressed }) => [
+              styles.playButton,
+              { backgroundColor: theme.accent, shadowColor: theme.accent },
+              pressed && styles.playButtonPressed,
+            ]}
             accessibilityRole="button"
             accessibilityLabel="Oyuna başla">
-            <Text style={styles.playButtonText}>OYNA</Text>
+            <Text style={[styles.playButtonText, { color: theme.accentText }]}>OYNA</Text>
           </Pressable>
         </View>
       )}
@@ -974,11 +976,12 @@ function HomeScreen({ onBack }: Props): React.JSX.Element {
                   style={({ pressed }) => [
                     styles.playButton,
                     styles.replayButton,
+                    { backgroundColor: theme.accent, shadowColor: theme.accent },
                     pressed && styles.playButtonPressed,
                   ]}
                   accessibilityRole="button"
                   accessibilityLabel="Tekrar oyna">
-                  <Text style={styles.playButtonText}>TEKRAR OYNA</Text>
+                  <Text style={[styles.playButtonText, { color: theme.accentText }]}>TEKRAR OYNA</Text>
                 </Pressable>
                 <Pressable
                   onPress={handleShowLeaderboard}
@@ -1044,63 +1047,25 @@ function HomeScreen({ onBack }: Props): React.JSX.Element {
               onSubmitEditing={handleNameSubmit}
             />
             <Pressable
-              style={[styles.playButton, styles.modalSubmitButton, savingName && styles.playButtonPressed]}
+              style={[
+                styles.playButton,
+                styles.modalSubmitButton,
+                { backgroundColor: theme.accent, shadowColor: theme.accent },
+                savingName && styles.playButtonPressed,
+              ]}
               onPress={handleNameSubmit}
               disabled={savingName}>
               {savingName ? (
-                <ActivityIndicator color="#0F1115" />
+                <ActivityIndicator color={theme.accentText} />
               ) : (
-                <Text style={styles.playButtonText}>KAYDET</Text>
+                <Text style={[styles.playButtonText, { color: theme.accentText }]}>KAYDET</Text>
               )}
             </Pressable>
           </View>
         </View>
       </Modal>
 
-      <Modal
-        visible={leaderboardVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setLeaderboardVisible(false)}>
-        <View style={[styles.modalOverlay, { backgroundColor: theme.overlay }]}>
-          <View style={[styles.modalCard, { backgroundColor: theme.surface, borderColor: theme.border }]}>
-            <Text style={[styles.modalTitle, { color: theme.text }]}>🏆 Skor Tablosu</Text>
-            {leaderboardLoading && (
-              <ActivityIndicator color={theme.accent} style={styles.leaderboardLoader} />
-            )}
-            {leaderboardError && <Text style={styles.errorTextModal}>{leaderboardError}</Text>}
-            {!leaderboardLoading && !leaderboardError && (
-              <FlatList
-                data={leaderboard}
-                keyExtractor={item => item.id}
-                style={styles.leaderboardList}
-                ListEmptyComponent={
-                  <Text style={[styles.leaderboardEmpty, { color: theme.textFaint }]}>
-                    Henüz skor yok, ilk sen ol!
-                  </Text>
-                }
-                renderItem={({ item, index }) => (
-                  <View style={[styles.leaderboardRow, { borderBottomColor: theme.border }]}>
-                    <Text style={[styles.leaderboardRank, { color: theme.textFaint }]}>
-                      {index + 1}.
-                    </Text>
-                    <Text style={[styles.leaderboardName, { color: theme.text }]} numberOfLines={1}>
-                      {item.name}
-                    </Text>
-                    <Text style={styles.leaderboardScore}>{item.score}</Text>
-                  </View>
-                )}
-              />
-            )}
-            <Pressable
-              onPress={() => setLeaderboardVisible(false)}
-              hitSlop={8}
-              style={styles.secondaryButton}>
-              <Text style={[styles.secondaryButtonText, { color: theme.textMuted }]}>Kapat</Text>
-            </Pressable>
-          </View>
-        </View>
-      </Modal>
+      <LeaderboardModal visible={leaderboardVisible} onClose={() => setLeaderboardVisible(false)} />
     </View>
   );
 }
@@ -1309,11 +1274,9 @@ const styles = StyleSheet.create({
   playButton: {
     width: '100%',
     maxWidth: 340,
-    backgroundColor: '#6BCB77',
     borderRadius: 18,
     paddingVertical: 16,
     alignItems: 'center',
-    shadowColor: '#6BCB77',
     shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.4,
     shadowRadius: 10,
@@ -1323,7 +1286,6 @@ const styles = StyleSheet.create({
     opacity: 0.85,
   },
   playButtonText: {
-    color: '#0F1115',
     fontSize: 20,
     fontWeight: '800',
     letterSpacing: 1,
@@ -1517,50 +1479,6 @@ const styles = StyleSheet.create({
   },
   modalSubmitButton: {
     maxWidth: undefined,
-  },
-  leaderboardLoader: {
-    marginVertical: 20,
-  },
-  leaderboardList: {
-    maxHeight: 320,
-    marginBottom: 12,
-  },
-  leaderboardEmpty: {
-    color: 'rgba(245,245,247,0.45)',
-    fontSize: 13,
-    textAlign: 'center',
-    paddingVertical: 16,
-  },
-  leaderboardRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.06)',
-  },
-  leaderboardRank: {
-    color: 'rgba(245,245,247,0.45)',
-    fontSize: 13,
-    fontWeight: '700',
-    width: 26,
-  },
-  leaderboardName: {
-    flex: 1,
-    color: '#F5F5F7',
-    fontSize: 14,
-    fontWeight: '600',
-    marginRight: 8,
-  },
-  leaderboardScore: {
-    color: '#6BCB77',
-    fontSize: 14,
-    fontWeight: '800',
-  },
-  errorTextModal: {
-    color: '#FF6B6B',
-    fontSize: 13,
-    textAlign: 'center',
-    marginVertical: 16,
   },
 });
 

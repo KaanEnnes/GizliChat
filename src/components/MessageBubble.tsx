@@ -3,6 +3,7 @@ import { Image, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import Video from 'react-native-video';
 import type { ChatMessage } from '../services/chatService';
 import AudioMessagePlayer from './AudioMessagePlayer';
+import { useTheme } from '../theme/ThemeContext';
 
 interface Props {
   message: ChatMessage;
@@ -31,9 +32,11 @@ function formatCallDuration(totalSeconds: number): string {
 }
 
 function MessageBubble({ message, isMine, myUid, onToggleReaction }: Props): React.JSX.Element {
+  const { theme } = useTheme();
   const [viewerOpen, setViewerOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
-  const tint = isMine ? '#0F1115' : '#3B7CFF';
+  const bubbleColor = isMine ? theme.bubbleMine : theme.bubbleOther;
+  const bubbleTextColor = isMine ? theme.bubbleMineText : theme.bubbleOtherText;
   const myReaction = message.reactions?.[myUid];
   const reactionCounts = Object.values(message.reactions ?? {}).reduce<Record<string, number>>(
     (acc, emoji) => {
@@ -70,15 +73,20 @@ function MessageBubble({ message, isMine, myUid, onToggleReaction }: Props): Rea
 
     return (
       <View style={styles.callRow}>
-        <View style={[styles.callPill, missed && styles.callPillMissed]}>
+        <View
+          style={[
+            styles.callPill,
+            { backgroundColor: theme.surface, borderColor: theme.border },
+            missed && { backgroundColor: theme.dangerSoft, borderColor: theme.dangerSoft },
+          ]}>
           <Text style={styles.callIcon}>{icon}</Text>
           <View style={styles.callTextWrap}>
-            <Text style={[styles.callLabel, missed && styles.callLabelMissed]}>
+            <Text style={[styles.callLabel, { color: theme.text }, missed && { color: theme.danger }]}>
               {kindLabel} {directionIcon}
             </Text>
-            <Text style={styles.callDetail}>{detail}</Text>
+            <Text style={[styles.callDetail, { color: theme.textMuted }]}>{detail}</Text>
           </View>
-          <Text style={styles.callTime}>{formatTime(message.createdAt)}</Text>
+          <Text style={[styles.callTime, { color: theme.textFaint }]}>{formatTime(message.createdAt)}</Text>
         </View>
       </View>
     );
@@ -94,7 +102,11 @@ function MessageBubble({ message, isMine, myUid, onToggleReaction }: Props): Rea
       <Pressable
         onLongPress={() => setPickerOpen(true)}
         delayLongPress={280}
-        style={[styles.bubble, isMine ? styles.bubbleMine : styles.bubbleOther]}>
+        style={[
+          styles.bubble,
+          { backgroundColor: bubbleColor },
+          isMine ? styles.bubbleMine : styles.bubbleOther,
+        ]}>
         {message.type === 'image' && message.mediaUrl && (
           <Pressable onPress={() => setViewerOpen(true)}>
             <Image source={{ uri: message.mediaUrl }} style={styles.mediaImage} resizeMode="cover" />
@@ -121,25 +133,38 @@ function MessageBubble({ message, isMine, myUid, onToggleReaction }: Props): Rea
           <AudioMessagePlayer
             uri={message.mediaUrl}
             durationSeconds={message.durationSeconds}
-            tint={tint}
+            textColor={bubbleTextColor}
           />
         )}
 
-        {message.type === 'text' && <Text style={styles.messageText}>{message.text}</Text>}
+        {message.type === 'text' && <Text style={[styles.messageText, { color: bubbleTextColor }]}>{message.text}</Text>}
 
         <View style={styles.metaRow}>
-          <Text style={styles.timeText}>{formatTime(message.createdAt)}</Text>
+          <Text style={[styles.timeText, styles.mutedMeta, { color: bubbleTextColor }]}>
+            {formatTime(message.createdAt)}
+          </Text>
           {isMine && (
-            <Text style={[styles.statusIcon, status === 'read' && styles.statusIconRead]}>
+            <Text
+              style={[
+                styles.statusIcon,
+                styles.mutedMeta,
+                { color: bubbleTextColor },
+                status === 'read' && [styles.readMeta, { color: theme.success }],
+              ]}>
               {status === 'pending' ? '🕒' : status === 'sent' ? '✓' : '✓✓'}
             </Text>
           )}
         </View>
 
         {hasReactions && (
-          <View style={[styles.reactionBar, isMine ? styles.reactionBarMine : styles.reactionBarOther]}>
+          <View
+            style={[
+              styles.reactionBar,
+              { backgroundColor: theme.surface, borderColor: theme.border },
+              isMine ? styles.reactionBarMine : styles.reactionBarOther,
+            ]}>
             {Object.entries(reactionCounts).map(([emoji, count]) => (
-              <Text key={emoji} style={styles.reactionPillText}>
+              <Text key={emoji} style={[styles.reactionPillText, { color: theme.text }]}>
                 {emoji}
                 {count > 1 ? ` ${count}` : ''}
               </Text>
@@ -149,10 +174,18 @@ function MessageBubble({ message, isMine, myUid, onToggleReaction }: Props): Rea
       </Pressable>
 
       <Modal visible={pickerOpen} transparent animationType="fade" onRequestClose={() => setPickerOpen(false)}>
-        <Pressable style={styles.pickerOverlay} onPress={() => setPickerOpen(false)}>
-          <View style={styles.pickerCard}>
+        <Pressable
+          style={[styles.pickerOverlay, { backgroundColor: theme.overlay }]}
+          onPress={() => setPickerOpen(false)}>
+          <View style={[styles.pickerCard, { backgroundColor: theme.surface, borderColor: theme.border }]}>
             {QUICK_EMOJIS.map(emoji => (
-              <Pressable key={emoji} style={styles.pickerEmojiButton} onPress={() => handlePickEmoji(emoji)}>
+              <Pressable
+                key={emoji}
+                style={styles.pickerEmojiButton}
+                onPress={() => handlePickEmoji(emoji)}
+                hitSlop={4}
+                accessibilityRole="button"
+                accessibilityLabel={`${emoji} tepkisi ver`}>
                 <Text style={[styles.pickerEmojiText, myReaction === emoji && styles.pickerEmojiTextActive]}>
                   {emoji}
                 </Text>
@@ -185,7 +218,7 @@ function MessageBubble({ message, isMine, myUid, onToggleReaction }: Props): Rea
 const styles = StyleSheet.create({
   row: {
     width: '100%',
-    marginVertical: 4,
+    marginVertical: 3,
   },
   rowLeft: {
     alignItems: 'flex-start',
@@ -198,20 +231,24 @@ const styles = StyleSheet.create({
   },
   bubble: {
     maxWidth: '78%',
-    borderRadius: 16,
+    borderRadius: 18,
     paddingHorizontal: 14,
-    paddingVertical: 8,
+    paddingVertical: 9,
+  },
+  bubbleMine: {
+    borderBottomRightRadius: 4,
+  },
+  bubbleOther: {
+    borderBottomLeftRadius: 4,
   },
   reactionBar: {
     position: 'absolute',
     bottom: -12,
     flexDirection: 'row',
-    backgroundColor: '#1C1F26',
     borderRadius: 10,
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.12)',
     gap: 4,
   },
   reactionBarMine: {
@@ -222,27 +259,23 @@ const styles = StyleSheet.create({
   },
   reactionPillText: {
     fontSize: 12,
-    color: '#F5F5F7',
   },
   pickerOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(10,11,15,0.6)',
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 24,
   },
   pickerCard: {
     flexDirection: 'row',
-    backgroundColor: '#1C1F26',
     borderRadius: 28,
     paddingHorizontal: 10,
     paddingVertical: 10,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)',
   },
   pickerEmojiButton: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
+    paddingHorizontal: 9,
+    paddingVertical: 9,
   },
   pickerEmojiText: {
     fontSize: 26,
@@ -250,18 +283,9 @@ const styles = StyleSheet.create({
   pickerEmojiTextActive: {
     opacity: 0.4,
   },
-  bubbleOther: {
-    backgroundColor: '#2A2D34',
-    borderBottomLeftRadius: 4,
-  },
-  bubbleMine: {
-    backgroundColor: '#3B7CFF',
-    borderBottomRightRadius: 4,
-  },
   messageText: {
-    color: '#F5F5F7',
-    fontSize: 15,
-    lineHeight: 20,
+    fontSize: 15.5,
+    lineHeight: 21,
   },
   metaRow: {
     flexDirection: 'row',
@@ -270,16 +294,17 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-end',
   },
   timeText: {
-    color: 'rgba(245,245,247,0.6)',
     fontSize: 11,
   },
   statusIcon: {
-    color: 'rgba(245,245,247,0.6)',
     fontSize: 11,
     marginLeft: 4,
   },
-  statusIconRead: {
-    color: '#34B7F1',
+  mutedMeta: {
+    opacity: 0.6,
+  },
+  readMeta: {
+    opacity: 1,
   },
   mediaImage: {
     width: 220,
@@ -295,17 +320,17 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: 'rgba(15,17,21,0.65)',
+    backgroundColor: 'rgba(11,19,43,0.65)',
     alignItems: 'center',
     justifyContent: 'center',
   },
   playOverlayIcon: {
-    color: '#F5F5F7',
+    color: '#F8FAFC',
     fontSize: 18,
   },
   viewerOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.9)',
+    backgroundColor: 'rgba(6,10,24,0.92)',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -321,14 +346,11 @@ const styles = StyleSheet.create({
   callPill: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#2A2D34',
     borderRadius: 16,
     paddingVertical: 8,
     paddingHorizontal: 14,
     maxWidth: '82%',
-  },
-  callPillMissed: {
-    backgroundColor: 'rgba(255,107,107,0.14)',
+    borderWidth: 1,
   },
   callIcon: {
     fontSize: 18,
@@ -338,20 +360,14 @@ const styles = StyleSheet.create({
     marginRight: 10,
   },
   callLabel: {
-    color: '#F5F5F7',
     fontSize: 13,
     fontWeight: '700',
   },
-  callLabelMissed: {
-    color: '#FF6B6B',
-  },
   callDetail: {
-    color: 'rgba(245,245,247,0.55)',
     fontSize: 11.5,
     marginTop: 1,
   },
   callTime: {
-    color: 'rgba(245,245,247,0.4)',
     fontSize: 10.5,
   },
 });

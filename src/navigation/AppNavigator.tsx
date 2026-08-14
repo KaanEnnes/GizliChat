@@ -7,7 +7,12 @@ import ChatRoomScreen from '../screens/ChatRoomScreen';
 import CallProvider from '../components/CallProvider';
 import NotificationCenter from '../components/NotificationCenter';
 import { Contact } from '../services/contactService';
-import { Account, logoutAccount } from '../services/userService';
+import { Account, logoutAccount, updatePresenceHeartbeat } from '../services/userService';
+
+// How often this device stamps itself as "recently active" for other users'
+// online indicators — well under ONLINE_THRESHOLD_MS so a contact never
+// flickers offline between two consecutive heartbeats.
+const PRESENCE_HEARTBEAT_MS = 25_000;
 
 type Screen = 'HOME' | 'ACCOUNT' | 'CONTACTS' | 'CHAT_ROOM';
 
@@ -33,6 +38,17 @@ function AppNavigator(): React.JSX.Element {
     return () => subscription.remove();
   }, [screen]);
 
+  useEffect(() => {
+    if (!account) {
+      return undefined;
+    }
+    updatePresenceHeartbeat(account.uid).catch(() => undefined);
+    const interval = setInterval(() => {
+      updatePresenceHeartbeat(account.uid).catch(() => undefined);
+    }, PRESENCE_HEARTBEAT_MS);
+    return () => clearInterval(interval);
+  }, [account]);
+
   const openRoom = (contact: Contact) => {
     setActiveContact(contact);
     setScreen('CHAT_ROOM');
@@ -54,6 +70,7 @@ function AppNavigator(): React.JSX.Element {
       <ContactsScreen
         account={account}
         onOpenRoom={openRoom}
+        onOpenGames={() => setScreen('HOME')}
         onLogout={() => {
           logoutAccount().finally(() => {
             setAccount(null);

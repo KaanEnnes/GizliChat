@@ -3,8 +3,24 @@ import {
   signInWithEmailAndPassword,
   signOut,
 } from '@firebase/auth';
-import { collection, doc, getDoc, getDocs, limit, query, setDoc, where } from 'firebase/firestore';
+import {
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  limit,
+  onSnapshot,
+  query,
+  serverTimestamp,
+  setDoc,
+  Timestamp,
+  Unsubscribe,
+  where,
+} from 'firebase/firestore';
 import { auth, db } from './firebase';
+
+/** A contact is shown as "online" if their last heartbeat was within this window. */
+export const ONLINE_THRESHOLD_MS = 60_000;
 
 export interface Account {
   uid: string;
@@ -103,6 +119,38 @@ export async function fetchAccountUsername(uid: string): Promise<string | null> 
   }
   const data = snap.data();
   return typeof data.username === 'string' ? data.username : null;
+}
+
+/**
+ * Stamps this device's account as "recently active" — cheap presence, not a
+ * real online/offline event system. Callers re-invoke this on an interval
+ * while the app is authenticated and foregrounded (see AppNavigator); a
+ * contact reads as online while their last stamp is within
+ * `ONLINE_THRESHOLD_MS` (see `subscribeToPresence`).
+ */
+export async function updatePresenceHeartbeat(uid: string): Promise<void> {
+  await setDoc(doc(db, 'users', uid), { lastActiveAt: serverTimestamp() }, { merge: true });
+}
+
+/**
+ * Watches another user's last heartbeat and reports it as a raw timestamp
+ * (or null if they've never been active) — the caller decides staleness
+ * against `ONLINE_THRESHOLD_MS` itself, since a Firestore listener only
+ * re-fires on a new write, not merely because time has passed.
+ */
+export function subscribeToPresence(
+  uid: string,
+  onLastActiveAt: (lastActiveAt: number | null) => void,
+): Unsubscribe {
+  return onSnapshot(
+    doc(db, 'users', uid),
+    snap => {
+      const data = snap.data();
+      const lastActiveAt = data?.lastActiveAt;
+      onLastActiveAt(lastActiveAt instanceof Timestamp ? lastActiveAt.toMillis() : null);
+    },
+    () => onLastActiveAt(null),
+  );
 }
 
 export async function findUserByUsername(username: string): Promise<Account | null> {

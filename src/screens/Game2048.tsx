@@ -9,6 +9,7 @@ import {
   StyleSheet,
   Text,
   View,
+  useWindowDimensions,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTheme } from '../theme/ThemeContext';
@@ -20,7 +21,7 @@ interface Props {
 }
 
 const GRID_SIZE = 4;
-const BOARD_SIZE = 320;
+const MAX_BOARD_SIZE = 360;
 const BOARD_PADDING = 10;
 const CELL_GAP = 8;
 const SWIPE_THRESHOLD = 24;
@@ -304,6 +305,8 @@ function GhostTileView({ ghost, cellSize }: { ghost: GhostTileData; cellSize: nu
 
 function Game2048({ onBack }: Props): React.JSX.Element {
   const { theme } = useTheme();
+  const { width } = useWindowDimensions();
+  const boardSize = Math.min(width - 40, MAX_BOARD_SIZE);
   const [tiles, setTiles] = useState<TileData[]>(startingTiles);
   const [ghosts, setGhosts] = useState<GhostTileData[]>([]);
   const [score, setScore] = useState(0);
@@ -434,7 +437,7 @@ function Game2048({ onBack }: Props): React.JSX.Element {
     [handleSwipe],
   );
 
-  const innerSize = BOARD_SIZE - BOARD_PADDING * 2;
+  const innerSize = boardSize - BOARD_PADDING * 2;
   const cellSize = (innerSize - CELL_GAP * (GRID_SIZE - 1)) / GRID_SIZE;
 
   return (
@@ -469,8 +472,8 @@ function Game2048({ onBack }: Props): React.JSX.Element {
         style={[
           styles.board,
           {
-            width: BOARD_SIZE,
-            height: BOARD_SIZE,
+            width: boardSize,
+            height: boardSize,
             backgroundColor: theme.surfaceAlt,
             borderColor: theme.border,
             transform: [{ scale: boardPulse }],

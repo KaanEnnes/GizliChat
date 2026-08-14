@@ -7,6 +7,8 @@ interface Props {
   /** 0 (not started) – 1 (finished). Bars up to this fraction render in `tint`. */
   progress: number;
   tint: string;
+  /** Color for the not-yet-played portion of the bars. */
+  trackColor: string;
 }
 
 const BAR_COUNT = 28;
@@ -29,7 +31,7 @@ function barHeightsFromSeed(seed: string): number[] {
 }
 
 /** Static WhatsApp-style waveform for a voice message bubble, with a fill showing playback progress. */
-function PlaybackWaveform({ seed, progress, tint }: Props): React.JSX.Element {
+function PlaybackWaveform({ seed, progress, tint, trackColor }: Props): React.JSX.Element {
   const heights = useMemo(() => barHeightsFromSeed(seed), [seed]);
   const filledBars = Math.round(Math.min(1, Math.max(0, progress)) * BAR_COUNT);
 
@@ -40,7 +42,7 @@ function PlaybackWaveform({ seed, progress, tint }: Props): React.JSX.Element {
           key={index}
           style={[
             styles.bar,
-            { height, backgroundColor: index < filledBars ? tint : 'rgba(245,245,247,0.25)' },
+            { height, backgroundColor: index < filledBars ? tint : trackColor },
           ]}
         />
       ))}

@@ -147,16 +147,16 @@ function AccountScreen({ onAuthenticated, onCancel }: Props): React.JSX.Element 
           />
         )}
 
-        {error ? <Text style={styles.errorText}>{error}</Text> : null}
+        {error ? <Text style={[styles.errorText, { color: theme.danger }]}>{error}</Text> : null}
 
         <Pressable
-          style={[styles.submitButton, loading && styles.submitButtonDisabled]}
+          style={[styles.submitButton, { backgroundColor: theme.accent }, loading && styles.submitButtonDisabled]}
           onPress={handleSubmit}
           disabled={loading}>
           {loading ? (
-            <ActivityIndicator color="#0F1115" />
+            <ActivityIndicator color={theme.accentText} />
           ) : (
-            <Text style={styles.submitButtonText}>
+            <Text style={[styles.submitButtonText, { color: theme.accentText }]}>
               {mode === 'login' ? 'Giriş Yap' : 'Kayıt Ol'}
             </Text>
           )}
@@ -169,13 +169,13 @@ function AccountScreen({ onAuthenticated, onCancel }: Props): React.JSX.Element 
             setMode(mode === 'login' ? 'register' : 'login');
           }}
           disabled={loading}>
-          <Text style={styles.switchModeText}>
+          <Text style={[styles.switchModeText, { color: theme.identity }]}>
             {mode === 'login' ? 'Hesabın yok mu? Kayıt ol' : 'Zaten hesabın var mı? Giriş yap'}
           </Text>
         </Pressable>
 
         <Pressable style={styles.cancelButton} onPress={onCancel} disabled={loading}>
-          <Text style={styles.cancelButtonText}>Vazgeç</Text>
+          <Text style={[styles.cancelButtonText, { color: theme.textMuted }]}>Vazgeç</Text>
         </Pressable>
       </View>
     </KeyboardAvoidingView>
@@ -185,54 +185,43 @@ function AccountScreen({ onAuthenticated, onCancel }: Props): React.JSX.Element 
 const styles = StyleSheet.create({
   loadingContainer: {
     flex: 1,
-    backgroundColor: '#0F1115',
     alignItems: 'center',
     justifyContent: 'center',
   },
   container: {
     flex: 1,
-    backgroundColor: '#0F1115',
     justifyContent: 'center',
     paddingHorizontal: 24,
   },
   card: {
-    backgroundColor: '#1C1F26',
     borderRadius: 16,
     padding: 24,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.06)',
   },
   title: {
-    color: '#F5F5F7',
     fontSize: 22,
     fontWeight: '700',
     marginBottom: 6,
     textAlign: 'center',
   },
   subtitle: {
-    color: 'rgba(245,245,247,0.5)',
     fontSize: 12.5,
     textAlign: 'center',
     marginBottom: 20,
   },
   input: {
-    backgroundColor: '#0F1115',
     borderRadius: 10,
     paddingHorizontal: 14,
     paddingVertical: 12,
-    color: '#F5F5F7',
     fontSize: 15,
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
   },
   errorText: {
-    color: '#FF6B6B',
     fontSize: 13,
     marginBottom: 12,
   },
   submitButton: {
-    backgroundColor: '#3B7CFF',
     borderRadius: 10,
     paddingVertical: 13,
     alignItems: 'center',
@@ -243,7 +232,6 @@ const styles = StyleSheet.create({
     opacity: 0.6,
   },
   submitButtonText: {
-    color: '#0F1115',
     fontSize: 15,
     fontWeight: '700',
   },
@@ -252,7 +240,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   switchModeText: {
-    color: '#3B7CFF',
     fontSize: 13,
     fontWeight: '600',
   },
@@ -261,7 +248,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   cancelButtonText: {
-    color: 'rgba(245,245,247,0.5)',
     fontSize: 13,
   },
 });

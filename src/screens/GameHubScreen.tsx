@@ -1,9 +1,11 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Animated, Pressable, StatusBar, StyleSheet, Text, View } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../theme/ThemeContext';
 import { playTapSound } from '../services/soundService';
 import SettingsModal from '../components/SettingsModal';
+import LeaderboardModal from '../components/LeaderboardModal';
 import HomeScreen from './HomeScreen';
 import Game2048 from './Game2048';
 import SnakeGame from './SnakeGame';
@@ -22,6 +24,8 @@ interface GameCardMeta {
   subtitle: string;
   icon: string;
   color: string;
+  /** Matches each game screen's own `BEST_STORAGE_KEY` constant. */
+  bestScoreKey: string;
 }
 
 const GAMES: GameCardMeta[] = [
@@ -31,6 +35,7 @@ const GAMES: GameCardMeta[] = [
     subtitle: 'Blokları yerleştir, sıraları temizle',
     icon: '🧩',
     color: '#4D96FF',
+    bestScoreKey: 'gizlichat_blockblast_best',
   },
   {
     key: '2048',
@@ -38,6 +43,7 @@ const GAMES: GameCardMeta[] = [
     subtitle: 'Kayarak birleştir, 2048\'e ulaş',
     icon: '🔢',
     color: '#EDC22E',
+    bestScoreKey: 'gizlichat_2048_best',
   },
   {
     key: 'snake',
@@ -45,6 +51,7 @@ const GAMES: GameCardMeta[] = [
     subtitle: 'Ye, büyü, kendine çarpma',
     icon: '🐍',
     color: '#6BCB77',
+    bestScoreKey: 'gizlichat_snake_best',
   },
   {
     key: 'colorMemory',
@@ -52,6 +59,7 @@ const GAMES: GameCardMeta[] = [
     subtitle: 'Diziyi izle, aynısını tekrarla',
     icon: '🎵',
     color: '#9D6BFF',
+    bestScoreKey: 'gizlichat_colormemory_best',
   },
   {
     key: 'whackAMole',
@@ -59,6 +67,7 @@ const GAMES: GameCardMeta[] = [
     subtitle: 'Hızlı ol, kaçırdığın puan kaybı',
     icon: '🔨',
     color: '#FF6B6B',
+    bestScoreKey: 'gizlichat_whackamole_best',
   },
 ];
 
@@ -83,6 +92,30 @@ function GameHubScreen({ onAdminTriggerReached }: Props): React.JSX.Element {
   const { theme } = useTheme();
   const [activeGame, setActiveGame] = useState<GameKey | null>(null);
   const [settingsVisible, setSettingsVisible] = useState(false);
+  const [leaderboardVisible, setLeaderboardVisible] = useState(false);
+  const [bestScores, setBestScores] = useState<Partial<Record<GameKey, number>>>({});
+
+  const loadBestScores = useCallback(() => {
+    AsyncStorage.getMany(GAMES.map(game => game.bestScoreKey)).then(entries => {
+      const next: Partial<Record<GameKey, number>> = {};
+      GAMES.forEach(game => {
+        const value = entries[game.bestScoreKey];
+        const parsed = value ? parseInt(value, 10) : 0;
+        if (parsed > 0) {
+          next[game.key] = parsed;
+        }
+      });
+      setBestScores(next);
+    });
+  }, []);
+
+  // Loaded on mount, then refreshed every time the user returns to the hub
+  // (closeGame) — a just-finished game may have set a new best score.
+  useEffect(() => {
+    if (activeGame === null) {
+      loadBestScores();
+    }
+  }, [activeGame, loadBestScores]);
 
   const [, setTapCount] = useState(0);
   const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -192,6 +225,18 @@ function GameHubScreen({ onAdminTriggerReached }: Props): React.JSX.Element {
         <Text style={[styles.title, { color: theme.text }]}>🎮 Mini Oyunlar</Text>
         <Text style={[styles.subtitle, { color: theme.textMuted }]}>Bir oyun seç ve başla!</Text>
 
+        <Pressable
+          onPress={() => setLeaderboardVisible(true)}
+          style={({ pressed }) => [
+            styles.leaderboardButton,
+            { backgroundColor: theme.surface, borderColor: theme.border },
+            pressed && styles.cardPressed,
+          ]}
+          accessibilityRole="button"
+          accessibilityLabel="Skor tablosunu aç">
+          <Text style={[styles.leaderboardButtonText, { color: theme.text }]}>🏆 Skor Tablosu</Text>
+        </Pressable>
+
         <View style={styles.grid}>
           {GAMES.map((game, index) => {
             const anim = cardAnims[index];
@@ -217,8 +262,17 @@ function GameHubScreen({ onAdminTriggerReached }: Props): React.JSX.Element {
                   ]}
                   accessibilityRole="button"
                   accessibilityLabel={`${game.title} oyna`}>
-                  <View style={[styles.iconBadge, { backgroundColor: `${game.color}26` }]}>
-                    <Text style={styles.iconText}>{game.icon}</Text>
+                  <View style={styles.cardTopRow}>
+                    <View style={[styles.iconBadge, { backgroundColor: `${game.color}26` }]}>
+                      <Text style={styles.iconText}>{game.icon}</Text>
+                    </View>
+                    {!!bestScores[game.key] && (
+                      <View style={[styles.bestBadge, { backgroundColor: theme.surfaceAlt }]}>
+                        <Text style={[styles.bestBadgeText, { color: theme.textMuted }]}>
+                          🏅 {bestScores[game.key]}
+                        </Text>
+                      </View>
+                    )}
                   </View>
                   <Text style={[styles.cardTitle, { color: theme.text }]}>{game.title}</Text>
                   <Text style={[styles.cardSubtitle, { color: theme.textFaint }]} numberOfLines={2}>
@@ -245,6 +299,7 @@ function GameHubScreen({ onAdminTriggerReached }: Props): React.JSX.Element {
       </Pressable>
 
       <SettingsModal visible={settingsVisible} onClose={() => setSettingsVisible(false)} />
+      <LeaderboardModal visible={leaderboardVisible} onClose={() => setLeaderboardVisible(false)} />
     </View>
   );
 }
@@ -268,7 +323,20 @@ const styles = StyleSheet.create({
   subtitle: {
     fontSize: 13,
     textAlign: 'center',
+    marginBottom: 18,
+  },
+  leaderboardButton: {
+    width: '100%',
+    maxWidth: 420,
+    borderRadius: 14,
+    borderWidth: 1,
+    paddingVertical: 12,
+    alignItems: 'center',
     marginBottom: 22,
+  },
+  leaderboardButtonText: {
+    fontSize: 14,
+    fontWeight: '700',
   },
   grid: {
     width: '100%',
@@ -297,13 +365,28 @@ const styles = StyleSheet.create({
   cardPressed: {
     opacity: 0.82,
   },
+  cardTopRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    width: '100%',
+    marginBottom: 12,
+  },
   iconBadge: {
     width: 44,
     height: 44,
     borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 12,
+  },
+  bestBadge: {
+    borderRadius: 10,
+    paddingHorizontal: 7,
+    paddingVertical: 4,
+  },
+  bestBadgeText: {
+    fontSize: 10.5,
+    fontWeight: '700',
   },
   iconText: {
     fontSize: 22,

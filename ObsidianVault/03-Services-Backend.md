@@ -68,14 +68,30 @@ kullanıcılar için leaderboard'un çalışmasını sağlayan tek amaç bu.
 
 ```ts
 {
-  name: string;    // takma ad (eklerken girilen, veya bulunan kullanıcının kayıtlı adı)
+  name: string;      // takma ad (eklerken girilen, veya bulunan kullanıcının kayıtlı adı)
   addedAt: number;
+  favorite: boolean; // 2026-08-14'te eklendi — ContactsScreen'in "Favoriler" satırı için
 }
 ```
 
-- `addContact()` / `subscribeToContacts()` (`src/services/contactService.ts`).
+- `addContact()` / `subscribeToContacts()` / `setContactFavorite()` (`src/services/contactService.ts`).
 - **Tek yönlü**: sadece ekleyen tarafın kendi `contacts` alt koleksiyonuna yazılır, karşı tarafa
   otomatik olarak hiçbir şey eklenmez.
+
+### Presence / çevrimiçi göstergesi (2026-08-14'te eklendi)
+
+Gerçek bir online/offline event sistemi değil, hafif bir "son ne zaman aktifti" mekanizması:
+
+- `src/services/userService.ts` → `updatePresenceHeartbeat(uid)`, `users/{uid}.lastActiveAt`'i
+  `serverTimestamp()` ile günceller (`{merge: true}`). `AppNavigator`, hesap girişliyken bunu 25
+  saniyede bir çağırır.
+- `subscribeToPresence(uid, cb)` başka bir kullanıcının `lastActiveAt`'ini dinler; `cb` ham bir
+  zaman damgası (ms) veya `null` alır — "çevrimiçi mi" kararını **çağıran taraf** verir
+  (`ONLINE_THRESHOLD_MS` = 60.000 ms sınırıyla), çünkü bir Firestore dinleyicisi sadece yeni bir
+  yazma olduğunda tekrar tetiklenir, salt zaman geçmesiyle değil — `ContactsScreen` bu yüzden ayrıca
+  20 saniyede bir "şu an kaç" diye yeniden değerlendiren bir zamanlayıcı tutuyor.
+- Firestore kuralı değişikliği gerekmedi — `users/{userId}` için zaten "sahibi güncelleyebilir,
+  herkes (giriş yapmış) okuyabilir" kuralı var.
 
 ### `rooms/{roomId}/messages/{messageId}` — 1-1 sohbet mesajları
 

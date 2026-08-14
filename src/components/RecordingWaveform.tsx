@@ -4,6 +4,7 @@ import { StyleSheet, View } from 'react-native';
 interface Props {
   /** Normalized mic input level, 0 (silence) – 1 (loud). */
   level: number;
+  color: string;
 }
 
 const BAR_COUNT = 24;
@@ -11,7 +12,7 @@ const MIN_BAR_HEIGHT = 4;
 const MAX_BAR_HEIGHT = 28;
 
 /** Live WhatsApp-style scrolling level meter, shown while recording a voice message. */
-function RecordingWaveform({ level }: Props): React.JSX.Element {
+function RecordingWaveform({ level, color }: Props): React.JSX.Element {
   const [bars, setBars] = useState<number[]>(() => new Array(BAR_COUNT).fill(MIN_BAR_HEIGHT));
   const levelRef = useRef(level);
   levelRef.current = level;
@@ -27,7 +28,7 @@ function RecordingWaveform({ level }: Props): React.JSX.Element {
   return (
     <View style={styles.row}>
       {bars.map((height, index) => (
-        <View key={index} style={[styles.bar, { height }]} />
+        <View key={index} style={[styles.bar, { height, backgroundColor: color }]} />
       ))}
     </View>
   );
@@ -44,7 +45,6 @@ const styles = StyleSheet.create({
     width: 3,
     marginHorizontal: 1.5,
     borderRadius: 2,
-    backgroundColor: '#3B7CFF',
   },
 });
 

@@ -97,18 +97,33 @@ anahtarına sahip, bağımsız ekranlar. Ortak desen: `useTheme()` ile tema-duya
 - Başarılı olan her iki durumda da `onAuthenticated({ uid, username })` çağrılır → `CONTACTS`.
 - "Vazgeç" → `onCancel()` (→ `HOME`).
 
-## ContactsScreen — kişi listesi
+## ContactsScreen — ana sayfa / gösterge paneli (artık sadece düz kişi listesi değil)
 
-- `account` prop olarak gelir (artık kendi başına auth yapmıyor, önceki adımda zaten giriş yapıldı).
-  Üstte `@kullaniciadi` gösterilir.
-- `subscribeToContacts()` ile kişi listesi canlı dinlenir (isme göre alfabetik sıralı).
-- "+ Kişi Ekle" → modal: karşı tarafın **kullanıcı adı** girilir, `findUserByUsername()` ile aranır,
-  bulunursa (kendin değilse) `addContact()` ile listene eklenir. **Tek yönlü** — karşı tarafın da
-  seni görebilmesi için senin kullanıcı adını kendisi girmesi gerekir, otomatik karşılıklı ekleme
-  yok.
-- Bir kişiye dokununca `onOpenRoom(contact)` ile `CHAT_ROOM`'a geçilir.
-- "Çıkış" → `logoutAccount()` (gerçekten Firebase oturumunu kapatır) sonra `onLogout()` ile
-  `HOME`'a döner. Bir sonraki gizli girişte tekrar kullanıcı adı/şifre istenir.
+`account` prop olarak gelir (artık kendi başına auth yapmıyor, önceki adımda zaten giriş yapıldı).
+2026-08-14'teki geçişle (bkz. [[Changelog]]) bu ekran bir gösterge paneline dönüştürüldü — sıralama
+şöyle:
+
+1. **Oyunlar kısayolu** — bir karta dokununca `onOpenGames()` çağrılır (`AppNavigator`'da bu
+   `HOME`'a döner, yani `GameHubScreen`'e geri götürür).
+2. **Favoriler** — sadece `favorite: true` işaretli kişiler varsa gösterilen yatay satır (★
+   simgesine dokunarak sohbet listesindeki herhangi bir satırdan aç/kapa yapılabilir,
+   `setContactFavorite()`).
+3. **Çevrimiçi** — son 60 saniye içinde bir "kalp atışı" göndermiş kişiler (bkz. [[03-Services-
+   Backend]] "Presence/çevrimiçi göstergesi"), en fazla 8 tanesi.
+4. **Son Aramalar** — en son mesajı bir çağrı-geçmişi kaydı (`type: 'call'`) olan kişiler, en yeni
+   önce, en fazla 5 tanesi. Ekstra bir Firestore sorgusu **yok** — zaten her kişi için çekilen "son
+   mesaj" verisinden türetiliyor.
+5. **Sohbetler** — asıl kişi listesi, artık alfabetik değil **en son etkinliğe göre** sıralı; her
+   satırda bir ★ favori aç/kapa butonu var.
+
+Diğer davranışlar değişmedi: `subscribeToContacts()` ile canlı dinleme, "+ Kişi Ekle" modalı
+(`findUserByUsername()` + tek yönlü `addContact()`), bir kişiye dokununca `onOpenRoom(contact)` ile
+`CHAT_ROOM`'a geçiş, "Çıkış" → gerçekten `logoutAccount()`.
+
+**Önemli — kılık değiştirme (disguise) ile ilişkisi:** Bu gösterge paneli özellikleri bilinçli
+olarak **sadece** bu ekrana eklendi, `GameHubScreen`'e (herkesin gördüğü ön kapı) DEĞİL — kullanıcıya
+bu ayrım açıkça soruldu ve onaylandı. `GameHubScreen` hâlâ zararsız bir "mini oyunlar" menüsü
+olarak kalıyor, son aramalar/favoriler/çevrimiçi durumu gibi hiçbir sohbet ipucu sızdırmıyor.
 
 ## ChatRoomScreen — bir kişiyle 1-1 sohbet
 
@@ -156,11 +171,18 @@ anahtarına sahip, bağımsız ekranlar. Ortak desen: `useTheme()` ile tema-duya
   ekran bir `Modal` içinde `CallScreen` olarak açar — yani arayan ve aranan aynı mekanizmayla
   ekranı görür, sadece Stream'in `RingingCallContent` bileşeni içeriği (arıyor/çalıyor) otomatik
   ayırt eder.
-- `CallScreen`, `CallingState`'e göre iki aşama gösterir: `RINGING` → `RingingCallContent` (kabul
-  et/reddet, arıyor animasyonu); `JOINED` → `CallContent` (kamera aç/kapa, mikrofon sustur, kapat)
-  + üstte canlı süre sayaçlı "Görüşme sürüyor • mm:ss" banner'ı. `LEFT` olur olmaz `onLeave()`
-  hemen çağrılır, ekstra bir "görüşme bitti" ekranı yok (kullanıcı isteği, ilk denemede vardı,
-  kaldırıldı — bkz. [[Changelog]]).
+- `CallScreen` artık Stream SDK'nın hazır `RingingCallContent`/varsayılan kontrollerini kullanmıyor —
+  2026-08-14'te (bkz. [[Changelog]]) WhatsApp benzeri, tamamen kendi tasarımımız bir akışla
+  değiştirildi: `RINGING` → büyük daire baş-harf avatarı + isim + (giden aramada tek "Vazgeç"
+  butonu / gelen aramada yan yana kırmızı "Reddet" ve turuncu "Kabul Et" butonları); `JOINED` (sesli)
+  → tamamen özel bir ekran (avatar + canlı süre + sustur/kapat); `JOINED` (görüntülü) → Stream'in
+  video render motoru (`CallContent`) korunuyor ama alt kontrol çubuğu kendi tasarımımız
+  (`VideoCallControls`: sustur, kamera aç/kapa, kamerayı çevir, kapat). `RECONNECTING` durumunda
+  aktif ekran altında bir uyarı banner'ı gösteriliyor, ekran değişmiyor. `LEFT` olur olmaz `onLeave()`
+  hemen çağrılır, ekstra bir "görüşme bitti" ekranı yok. `RECONNECTING_FAILED` artık gösterim
+  süresinin sonunda gerçekten `call.leave()` de çağırıyor (öncesinde sadece yerel state
+  temizleniyordu — bağlantı aslında toparlanmışsa Stream tarafında çağrı sahipsiz canlı kalabiliyordu,
+  düzeltildi).
 - `startVoiceCall()`/`startVideoCall()` çağrı oluşturmadan önce `permissionsService.
   requestCallPermissions()` ile mikrofon (+ görüntülüyse kamera) izni ister; `CallProvider`'ın
   `IncomingCallWatcher`'ı da gelen bir çağrı tespit eder etmez aynı izni **aranan** taraf için de
@@ -175,10 +197,16 @@ anahtarına sahip, bağımsız ekranlar. Ortak desen: `useTheme()` ile tema-duya
   `deviceEndpointType` başta sesli aramalarda `'earpiece'` idi (gerçek telefon gibi) ama bunun
   aramanın **dışında da** (oyun/bildirim sesleri) kulak hoparlörüne yapışkanlaştığı görüldü — artık
   her iki arama türünde de `'speaker'`. **Hiçbiri henüz gerçek cihazda denenmedi**, bir sonraki
-  oturumda doğrulanmalı.
+  oturumda doğrulanmalı. 2026-08-14'te bu alana ek olarak durum-makinesi/kamera/mikrofon
+  düzeltmeleri de yapıldı (bkz. [[Changelog]]) — bunlar da `tsc`/`eslint`/`jest` ile doğrulandı ama
+  **henüz gerçek bir cihazda uçtan uca test edilmedi**.
 - **Çağrı geçmişi:** çağrı bitince (`CallScreen`'in `onLeave(summary: CallSummary)`'i) `CallProvider`
   sohbete WhatsApp tarzı bir "çağrı geçmişi" kaydı düşer (`chatService.sendCallLogMessage`,
   `MessageBubble`'da özel bir kapsül olarak render edilir) — süre, video/sesli, tamamlandı/cevapsız.
+  Hem arayan hem aranan taraf bu kaydı bağımsız olarak düşürdüğü için öncesinde her çağrı için
+  sohbete **iki** kopya kayıt düşüyordu; artık `sendCallLogMessage` çağrı id'sinden türetilen sabit
+  bir doküman id'siyle `setDoc(..., {merge:true})` kullanıyor, iki taraf da aynı dokümana yazınca
+  tek kayıt kalıyor (bkz. [[Changelog]] 2026-08-14).
 - **Elle yapılması gereken adım:** Stream Dashboard'da bir "Video & Audio" app oluşturup API
   key/secret'ı `src/config/streamConfig.ts`'e girmek gerekiyor, yoksa arama butonları sessizce
   başarısız olur. Detay: [[05-Build-Deployment]].

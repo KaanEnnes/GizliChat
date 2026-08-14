@@ -32,7 +32,11 @@ function IncomingCallWatcher({ myUid }: { myUid: string }): React.JSX.Element | 
       // Requested here (not just by the caller) so that by the time the
       // callee taps "accept", the OS permission prompt is already resolved
       // — otherwise Stream silently fails to publish camera/mic on join.
-      requestCallPermissions(true).catch(() => undefined);
+      // Camera permission is only requested for calls actually marked as
+      // video (see `custom.isVideo`, set by the caller in callService.ts) —
+      // a voice call must never prompt for or touch the camera.
+      const isVideoCall = Boolean((ringingCall.state.custom as { isVideo?: boolean } | undefined)?.isVideo);
+      requestCallPermissions(isVideoCall).catch(() => undefined);
     }
   }, [calls, activeCall]);
 
@@ -40,9 +44,9 @@ function IncomingCallWatcher({ myUid }: { myUid: string }): React.JSX.Element | 
     setActiveCall(null);
     // Logged like WhatsApp's in-chat call entries — non-critical, so a
     // failure here (e.g. offline) is swallowed rather than surfaced.
-    if (summary.otherUserId) {
+    if (summary.otherUserId && summary.callId) {
       const roomId = getRoomId(myUid, summary.otherUserId);
-      sendCallLogMessage(roomId, myUid, {
+      sendCallLogMessage(roomId, myUid, summary.callId, {
         video: summary.isVideo,
         status: summary.wasJoined ? 'completed' : 'missed',
         durationSeconds: summary.durationSeconds,

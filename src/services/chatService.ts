@@ -8,6 +8,7 @@ import {
   orderBy,
   query,
   serverTimestamp,
+  setDoc,
   Timestamp,
   Unsubscribe,
   updateDoc,
@@ -98,10 +99,16 @@ export function subscribeToMessages(
 
 function docToMessage(docSnap: {
   id: string;
-  data: () => Record<string, unknown>;
+  data: (options?: { serverTimestamps?: 'estimate' | 'previous' | 'none' }) => Record<string, unknown>;
   metadata: { hasPendingWrites: boolean };
 }): ChatMessage {
-  const data = docSnap.data();
+  // 'estimate' makes a just-sent message's pending `serverTimestamp()`
+  // resolve to the client's best-guess server time immediately instead of
+  // `undefined` — without this, a freshly-sent message's `createdAt` falls
+  // back to `Date.now()` below and sorts inconsistently (until the write is
+  // acknowledged), which could visibly reorder it relative to a message
+  // arriving from the other side in that window.
+  const data = docSnap.data({ serverTimestamps: 'estimate' });
   const createdAt = data.createdAt instanceof Timestamp ? data.createdAt.toMillis() : Date.now();
   return {
     id: docSnap.id,
@@ -188,21 +195,33 @@ export async function sendMessage(roomId: string, text: string, senderId: string
   });
 }
 
-/** Logs a finished call as a WhatsApp-style entry in the chat (rendered specially by MessageBubble). */
+/**
+ * Logs a finished call as a WhatsApp-style entry in the chat (rendered
+ * specially by MessageBubble). Both the caller's and the callee's devices
+ * independently detect the call ending and each call this function — using
+ * `callId` as the document id (instead of `addDoc`'s random id) makes the
+ * second write overwrite the first instead of creating a duplicate entry.
+ */
 export async function sendCallLogMessage(
   roomId: string,
   senderId: string,
+  callId: string,
   info: { video: boolean; status: CallLogStatus; durationSeconds: number },
 ): Promise<void> {
-  await addDoc(collection(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION), {
-    type: 'call',
-    text: '',
-    senderId,
-    createdAt: serverTimestamp(),
-    callVideo: info.video,
-    callStatus: info.status,
-    durationSeconds: info.durationSeconds,
-  });
+  const messageRef = doc(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION, `call_${callId}`);
+  await setDoc(
+    messageRef,
+    {
+      type: 'call',
+      text: '',
+      senderId,
+      createdAt: serverTimestamp(),
+      callVideo: info.video,
+      callStatus: info.status,
+      durationSeconds: info.durationSeconds,
+    },
+    { merge: true },
+  );
 }
 
 /** Sends an already-uploaded image/video/audio message (see mediaService.ts for the upload step). */

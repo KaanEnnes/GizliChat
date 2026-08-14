@@ -43,6 +43,9 @@ Bağlam için önce [[00-START-HERE]] dosyasına bak.
 - `src/components/SettingsModal.tsx` — Tema, ses efekti, bildirim, titreşim aç/kapa switch'leri +
   basit bir sürüm bilgisi satırı. `GameHubScreen`'deki gizli dişli ikonuna gecikmeli tek dokunuşla
   açılır (10'lu seri gizli admin jestini bozmadan).
+- `src/components/LeaderboardModal.tsx` (2026-08-14'te eklendi) — Paylaşılan/global skor tablosu
+  modalı (`leaderboardService.fetchTopScores()`), `HomeScreen`'in kendi içine gömülü kopyasından
+  ayrı, tek bir bileşene çıkarıldı — hem `HomeScreen` hem `GameHubScreen` aynısını kullanıyor.
 
 ### src/config
 - `src/config/firebaseConfig.ts` — Sabit kodlanmış Firebase Web SDK config objesi
@@ -51,6 +54,16 @@ Bağlam için önce [[00-START-HERE]] dosyasına bak.
 - `src/config/streamConfig.ts` — Stream Video (arama) API key/secret. Placeholder değerlerle gelir,
   Stream Dashboard'da bir app oluşturulup elle doldurulmalı (bkz. [[05-Build-Deployment]]).
   "Client-side düz metin secret" deseni — bkz. [[04-Security-Notes]].
+
+### src/theme
+- `src/theme/ThemeContext.tsx` — Uygulamanın **tek** renk kaynağı (2026-08-14'te tamamen yeniden
+  kuruldu, bkz. [[Changelog]]). `ThemePalette` arayüzü koyu/açık iki paleti tanımlıyor: `background`/
+  `surface` mavi kimlik, `accent`/`accentText` turuncu (**sadece** birincil eylem butonları için —
+  gönder/kabul-et/kaydet/ekle), `identity`/`identityText` marka mavisi (avatar/nokta/link gibi küçük
+  vurgular, CTA değil), `bubbleMine`/`bubbleOther` (mesaj balonları, ikisi de mavi/nötr — turuncu
+  değil), `danger`/`warning`/`success`/`*Soft` varyantları. `useTheme()` hook'u + `ThemeProvider`
+  (mod tercihi `AsyncStorage`'da kalıcı). Oyunların kendi iç renk paletlerine (2048 taş renkleri,
+  yılan gövdesi vb.) bilinçli olarak dokunulmadı — bkz. [[02-Screens-and-Features]].
 
 ### src/navigation
 - `src/navigation/AppNavigator.tsx` — Uygulamanın tüm "navigasyon" katmanı. Kütüphane yok; elle

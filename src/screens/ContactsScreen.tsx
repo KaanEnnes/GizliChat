@@ -1,23 +1,31 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
   Modal,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
+  useWindowDimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { addContact, Contact, subscribeToContacts } from '../services/contactService';
+import { addContact, Contact, setContactFavorite, subscribeToContacts } from '../services/contactService';
 import { ChatMessage, getRoomId, subscribeToLatestMessage } from '../services/chatService';
 import { getLastReadAt, markRoomRead } from '../services/readStatusService';
-import { Account, findUserByUsername } from '../services/userService';
+import { Account, findUserByUsername, ONLINE_THRESHOLD_MS, subscribeToPresence } from '../services/userService';
 import { useTheme } from '../theme/ThemeContext';
 import { useNetworkStatus } from '../hooks/useNetworkStatus';
 
 const WEEKDAYS_TR = ['Paz', 'Pzt', 'Sal', 'Çar', 'Per', 'Cum', 'Cmt'];
+// How often "online" status is re-evaluated against the wall clock — a
+// Firestore presence listener only re-fires on a new write, so without this
+// a contact who went idle would stay looking "online" forever.
+const PRESENCE_RECHECK_MS = 20_000;
+const MAX_ONLINE_SHOWN = 8;
+const MAX_RECENT_CALLS_SHOWN = 5;
 
 function formatListTimestamp(timestamp: number): string {
   const date = new Date(timestamp);
@@ -59,27 +67,84 @@ function formatPreview(message: ChatMessage | null | undefined, myUid: string): 
   }
 }
 
+function formatCallDetail(message: ChatMessage): string {
+  if (message.callStatus === 'missed') {
+    return 'Cevapsız';
+  }
+  const totalSeconds = message.durationSeconds ?? 0;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = Math.floor(totalSeconds % 60)
+    .toString()
+    .padStart(2, '0');
+  return `${minutes}:${seconds}`;
+}
+
 interface Props {
   account: Account;
   onOpenRoom: (contact: Contact) => void;
+  onOpenGames: () => void;
   onLogout: () => void;
 }
 
-function ContactsScreen({ account, onOpenRoom, onLogout }: Props): React.JSX.Element {
+/** Small circular initials avatar, reused across every dashboard section. Shows a green-free "online" dot (identity blue) when present. */
+function Avatar({
+  name,
+  size,
+  theme,
+  online,
+}: {
+  name: string;
+  size: number;
+  theme: ReturnType<typeof useTheme>['theme'];
+  online?: boolean;
+}): React.JSX.Element {
+  return (
+    <View style={{ width: size, height: size }}>
+      <View
+        style={[
+          styles.avatar,
+          { width: size, height: size, borderRadius: size / 2, backgroundColor: theme.identity },
+        ]}>
+        <Text style={[styles.avatarText, { color: theme.identityText, fontSize: size * 0.4 }]}>
+          {name.slice(0, 1).toUpperCase()}
+        </Text>
+      </View>
+      {online && (
+        <View
+          style={[
+            styles.onlineDot,
+            { backgroundColor: theme.success, borderColor: theme.background, width: size * 0.3, height: size * 0.3, borderRadius: size * 0.15 },
+          ]}
+        />
+      )}
+    </View>
+  );
+}
+
+function ContactsScreen({ account, onOpenRoom, onOpenGames, onLogout }: Props): React.JSX.Element {
   const insets = useSafeAreaInsets();
   const { theme } = useTheme();
+  const { width } = useWindowDimensions();
   const isOnline = useNetworkStatus();
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [latestMessages, setLatestMessages] = useState<Record<string, ChatMessage | null>>({});
   const [lastReadMap, setLastReadMap] = useState<Record<string, number>>({});
+  const [presenceMap, setPresenceMap] = useState<Record<string, number | null>>({});
+  const [nowTick, setNowTick] = useState(Date.now());
   const roomUnsubscribesRef = useRef<(() => void)[]>([]);
+  const presenceUnsubscribesRef = useRef<(() => void)[]>([]);
 
   const [addModalVisible, setAddModalVisible] = useState(false);
   const [usernameDraft, setUsernameDraft] = useState('');
   const [nicknameDraft, setNicknameDraft] = useState('');
   const [adding, setAdding] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const interval = setInterval(() => setNowTick(Date.now()), PRESENCE_RECHECK_MS);
+    return () => clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     const unsubscribe = subscribeToContacts(
@@ -89,9 +154,10 @@ function ContactsScreen({ account, onOpenRoom, onLogout }: Props): React.JSX.Ele
         setLoadError(null);
 
         // Contact list rarely changes mid-session; simplest correct approach
-        // is to tear down and rebuild every per-room listener on each update
-        // rather than diffing, same pattern as NotificationCenter.
+        // is to tear down and rebuild every per-room/per-presence listener on
+        // each update rather than diffing, same pattern as NotificationCenter.
         roomUnsubscribesRef.current.forEach(unsub => unsub());
+        presenceUnsubscribesRef.current.forEach(unsub => unsub());
         roomUnsubscribesRef.current = nextContacts.map(contact => {
           const roomId = getRoomId(account.uid, contact.uid);
           getLastReadAt(roomId).then(readAt => {
@@ -101,6 +167,11 @@ function ContactsScreen({ account, onOpenRoom, onLogout }: Props): React.JSX.Ele
             setLatestMessages(prev => ({ ...prev, [contact.uid]: message }));
           });
         });
+        presenceUnsubscribesRef.current = nextContacts.map(contact =>
+          subscribeToPresence(contact.uid, lastActiveAt => {
+            setPresenceMap(prev => (prev[contact.uid] === lastActiveAt ? prev : { ...prev, [contact.uid]: lastActiveAt }));
+          }),
+        );
       },
       error => setLoadError(`Kişiler yüklenemedi: ${error.message}`),
     );
@@ -108,6 +179,8 @@ function ContactsScreen({ account, onOpenRoom, onLogout }: Props): React.JSX.Ele
       unsubscribe();
       roomUnsubscribesRef.current.forEach(unsub => unsub());
       roomUnsubscribesRef.current = [];
+      presenceUnsubscribesRef.current.forEach(unsub => unsub());
+      presenceUnsubscribesRef.current = [];
     };
   }, [account.uid]);
 
@@ -120,6 +193,13 @@ function ContactsScreen({ account, onOpenRoom, onLogout }: Props): React.JSX.Ele
       onOpenRoom(contact);
     },
     [account.uid, onOpenRoom],
+  );
+
+  const handleToggleFavorite = useCallback(
+    (contact: Contact) => {
+      setContactFavorite(account.uid, contact.uid, !contact.favorite).catch(() => undefined);
+    },
+    [account.uid],
   );
 
   const handleAddContact = useCallback(async () => {
@@ -155,96 +235,251 @@ function ContactsScreen({ account, onOpenRoom, onLogout }: Props): React.JSX.Ele
     }
   }, [adding, usernameDraft, nicknameDraft, account.uid]);
 
+  const isContactOnline = useCallback(
+    (uid: string) => {
+      const lastActiveAt = presenceMap[uid];
+      return lastActiveAt != null && nowTick - lastActiveAt < ONLINE_THRESHOLD_MS;
+    },
+    [presenceMap, nowTick],
+  );
+
+  // --- Derived dashboard sections -----------------------------------------
+  const favoriteContacts = useMemo(() => contacts.filter(c => c.favorite), [contacts]);
+
+  const onlineContacts = useMemo(
+    () => contacts.filter(c => isContactOnline(c.uid)).slice(0, MAX_ONLINE_SHOWN),
+    [contacts, isContactOnline],
+  );
+
+  const recentCalls = useMemo(() => {
+    return contacts
+      .map(contact => ({ contact, message: latestMessages[contact.uid] }))
+      .filter((entry): entry is { contact: Contact; message: ChatMessage } => entry.message?.type === 'call')
+      .sort((a, b) => b.message.createdAt - a.message.createdAt)
+      .slice(0, MAX_RECENT_CALLS_SHOWN);
+  }, [contacts, latestMessages]);
+
+  // "Recent conversations" — the main list, most-recently-active room first
+  // (falls back to when the contact was added if there's no message yet)
+  // instead of contactService's default alphabetical order, since this
+  // screen is now a dashboard, not a plain contact directory.
+  const recentConversations = useMemo(() => {
+    return [...contacts].sort((a, b) => {
+      const aTime = latestMessages[a.uid]?.createdAt ?? a.addedAt;
+      const bTime = latestMessages[b.uid]?.createdAt ?? b.addedAt;
+      return bTime - aTime;
+    });
+  }, [contacts, latestMessages]);
+
+  // Caps the dashboard's readable width on tablets/large screens instead of
+  // letting rows stretch edge-to-edge.
+  const contentMaxWidth = Math.min(width, 640);
+
+  const renderHeader = () => (
+    <View>
+      <Pressable
+        onPress={onOpenGames}
+        style={({ pressed }) => [
+          styles.gamesCard,
+          { backgroundColor: theme.surface, borderColor: theme.border },
+          pressed && styles.pressed,
+        ]}
+        accessibilityRole="button"
+        accessibilityLabel="Mini oyunlara git">
+        <View style={[styles.gamesIconBadge, { backgroundColor: theme.identity + '26' }]}>
+          <Text style={styles.gamesIcon}>🎮</Text>
+        </View>
+        <View style={styles.gamesTextWrap}>
+          <Text style={[styles.gamesTitle, { color: theme.text }]}>Mini Oyunlar</Text>
+          <Text style={[styles.gamesSubtitle, { color: theme.textMuted }]}>
+            Oyunlara göz at, skorunu yükselt
+          </Text>
+        </View>
+        <Text style={[styles.gamesChevron, { color: theme.textFaint }]}>›</Text>
+      </Pressable>
+
+      {favoriteContacts.length > 0 && (
+        <View style={styles.section}>
+          <Text style={[styles.sectionTitle, { color: theme.textMuted }]}>Favoriler</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
+            {favoriteContacts.map(contact => (
+              <Pressable
+                key={contact.uid}
+                onPress={() => handleOpenRoom(contact)}
+                style={({ pressed }) => [styles.chipCard, pressed && styles.pressed]}
+                accessibilityRole="button"
+                accessibilityLabel={`${contact.name} ile sohbet aç`}>
+                <Avatar name={contact.name} size={54} theme={theme} online={isContactOnline(contact.uid)} />
+                <Text style={[styles.chipLabel, { color: theme.text }]} numberOfLines={1}>
+                  {contact.name}
+                </Text>
+              </Pressable>
+            ))}
+          </ScrollView>
+        </View>
+      )}
+
+      {onlineContacts.length > 0 && (
+        <View style={styles.section}>
+          <Text style={[styles.sectionTitle, { color: theme.textMuted }]}>Çevrimiçi</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
+            {onlineContacts.map(contact => (
+              <Pressable
+                key={contact.uid}
+                onPress={() => handleOpenRoom(contact)}
+                style={({ pressed }) => [styles.chipCard, pressed && styles.pressed]}
+                accessibilityRole="button"
+                accessibilityLabel={`${contact.name}, çevrimiçi, sohbet aç`}>
+                <Avatar name={contact.name} size={54} theme={theme} online />
+                <Text style={[styles.chipLabel, { color: theme.text }]} numberOfLines={1}>
+                  {contact.name}
+                </Text>
+              </Pressable>
+            ))}
+          </ScrollView>
+        </View>
+      )}
+
+      {recentCalls.length > 0 && (
+        <View style={styles.section}>
+          <Text style={[styles.sectionTitle, { color: theme.textMuted }]}>Son Aramalar</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
+            {recentCalls.map(({ contact, message }) => {
+              const missed = message.callStatus === 'missed';
+              return (
+                <Pressable
+                  key={contact.uid}
+                  onPress={() => handleOpenRoom(contact)}
+                  style={({ pressed }) => [styles.callCard, { backgroundColor: theme.surface, borderColor: theme.border }, pressed && styles.pressed]}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${contact.name} ile son arama, sohbeti aç`}>
+                  <Avatar name={contact.name} size={40} theme={theme} />
+                  <View style={styles.callCardTextWrap}>
+                    <Text style={[styles.callCardName, { color: theme.text }]} numberOfLines={1}>
+                      {contact.name}
+                    </Text>
+                    <Text style={[styles.callCardDetail, { color: missed ? theme.danger : theme.textMuted }]}>
+                      {message.callVideo ? '🎥' : '📞'} {formatCallDetail(message)}
+                    </Text>
+                  </View>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        </View>
+      )}
+
+      <Text style={[styles.sectionTitle, styles.conversationsTitle, { color: theme.textMuted }]}>
+        Sohbetler
+      </Text>
+    </View>
+  );
+
   return (
     <View style={[styles.container, { backgroundColor: theme.background }]}>
-      <View style={[styles.header, { borderBottomColor: theme.border, paddingTop: insets.top + 12 }]}>
-        <View>
-          <Text style={[styles.headerTitle, { color: theme.text }]}>Kişiler</Text>
-          <Text style={[styles.headerSubtitle, { color: theme.textFaint }]}>@{account.username}</Text>
+      <View style={[styles.centered, { maxWidth: contentMaxWidth }]}>
+        <View style={[styles.header, { borderBottomColor: theme.border, paddingTop: insets.top + 12 }]}>
+          <View>
+            <Text style={[styles.headerTitle, { color: theme.text }]}>Merhaba, {account.username}</Text>
+            <Text style={[styles.headerSubtitle, { color: theme.textFaint }]}>@{account.username}</Text>
+          </View>
+          <Pressable onPress={onLogout} hitSlop={8} accessibilityRole="button" accessibilityLabel="Çıkış yap">
+            <Text style={[styles.logoutText, { color: theme.danger }]}>Çıkış</Text>
+          </Pressable>
         </View>
-        <Pressable onPress={onLogout} hitSlop={8}>
-          <Text style={styles.logoutText}>Çıkış</Text>
-        </Pressable>
-      </View>
 
-      {!isOnline && (
-        <View style={styles.offlineBanner}>
-          <Text style={styles.offlineBannerText}>📡 İnternet bağlantısı yok — sohbetler güncellenemiyor</Text>
-        </View>
-      )}
+        {!isOnline && (
+          <View style={[styles.offlineBanner, { backgroundColor: theme.warningSoft }]}>
+            <Text style={[styles.offlineBannerText, { color: theme.warning }]}>
+              📡 İnternet bağlantısı yok — sohbetler güncellenemiyor
+            </Text>
+          </View>
+        )}
 
-      {loadError && (
-        <View style={styles.errorBanner}>
-          <Text style={styles.errorBannerText}>{loadError}</Text>
-        </View>
-      )}
+        {loadError && (
+          <View style={[styles.errorBanner, { backgroundColor: theme.dangerSoft }]}>
+            <Text style={[styles.errorBannerText, { color: theme.danger }]}>{loadError}</Text>
+          </View>
+        )}
 
-      <FlatList
-        data={contacts}
-        keyExtractor={item => item.uid}
-        contentContainerStyle={styles.listContent}
-        ListEmptyComponent={
-          <Text style={[styles.emptyText, { color: theme.textFaint }]}>
-            Henüz kişin yok. Aşağıdan bir kullanıcı adı ile ekle.
-          </Text>
-        }
-        renderItem={({ item }) => {
-          const latest = latestMessages[item.uid];
-          const lastReadAt = lastReadMap[item.uid] ?? 0;
-          const isUnread = !!latest && latest.senderId !== account.uid && latest.createdAt > lastReadAt;
-          return (
-            <Pressable
-              style={({ pressed }) => [
-                styles.contactRow,
-                { backgroundColor: theme.surface, borderColor: theme.border },
-                pressed && styles.contactRowPressed,
-              ]}
-              onPress={() => handleOpenRoom(item)}>
-              <View style={styles.contactAvatar}>
-                <Text style={styles.contactAvatarText}>{item.name.slice(0, 1).toUpperCase()}</Text>
-              </View>
-              <View style={styles.contactBody}>
-                <Text style={[styles.contactName, { color: theme.text }]} numberOfLines={1}>
-                  {item.name}
-                </Text>
-                <Text
-                  style={[
-                    styles.contactPreview,
-                    { color: isUnread ? theme.text : theme.textMuted },
-                    isUnread && styles.contactPreviewUnread,
-                  ]}
-                  numberOfLines={1}>
-                  {formatPreview(latest, account.uid)}
-                </Text>
-              </View>
-              {latest && (
-                <View style={styles.contactMeta}>
+        <FlatList
+          data={recentConversations}
+          keyExtractor={item => item.uid}
+          contentContainerStyle={styles.listContent}
+          ListHeaderComponent={renderHeader}
+          ListEmptyComponent={
+            <Text style={[styles.emptyText, { color: theme.textFaint }]}>
+              Henüz kişin yok. Aşağıdan bir kullanıcı adı ile ekle.
+            </Text>
+          }
+          renderItem={({ item }) => {
+            const latest = latestMessages[item.uid];
+            const lastReadAt = lastReadMap[item.uid] ?? 0;
+            const isUnread = !!latest && latest.senderId !== account.uid && latest.createdAt > lastReadAt;
+            return (
+              <Pressable
+                style={({ pressed }) => [
+                  styles.contactRow,
+                  { backgroundColor: theme.surface, borderColor: theme.border },
+                  pressed && styles.contactRowPressed,
+                ]}
+                onPress={() => handleOpenRoom(item)}>
+                <Avatar name={item.name} size={44} theme={theme} online={isContactOnline(item.uid)} />
+                <View style={styles.contactBody}>
+                  <Text style={[styles.contactName, { color: theme.text }]} numberOfLines={1}>
+                    {item.name}
+                  </Text>
                   <Text
                     style={[
-                      styles.contactTime,
-                      { color: isUnread ? theme.accent : theme.textFaint },
-                      isUnread && styles.contactTimeUnread,
-                    ]}>
-                    {formatListTimestamp(latest.createdAt)}
+                      styles.contactPreview,
+                      { color: isUnread ? theme.text : theme.textMuted },
+                      isUnread && styles.contactPreviewUnread,
+                    ]}
+                    numberOfLines={1}>
+                    {formatPreview(latest, account.uid)}
                   </Text>
-                  {isUnread && <View style={[styles.unreadDot, { backgroundColor: theme.accent }]} />}
                 </View>
-              )}
-            </Pressable>
-          );
-        }}
-      />
+                <View style={styles.contactMeta}>
+                  {latest && (
+                    <Text
+                      style={[
+                        styles.contactTime,
+                        { color: isUnread ? theme.identity : theme.textFaint },
+                        isUnread && styles.contactTimeUnread,
+                      ]}>
+                      {formatListTimestamp(latest.createdAt)}
+                    </Text>
+                  )}
+                  {isUnread && <View style={[styles.unreadDot, { backgroundColor: theme.identity }]} />}
+                </View>
+                <Pressable
+                  onPress={() => handleToggleFavorite(item)}
+                  hitSlop={10}
+                  style={styles.favoriteButton}
+                  accessibilityRole="button"
+                  accessibilityLabel={item.favorite ? `${item.name} favorilerden çıkar` : `${item.name} favorilere ekle`}>
+                  <Text style={[styles.favoriteIcon, { color: item.favorite ? theme.accent : theme.textFaint }]}>
+                    {item.favorite ? '★' : '☆'}
+                  </Text>
+                </Pressable>
+              </Pressable>
+            );
+          }}
+        />
 
-      <Pressable
-        style={[styles.addButton, { marginBottom: insets.bottom + 16 }]}
-        onPress={() => {
-          setAddError(null);
-          setUsernameDraft('');
-          setNicknameDraft('');
-          setAddModalVisible(true);
-        }}>
-        <Text style={styles.addButtonText}>+ Kişi Ekle</Text>
-      </Pressable>
+        <Pressable
+          style={[styles.addButton, { backgroundColor: theme.accent, marginBottom: insets.bottom + 16 }]}
+          onPress={() => {
+            setAddError(null);
+            setUsernameDraft('');
+            setNicknameDraft('');
+            setAddModalVisible(true);
+          }}
+          accessibilityRole="button"
+          accessibilityLabel="Yeni kişi ekle">
+          <Text style={[styles.addButtonText, { color: theme.accentText }]}>+ Kişi Ekle</Text>
+        </Pressable>
+      </View>
 
       <Modal
         visible={addModalVisible}
@@ -281,22 +516,22 @@ function ContactsScreen({ account, onOpenRoom, onLogout }: Props): React.JSX.Ele
               editable={!adding}
               onSubmitEditing={handleAddContact}
             />
-            {addError && <Text style={styles.errorTextModal}>{addError}</Text>}
+            {addError && <Text style={[styles.errorTextModal, { color: theme.danger }]}>{addError}</Text>}
             <Pressable
-              style={[styles.submitButton, adding && styles.submitButtonDisabled]}
+              style={[styles.submitButton, { backgroundColor: theme.accent }, adding && styles.submitButtonDisabled]}
               onPress={handleAddContact}
               disabled={adding}>
               {adding ? (
-                <ActivityIndicator color="#0F1115" />
+                <ActivityIndicator color={theme.accentText} />
               ) : (
-                <Text style={styles.submitButtonText}>Ekle</Text>
+                <Text style={[styles.submitButtonText, { color: theme.accentText }]}>Ekle</Text>
               )}
             </Pressable>
             <Pressable
               style={styles.cancelButton}
               onPress={() => setAddModalVisible(false)}
               disabled={adding}>
-              <Text style={styles.cancelButtonText}>Vazgeç</Text>
+              <Text style={[styles.cancelButtonText, { color: theme.textMuted }]}>Vazgeç</Text>
             </Pressable>
           </View>
         </View>
@@ -308,7 +543,14 @@ function ContactsScreen({ account, onOpenRoom, onLogout }: Props): React.JSX.Ele
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0F1115',
+  },
+  centered: {
+    flex: 1,
+    alignSelf: 'center',
+    width: '100%',
+  },
+  pressed: {
+    opacity: 0.75,
   },
   header: {
     flexDirection: 'row',
@@ -317,24 +559,21 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingBottom: 12,
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.06)',
   },
   headerTitle: {
-    color: '#F5F5F7',
     fontSize: 18,
     fontWeight: '700',
   },
   headerSubtitle: {
-    color: 'rgba(245,245,247,0.45)',
     fontSize: 12,
     marginTop: 2,
   },
   logoutText: {
-    color: '#FF6B6B',
     fontSize: 14,
+    minHeight: 22,
+    paddingVertical: 4,
   },
   errorBanner: {
-    backgroundColor: 'rgba(255,107,107,0.12)',
     marginHorizontal: 16,
     marginTop: 12,
     borderRadius: 10,
@@ -342,11 +581,9 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   errorBannerText: {
-    color: '#FF6B6B',
     fontSize: 12.5,
   },
   offlineBanner: {
-    backgroundColor: 'rgba(255,184,77,0.14)',
     marginHorizontal: 16,
     marginTop: 12,
     borderRadius: 10,
@@ -354,7 +591,6 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   offlineBannerText: {
-    color: '#FFB84D',
     fontSize: 12.5,
     fontWeight: '600',
   },
@@ -365,51 +601,131 @@ const styles = StyleSheet.create({
     flexGrow: 1,
   },
   emptyText: {
-    color: 'rgba(245,245,247,0.4)',
     fontSize: 13,
     textAlign: 'center',
     marginTop: 40,
   },
-  contactRow: {
+  gamesCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#1C1F2A',
-    borderRadius: 14,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    marginBottom: 10,
+    borderRadius: 16,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.06)',
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+    marginBottom: 18,
   },
-  contactRowPressed: {
-    opacity: 0.75,
-  },
-  contactAvatar: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: '#3B7CFF',
+  gamesIconBadge: {
+    width: 44,
+    height: 44,
+    borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 12,
   },
-  contactAvatarText: {
-    color: '#0F1115',
-    fontSize: 16,
+  gamesIcon: {
+    fontSize: 22,
+  },
+  gamesTextWrap: {
+    flex: 1,
+  },
+  gamesTitle: {
+    fontSize: 15,
     fontWeight: '800',
+    marginBottom: 2,
+  },
+  gamesSubtitle: {
+    fontSize: 12,
+  },
+  gamesChevron: {
+    fontSize: 22,
+    fontWeight: '600',
+  },
+  section: {
+    marginBottom: 18,
+  },
+  sectionTitle: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    letterSpacing: 0.3,
+    textTransform: 'uppercase',
+    marginBottom: 10,
+  },
+  conversationsTitle: {
+    marginTop: 2,
+  },
+  chipRow: {
+    paddingRight: 8,
+  },
+  chipCard: {
+    alignItems: 'center',
+    width: 72,
+    marginRight: 10,
+  },
+  chipLabel: {
+    fontSize: 11.5,
+    fontWeight: '600',
+    marginTop: 6,
+    textAlign: 'center',
+  },
+  callCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 14,
+    borderWidth: 1,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    marginRight: 10,
+    width: 168,
+  },
+  callCardTextWrap: {
+    flex: 1,
+    marginLeft: 10,
+  },
+  callCardName: {
+    fontSize: 13,
+    fontWeight: '700',
+    marginBottom: 2,
+  },
+  callCardDetail: {
+    fontSize: 11.5,
+    fontWeight: '600',
+  },
+  avatar: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarText: {
+    fontWeight: '800',
+  },
+  onlineDot: {
+    position: 'absolute',
+    right: 0,
+    bottom: 0,
+    borderWidth: 2,
+  },
+  contactRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 14,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    marginBottom: 10,
+    borderWidth: 1,
+  },
+  contactRowPressed: {
+    opacity: 0.75,
   },
   contactBody: {
     flex: 1,
+    marginLeft: 12,
     marginRight: 8,
   },
   contactName: {
-    color: '#F5F5F7',
     fontSize: 15,
     fontWeight: '700',
     marginBottom: 3,
   },
   contactPreview: {
-    color: 'rgba(245,245,247,0.55)',
     fontSize: 13,
     fontWeight: '400',
   },
@@ -418,9 +734,9 @@ const styles = StyleSheet.create({
   },
   contactMeta: {
     alignItems: 'flex-end',
+    minWidth: 40,
   },
   contactTime: {
-    color: 'rgba(245,245,247,0.4)',
     fontSize: 11.5,
   },
   contactTimeUnread: {
@@ -430,24 +746,30 @@ const styles = StyleSheet.create({
     width: 9,
     height: 9,
     borderRadius: 4.5,
-    backgroundColor: '#4D96FF',
     marginTop: 6,
+  },
+  favoriteButton: {
+    marginLeft: 6,
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  favoriteIcon: {
+    fontSize: 20,
   },
   addButton: {
     marginHorizontal: 16,
-    backgroundColor: '#3B7CFF',
     borderRadius: 14,
     paddingVertical: 14,
     alignItems: 'center',
   },
   addButtonText: {
-    color: '#0F1115',
     fontSize: 15,
     fontWeight: '800',
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(10,11,15,0.78)',
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 24,
@@ -455,39 +777,31 @@ const styles = StyleSheet.create({
   modalCard: {
     width: '100%',
     maxWidth: 340,
-    backgroundColor: '#1C1F2A',
     borderRadius: 20,
     paddingVertical: 24,
     paddingHorizontal: 22,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
   },
   modalTitle: {
-    color: '#F5F5F7',
     fontSize: 19,
     fontWeight: '800',
     textAlign: 'center',
     marginBottom: 16,
   },
   modalInput: {
-    backgroundColor: '#0F1115',
     borderRadius: 10,
     paddingHorizontal: 14,
     paddingVertical: 12,
-    color: '#F5F5F7',
     fontSize: 15,
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
   },
   errorTextModal: {
-    color: '#FF6B6B',
     fontSize: 13,
     marginBottom: 12,
     textAlign: 'center',
   },
   submitButton: {
-    backgroundColor: '#3B7CFF',
     borderRadius: 10,
     paddingVertical: 13,
     alignItems: 'center',
@@ -498,7 +812,6 @@ const styles = StyleSheet.create({
     opacity: 0.6,
   },
   submitButtonText: {
-    color: '#0F1115',
     fontSize: 15,
     fontWeight: '700',
   },
@@ -507,7 +820,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   cancelButtonText: {
-    color: 'rgba(245,245,247,0.5)',
     fontSize: 13,
   },
 });

@@ -2,7 +2,38 @@
 
 Bağlam için önce [[00-START-HERE]] dosyasına bak.
 
-## Bu makinede kurulu araçlar (Windows)
+> **Önemli:** Bu notta artık **birden fazla makineye ait** kurulum bilgisi var (proje farklı
+> bilgisayarlara taşınıp her seferinde araçlar sıfırdan kurulduğu için). Hangi bölümün hangi
+> makineye ait olduğuna dikkat et — yollar (`C:\Android\Sdk` vs. `C:\Users\USER\AppData\Local\
+> Android\Sdk` gibi) birbirinin yerine geçmez, çalıştığın makinede önce doğru `ANDROID_HOME`/
+> `JAVA_HOME`'un hangisi olduğunu kontrol et (`echo $env:ANDROID_HOME` / klasörün var olup
+> olmadığına bak).
+
+## Makine 2 — 2026-08-14 kurulumu (`C:\Users\USER\...`)
+
+- **JDK:** Microsoft Build of OpenJDK 17 — `C:\Program Files\Microsoft\jdk-17.0.20.8-hotspot`
+  (winget `Microsoft.OpenJDK.17` paketinden kuruldu).
+- **Android SDK:** `C:\Users\USER\AppData\Local\Android\Sdk` (varsayılan `%LOCALAPPDATA%\Android\Sdk`
+  konumu — Android Studio kurulmadı, sadece `cmdline-tools` (Google'ın resmi zip'i) indirilip
+  `sdkmanager` ile `platform-tools`, `platforms;android-34/35/36`, `build-tools;34/35/36`,
+  `ndk;27.1.12297006`, `cmake;3.22.1`, `emulator`, `system-images;android-34;google_apis;x86_64`
+  kuruldu. Lisanslar `sdkmanager --licenses` ile toplu kabul edildi.
+- **Emülatör (AVD):** `GizliChat_AVD` — Pixel 6, Android 14 (API 34), `google_apis/x86_64`.
+  `avdmanager create avd -n GizliChat_AVD -k "system-images;android-34;google_apis;x86_64" -d
+  pixel_6` ile oluşturuldu, `emulator -avd GizliChat_AVD` ile başlatıldı; bu makinede WHPX (Windows
+  Hypervisor Platform) donanım hızlandırması otomatik devreye girdi (log: "Windows Hypervisor
+  Platform accelerator is operational").
+- **GitHub CLI:** `gh` winget ile kuruldu (`GitHub.cli`), `gh auth login --web` ile `KaanEnnes`
+  hesabına device-code akışıyla giriş yapıldı. Repolar `gh repo clone` ile `C:\Users\USER\Projects\`
+  altına indirildi.
+- **Ağ hızı:** Bu makinede indirmeler zaman zaman çok yavaştı (~50-100 KB/sn'ye düşüyordu) — SDK/NDK
+  kurulumu ve ilk build'ler bu yüzden beklenenden uzun sürdü (bkz. [[Changelog]] 2026-08-14 kaydı).
+- **Bilinen çalışma-zamanı sorunu:** Metro, bir gradle build'i çalışırken oluşturulup silinen bir
+  CMake geçici klasörünü izlemeye çalışırken `ENOENT` ile çökebiliyor (Node süreci tamamen kapanıyor).
+  Çözüm kod değişikliği değil, sadece `npx react-native start --reset-cache` ile yeniden başlatmak —
+  detay [[Changelog]] 2026-08-14 kaydında.
+
+## Makine 1 kurulumu (önceki oturum, yol: `C:\Android\Sdk`)
 
 - **JDK:** Eclipse Temurin 17 — `C:\Program Files\Eclipse Adoptium\jdk-17.0.20.8-hotspot`
   (winget ile `EclipseAdoptium.Temurin.17.JDK` paketinden kuruldu).

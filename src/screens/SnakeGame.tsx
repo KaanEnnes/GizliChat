@@ -9,6 +9,7 @@ import {
   StyleSheet,
   Text,
   View,
+  useWindowDimensions,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTheme } from '../theme/ThemeContext';
@@ -30,7 +31,7 @@ interface SegmentAnim {
 }
 
 const GRID = 14;
-const BOARD_SIZE = 320;
+const MAX_BOARD_SIZE = 360;
 const BOARD_PADDING = 6;
 const SWIPE_THRESHOLD = 18;
 const INITIAL_TICK_MS = 220;
@@ -76,6 +77,10 @@ function angleForDir(dir: { dr: number; dc: number }): number {
 
 function SnakeGame({ onBack }: Props): React.JSX.Element {
   const { theme } = useTheme();
+  // Scales down on narrow phones (avoids clipping/overflow) and caps out on
+  // tablets/large screens (avoids an absurdly oversized, mostly-empty board).
+  const { width } = useWindowDimensions();
+  const boardSize = Math.min(width - 40, MAX_BOARD_SIZE);
   const [snake, setSnake] = useState<Position[]>(startingSnake);
   const [segmentsAnim, setSegmentsAnim] = useState<SegmentAnim[]>(() =>
     startingSnake().map(pos => ({ from: pos, to: pos })),
@@ -84,6 +89,7 @@ function SnakeGame({ onBack }: Props): React.JSX.Element {
   const [score, setScore] = useState(0);
   const [bestScore, setBestScore] = useState(0);
   const [gameOver, setGameOver] = useState(false);
+  const [paused, setPaused] = useState(false);
 
   const snakeRef = useRef(snake);
   snakeRef.current = snake;
@@ -96,6 +102,12 @@ function SnakeGame({ onBack }: Props): React.JSX.Element {
   // for a render — the tick loop below checks this directly so a collision
   // stops scheduling immediately instead of one more tick later.
   const gameOverRef = useRef(false);
+  // Mirrors `paused` for the swipe handler below, which is a stable
+  // (`useMemo([])`) PanResponder and would otherwise see a stale value.
+  const pausedRef = useRef(false);
+  useEffect(() => {
+    pausedRef.current = paused;
+  }, [paused]);
 
   const progress = useRef(new Animated.Value(0)).current;
   const foodPulse = useRef(new Animated.Value(1)).current;
@@ -211,7 +223,7 @@ function SnakeGame({ onBack }: Props): React.JSX.Element {
   // (kept live via the ref, still speeding up as the snake grows) and is far
   // steadier than a re-armed setTimeout chain.
   useEffect(() => {
-    if (gameOver) {
+    if (gameOver || paused) {
       return undefined;
     }
     let rafId: number;
@@ -230,7 +242,12 @@ function SnakeGame({ onBack }: Props): React.JSX.Element {
     };
     rafId = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(rafId);
-  }, [gameOver, tick]);
+  }, [gameOver, paused, tick]);
+
+  const togglePause = useCallback(() => {
+    playTapSound();
+    setPaused(prev => !prev);
+  }, []);
 
   const handleRestart = useCallback(() => {
     playTapSound();
@@ -249,6 +266,7 @@ function SnakeGame({ onBack }: Props): React.JSX.Element {
     setFood(nextFood);
     setScore(0);
     setGameOver(false);
+    setPaused(false);
   }, [headAngle]);
 
   const panResponder = useMemo(
@@ -258,6 +276,9 @@ function SnakeGame({ onBack }: Props): React.JSX.Element {
         onMoveShouldSetPanResponder: (_evt, gesture) =>
           Math.abs(gesture.dx) > 6 || Math.abs(gesture.dy) > 6,
         onPanResponderRelease: (_evt: GestureResponderEvent, gesture: PanResponderGestureState) => {
+          if (pausedRef.current || gameOverRef.current) {
+            return;
+          }
           const { dx, dy } = gesture;
           if (Math.max(Math.abs(dx), Math.abs(dy)) < SWIPE_THRESHOLD) {
             return;
@@ -277,7 +298,7 @@ function SnakeGame({ onBack }: Props): React.JSX.Element {
     [],
   );
 
-  const innerSize = BOARD_SIZE - BOARD_PADDING * 2;
+  const innerSize = boardSize - BOARD_PADDING * 2;
   const cellSize = innerSize / GRID;
   const cellInset = cellSize * 0.09;
 
@@ -315,7 +336,17 @@ function SnakeGame({ onBack }: Props): React.JSX.Element {
           <Text style={[styles.menuLink, { color: theme.textMuted }]}>‹ Menü</Text>
         </Pressable>
         <Text style={[styles.title, { color: theme.text }]}>YILAN</Text>
-        <View style={styles.headerSpacer} />
+        <Pressable
+          onPress={togglePause}
+          hitSlop={8}
+          disabled={gameOver}
+          style={styles.pauseButton}
+          accessibilityRole="button"
+          accessibilityLabel={paused ? 'Devam et' : 'Duraklat'}>
+          <Text style={[styles.pauseIcon, { color: gameOver ? theme.textFaint : theme.textMuted }]}>
+            {paused ? '▶' : '⏸'}
+          </Text>
+        </Pressable>
       </View>
 
       <View style={styles.statsRow}>
@@ -333,7 +364,7 @@ function SnakeGame({ onBack }: Props): React.JSX.Element {
         {...panResponder.panHandlers}
         style={[
           styles.board,
-          { width: BOARD_SIZE, height: BOARD_SIZE, backgroundColor: theme.surfaceAlt, borderColor: theme.border },
+          { width: boardSize, height: boardSize, backgroundColor: theme.surfaceAlt, borderColor: theme.border },
         ]}>
         <View pointerEvents="none" style={StyleSheet.absoluteFill}>
           {checkerCells}
@@ -396,6 +427,19 @@ function SnakeGame({ onBack }: Props): React.JSX.Element {
           );
         })}
 
+        {paused && !gameOver && (
+          <View style={[styles.overlay, { backgroundColor: theme.overlay }]}>
+            <Text style={[styles.overlayTitle, { color: theme.text }]}>DURAKLADI</Text>
+            <Pressable
+              onPress={togglePause}
+              style={[styles.restartButton, { backgroundColor: theme.accent }]}
+              accessibilityRole="button"
+              accessibilityLabel="Devam et">
+              <Text style={[styles.restartButtonText, { color: theme.accentText }]}>DEVAM ET</Text>
+            </Pressable>
+          </View>
+        )}
+
         {gameOver && (
           <View style={[styles.overlay, { backgroundColor: theme.overlay }]}>
             <Text style={[styles.overlayTitle, { color: theme.text }]}>OYUN BİTTİ</Text>
@@ -448,8 +492,14 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     letterSpacing: 1,
   },
-  headerSpacer: {
+  pauseButton: {
     width: 40,
+    height: 40,
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+  },
+  pauseIcon: {
+    fontSize: 20,
   },
   statsRow: {
     flexDirection: 'row',

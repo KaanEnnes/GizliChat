@@ -52,6 +52,10 @@ const MAX_INLINE_MEDIA_DATA_URI_LENGTH = 900_000;
 // MediaRecorder.stop() throws natively if called too soon after start() —
 // below this, we treat the press as an accidental tap, not a real message.
 const MIN_RECORDING_MS = 600;
+// How close (in px) to the bottom of the list still counts as "already at
+// the bottom" for auto-scroll purposes — small enough to not trigger while
+// mid-scroll through history, generous enough to survive minor list jitter.
+const NEAR_BOTTOM_THRESHOLD_PX = 120;
 
 function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JSX.Element {
   const insets = useSafeAreaInsets();
@@ -67,10 +71,26 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
   const [uploadingMedia, setUploadingMedia] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingLevel, setRecordingLevel] = useState(0);
+  const [callStarting, setCallStarting] = useState(false);
+  const [newMessagesBelow, setNewMessagesBelow] = useState(false);
   const listRef = useRef<FlatList<ChatMessage>>(null);
   const recordingStartedAtRef = useRef<number | null>(null);
   const lastMessageIdRef = useRef<string | null>(null);
   const isRecordingRef = useRef(false);
+  // Whether the user is currently scrolled near the bottom of the list —
+  // drives whether a fresh message should auto-scroll into view or just
+  // surface the "new messages" pill instead of yanking their scroll
+  // position while they're reading older history.
+  const isNearBottomRef = useRef(true);
+  // Tracks which message ids we've already requested a read-receipt write
+  // for, independent of the server-confirmed `readAt` field — that field
+  // stays falsy locally for a bit after the write (pending serverTimestamp),
+  // during which every intervening snapshot would otherwise re-trigger
+  // duplicate markMessageRead calls for the same message.
+  const markedReadIdsRef = useRef<Set<string>>(new Set());
+  // Synchronous (non-state) guard against a double-tap firing handleSend
+  // twice before the `sending` state's re-render lands.
+  const sendingRef = useRef(false);
   useEffect(() => {
     isRecordingRef.current = isRecording;
   }, [isRecording]);
@@ -96,6 +116,9 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
     setMessageLimit(INITIAL_MESSAGE_LIMIT);
     setReachedStart(false);
     lastMessageIdRef.current = null;
+    markedReadIdsRef.current.clear();
+    isNearBottomRef.current = true;
+    setNewMessagesBelow(false);
   }, [roomId]);
 
   useEffect(() => {
@@ -129,8 +152,14 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
 
   const handleScroll = useCallback(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-      if (event.nativeEvent.contentOffset.y < 60) {
+      const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+      if (contentOffset.y < 60) {
         handleLoadMore();
+      }
+      const distanceFromBottom = contentSize.height - contentOffset.y - layoutMeasurement.height;
+      isNearBottomRef.current = distanceFromBottom < NEAR_BOTTOM_THRESHOLD_PX;
+      if (isNearBottomRef.current) {
+        setNewMessagesBelow(false);
       }
     },
     [handleLoadMore],
@@ -142,26 +171,48 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
     // the sender as blue double ticks) for any of their messages that don't
     // have one yet. Already-read messages are skipped, so this doesn't loop.
     messages.forEach(message => {
-      if (message.senderId !== myUid && message.type !== 'call' && !message.readAt) {
-        markMessageRead(roomId, message.id).catch(() => undefined);
+      if (
+        message.senderId !== myUid &&
+        message.type !== 'call' &&
+        !message.readAt &&
+        !markedReadIdsRef.current.has(message.id)
+      ) {
+        markedReadIdsRef.current.add(message.id);
+        markMessageRead(roomId, message.id).catch(() => {
+          // Allow a retry on the next snapshot if the write actually failed.
+          markedReadIdsRef.current.delete(message.id);
+        });
       }
     });
   }, [messages, roomId, myUid]);
 
   useEffect(() => {
-    // Only jump to the bottom when the newest message actually changed (a
-    // fresh incoming/outgoing message) — not when older messages get
-    // prepended by scrolling up for more history, which would otherwise yank
-    // the view back down every time a page of history loads.
-    const lastId = messages.length > 0 ? messages[messages.length - 1].id : null;
-    if (lastId !== null && lastId !== lastMessageIdRef.current) {
-      const animate = lastMessageIdRef.current !== null;
+    // Only react when the newest message actually changed (a fresh
+    // incoming/outgoing message) — not when older messages get prepended by
+    // scrolling up for more history, which would otherwise yank the view
+    // back down every time a page of history loads.
+    const lastMessage = messages.length > 0 ? messages[messages.length - 1] : null;
+    if (lastMessage === null || lastMessage.id === lastMessageIdRef.current) {
+      return;
+    }
+    const isInitialLoad = lastMessageIdRef.current === null;
+    const isMine = lastMessage.senderId === myUid;
+    // Smart scroll: always jump to a message the user just sent themselves
+    // (and on first room open), but only auto-follow an *incoming* message
+    // if the user is already near the bottom — otherwise leave their scroll
+    // position alone and surface the "new messages" pill instead, exactly
+    // like scrolling up to read history shouldn't get yanked back down.
+    if (isInitialLoad || isMine || isNearBottomRef.current) {
+      const animate = !isInitialLoad;
       requestAnimationFrame(() => {
         listRef.current?.scrollToEnd({ animated: animate });
       });
+      setNewMessagesBelow(false);
+    } else {
+      setNewMessagesBelow(true);
     }
-    lastMessageIdRef.current = lastId;
-  }, [messages]);
+    lastMessageIdRef.current = lastMessage.id;
+  }, [messages, myUid]);
 
   useEffect(() => {
     if (messages.length > 0) {
@@ -172,21 +223,33 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
     }
   }, [messages, roomId]);
 
+  const handleJumpToBottom = useCallback(() => {
+    isNearBottomRef.current = true;
+    setNewMessagesBelow(false);
+    listRef.current?.scrollToEnd({ animated: true });
+  }, []);
+
   const handleSend = useCallback(() => {
     const trimmed = draft.trim();
-    if (!trimmed || sending) {
+    if (!trimmed || sendingRef.current) {
       return;
     }
-    setDraft('');
+    sendingRef.current = true;
     setSending(true);
     sendMessage(roomId, trimmed, myUid)
+      .then(() => {
+        // Only cleared on success — on failure the draft stays in the input
+        // so the user can just press send again instead of retyping it.
+        setDraft('');
+      })
       .catch(error => {
         setConnectionError(`Mesaj gönderilemedi: ${error.message}`);
       })
       .finally(() => {
+        sendingRef.current = false;
         setSending(false);
       });
-  }, [draft, sending, roomId, myUid]);
+  }, [draft, roomId, myUid]);
 
   const handlePickMedia = useCallback(
     (source: 'library' | 'camera') => {
@@ -335,7 +398,7 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
       style={[styles.container, { backgroundColor: theme.background }]}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       keyboardVerticalOffset={0}>
-      <View style={[styles.header, { borderBottomColor: theme.border, paddingTop: insets.top + 12 }]}>
+      <View style={[styles.header, { backgroundColor: theme.surface, borderBottomColor: theme.border, paddingTop: insets.top + 12 }]}>
         <Pressable onPress={onBack} hitSlop={8} style={styles.backButton}>
           <Text style={[styles.backText, { color: theme.textMuted }]}>‹</Text>
         </Pressable>
@@ -344,91 +407,121 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
         </Text>
         <Pressable
           onPress={() => {
-            startVoiceCall(myUid, myUsername, contact).catch(error => {
-              setConnectionError(`Arama başlatılamadı: ${(error as Error).message}`);
-            });
+            if (callStarting) {
+              return;
+            }
+            setCallStarting(true);
+            startVoiceCall(myUid, myUsername, contact)
+              .catch(error => {
+                setConnectionError(`Arama başlatılamadı: ${(error as Error).message}`);
+              })
+              .finally(() => setCallStarting(false));
           }}
           hitSlop={8}
-          style={styles.headerIconButton}>
+          disabled={callStarting}
+          style={[styles.headerIconButton, callStarting && styles.headerIconButtonDisabled]}>
           <Text style={styles.headerIconText}>📞</Text>
         </Pressable>
         <Pressable
           onPress={() => {
-            startVideoCall(myUid, myUsername, contact).catch(error => {
-              setConnectionError(`Arama başlatılamadı: ${(error as Error).message}`);
-            });
+            if (callStarting) {
+              return;
+            }
+            setCallStarting(true);
+            startVideoCall(myUid, myUsername, contact)
+              .catch(error => {
+                setConnectionError(`Arama başlatılamadı: ${(error as Error).message}`);
+              })
+              .finally(() => setCallStarting(false));
           }}
           hitSlop={8}
-          style={styles.headerIconButton}>
+          disabled={callStarting}
+          style={[styles.headerIconButton, callStarting && styles.headerIconButtonDisabled]}>
           <Text style={styles.headerIconText}>🎥</Text>
         </Pressable>
       </View>
 
       {!isOnline && (
-        <View style={styles.offlineBanner}>
-          <Text style={styles.offlineBannerText}>📡 İnternet bağlantısı yok</Text>
+        <View style={[styles.offlineBanner, { backgroundColor: theme.warningSoft }]}>
+          <Text style={[styles.offlineBannerText, { color: theme.warning }]}>📡 İnternet bağlantısı yok</Text>
         </View>
       )}
 
       {connectionError && (
-        <View style={styles.errorBanner}>
-          <Text style={styles.errorBannerText}>{connectionError}</Text>
+        <View style={[styles.errorBanner, { backgroundColor: theme.dangerSoft, borderBottomColor: theme.dangerSoft }]}>
+          <Text style={[styles.errorBannerText, { color: theme.danger }]}>{connectionError}</Text>
         </View>
       )}
 
-      <FlatList
-        ref={listRef}
-        data={messages}
-        keyExtractor={item => item.id}
-        renderItem={({ item }) => (
-          <MessageBubble
-            message={item}
-            isMine={item.senderId === myUid}
-            myUid={myUid}
-            onToggleReaction={handleToggleReaction}
-          />
+      <View style={styles.listWrap}>
+        <FlatList
+          ref={listRef}
+          data={messages}
+          keyExtractor={item => item.id}
+          renderItem={({ item }) => (
+            <MessageBubble
+              message={item}
+              isMine={item.senderId === myUid}
+              myUid={myUid}
+              onToggleReaction={handleToggleReaction}
+            />
+          )}
+          contentContainerStyle={styles.listContent}
+          keyboardShouldPersistTaps="handled"
+          onScroll={handleScroll}
+          scrollEventThrottle={100}
+          maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
+          ListHeaderComponent={
+            loadingMore ? (
+              <View style={styles.loadingMoreRow}>
+                <ActivityIndicator color={theme.textFaint} size="small" />
+              </View>
+            ) : undefined
+          }
+        />
+
+        {newMessagesBelow && (
+          <Pressable
+            onPress={handleJumpToBottom}
+            style={[styles.jumpToBottomButton, { backgroundColor: theme.identity }]}>
+            <Text style={[styles.jumpToBottomText, { color: theme.identityText }]}>Yeni mesajlar ↓</Text>
+          </Pressable>
         )}
-        contentContainerStyle={styles.listContent}
-        keyboardShouldPersistTaps="handled"
-        onScroll={handleScroll}
-        scrollEventThrottle={100}
-        maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
-        ListHeaderComponent={
-          loadingMore ? (
-            <View style={styles.loadingMoreRow}>
-              <ActivityIndicator color={theme.textFaint} size="small" />
-            </View>
-          ) : undefined
-        }
-      />
+      </View>
 
       {uploadingMedia && (
-        <View style={styles.uploadingBanner}>
-          <ActivityIndicator color="#3B7CFF" size="small" />
-          <Text style={styles.uploadingBannerText}>Gönderiliyor…</Text>
+        <View style={[styles.uploadingBanner, { backgroundColor: theme.background }]}>
+          <ActivityIndicator color={theme.identity} size="small" />
+          <Text style={[styles.uploadingBannerText, { color: theme.textMuted }]}>Gönderiliyor…</Text>
         </View>
       )}
 
       {isRecording && (
-        <View style={styles.recordingBanner}>
-          <View style={styles.recordingDot} />
-          <RecordingWaveform level={recordingLevel} />
+        <View style={[styles.recordingBanner, { backgroundColor: theme.background }]}>
+          <View style={[styles.recordingDot, { backgroundColor: theme.danger }]} />
+          <RecordingWaveform level={recordingLevel} color={theme.identity} />
         </View>
       )}
 
       <View
         style={[
           styles.inputBar,
-          { backgroundColor: theme.background, borderTopColor: theme.border },
+          { backgroundColor: theme.surface, borderTopColor: theme.border },
           { paddingBottom: Math.max(insets.bottom, 12) },
         ]}>
-        <Pressable onPress={handleAttachPress} hitSlop={8} style={styles.attachButton} disabled={uploadingMedia}>
+        <Pressable
+          onPress={handleAttachPress}
+          hitSlop={8}
+          style={styles.attachButton}
+          disabled={uploadingMedia}
+          accessibilityRole="button"
+          accessibilityLabel="Medya ekle">
           <Text style={styles.attachIcon}>📎</Text>
         </Pressable>
         <TextInput
           style={[
             styles.input,
-            { backgroundColor: theme.surface, color: theme.text, borderColor: theme.border },
+            { backgroundColor: theme.inputBackground, color: theme.text, borderColor: theme.border },
           ]}
           placeholder="Mesaj yaz..."
           placeholderTextColor={theme.textFaint}
@@ -438,23 +531,31 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
           onSubmitEditing={Platform.OS === 'ios' ? handleSend : undefined}
         />
         {canSend ? (
-          <Pressable style={styles.sendButton} onPress={handleSend} disabled={sending}>
+          <Pressable
+            style={[styles.sendButton, { backgroundColor: theme.accent }]}
+            onPress={handleSend}
+            disabled={sending}
+            accessibilityRole="button"
+            accessibilityLabel="Gönder">
             {sending ? (
-              <ActivityIndicator color="#0F1115" size="small" />
+              <ActivityIndicator color={theme.accentText} size="small" />
             ) : (
-              <Text style={styles.sendButtonText}>Gönder</Text>
+              <Text style={[styles.sendButtonText, { color: theme.accentText }]}>Gönder</Text>
             )}
           </Pressable>
         ) : (
           <Pressable
             style={[
               styles.micButton,
-              { backgroundColor: theme.surface, borderColor: theme.border },
-              isRecording && styles.micButtonActive,
+              { backgroundColor: theme.inputBackground, borderColor: theme.border },
+              isRecording && { backgroundColor: theme.danger, borderColor: theme.danger },
             ]}
+            hitSlop={6}
             onPressIn={handleStartRecording}
             onPressOut={handleStopRecording}
-            disabled={uploadingMedia}>
+            disabled={uploadingMedia}
+            accessibilityRole="button"
+            accessibilityLabel="Basılı tutarak sesli mesaj kaydet">
             <Text style={styles.micIcon}>🎤</Text>
           </Pressable>
         )}
@@ -466,7 +567,6 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0F1115',
   },
   header: {
     flexDirection: 'row',
@@ -474,26 +574,20 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingBottom: 12,
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.06)',
   },
   backButton: {
     paddingHorizontal: 8,
     paddingVertical: 4,
   },
   backText: {
-    color: 'rgba(245,245,247,0.7)',
     fontSize: 26,
     fontWeight: '600',
   },
   headerTitle: {
     flex: 1,
-    color: '#F5F5F7',
     fontSize: 17,
     fontWeight: '700',
     textAlign: 'center',
-  },
-  headerSpacer: {
-    width: 34,
   },
   headerIconButton: {
     paddingHorizontal: 8,
@@ -502,34 +596,52 @@ const styles = StyleSheet.create({
   headerIconText: {
     fontSize: 20,
   },
+  headerIconButtonDisabled: {
+    opacity: 0.4,
+  },
   errorBanner: {
-    backgroundColor: 'rgba(255,107,107,0.12)',
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,107,107,0.25)',
     paddingHorizontal: 16,
     paddingVertical: 8,
   },
   errorBannerText: {
-    color: '#FF6B6B',
     fontSize: 12.5,
   },
   offlineBanner: {
-    backgroundColor: 'rgba(255,184,77,0.14)',
     paddingHorizontal: 16,
     paddingVertical: 8,
   },
   offlineBannerText: {
-    color: '#FFB84D',
     fontSize: 12.5,
     fontWeight: '600',
   },
+  listWrap: {
+    flex: 1,
+  },
   listContent: {
-    paddingHorizontal: 14,
-    paddingVertical: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 14,
   },
   loadingMoreRow: {
     paddingVertical: 10,
     alignItems: 'center',
+  },
+  jumpToBottomButton: {
+    position: 'absolute',
+    bottom: 14,
+    alignSelf: 'center',
+    borderRadius: 18,
+    paddingHorizontal: 16,
+    paddingVertical: 9,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
+    elevation: 3,
+  },
+  jumpToBottomText: {
+    fontSize: 13,
+    fontWeight: '700',
   },
   inputBar: {
     flexDirection: 'row',
@@ -537,34 +649,24 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingTop: 10,
     borderTopWidth: 1,
-    borderTopColor: 'rgba(255,255,255,0.06)',
-    backgroundColor: '#0F1115',
   },
   input: {
     flex: 1,
-    backgroundColor: '#1C1F26',
     borderRadius: 20,
     paddingHorizontal: 16,
     paddingVertical: 10,
-    color: '#F5F5F7',
     fontSize: 15,
     maxHeight: 120,
     marginRight: 10,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
   },
   sendButton: {
-    backgroundColor: '#3B7CFF',
     borderRadius: 20,
     paddingHorizontal: 18,
     paddingVertical: 10,
     justifyContent: 'center',
   },
-  sendButtonDisabled: {
-    opacity: 0.4,
-  },
   sendButtonText: {
-    color: '#0F1115',
     fontSize: 14,
     fontWeight: '700',
   },
@@ -577,17 +679,12 @@ const styles = StyleSheet.create({
     fontSize: 22,
   },
   micButton: {
-    backgroundColor: '#1C1F26',
-    borderRadius: 20,
-    width: 40,
-    height: 40,
+    borderRadius: 22,
+    width: 44,
+    height: 44,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-  },
-  micButtonActive: {
-    backgroundColor: '#FF6B6B',
   },
   micIcon: {
     fontSize: 18,
@@ -599,7 +696,6 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
   },
   uploadingBannerText: {
-    color: 'rgba(245,245,247,0.6)',
     fontSize: 12,
     marginLeft: 8,
   },
@@ -608,13 +704,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 6,
     paddingLeft: 16,
-    backgroundColor: '#0F1115',
   },
   recordingDot: {
     width: 9,
     height: 9,
     borderRadius: 5,
-    backgroundColor: '#FF6B6B',
     marginRight: 8,
   },
 });

@@ -54,7 +54,10 @@ async function startCall(
   }
 
   const client = getOrCreateStreamClient(myUid, myUsername);
-  const callId = [myUid, contact.uid].sort().join('-');
+  // Suffixed by call type so a rapid tap on both the voice and video call
+  // buttons (see ChatRoomScreen's header) can never resolve to the same
+  // underlying Stream call object and race each other's camera enable/disable.
+  const callId = `${[myUid, contact.uid].sort().join('-')}-${video ? 'video' : 'voice'}`;
   const call = client.call('default', callId);
   await call.getOrCreate({
     ring: true,

@@ -11,6 +11,13 @@ module.exports = {
   removeItem: async key => {
     store.delete(key);
   },
+  getMany: async keys => {
+    const result = {};
+    keys.forEach(key => {
+      result[key] = store.has(key) ? store.get(key) : null;
+    });
+    return result;
+  },
   clear: async () => {
     store.clear();
   },

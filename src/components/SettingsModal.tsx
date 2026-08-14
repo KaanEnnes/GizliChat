@@ -48,7 +48,7 @@ function SettingsModal({ visible, onClose }: Props): React.JSX.Element {
               value={mode === 'dark'}
               onValueChange={toggleTheme}
               trackColor={{ false: theme.border, true: theme.accent }}
-              thumbColor="#F5F5F7"
+              thumbColor={theme.surface}
             />
           </View>
 
@@ -58,7 +58,7 @@ function SettingsModal({ visible, onClose }: Props): React.JSX.Element {
               value={soundOn}
               onValueChange={handleToggleSound}
               trackColor={{ false: theme.border, true: theme.accent }}
-              thumbColor="#F5F5F7"
+              thumbColor={theme.surface}
             />
           </View>
 
@@ -73,7 +73,7 @@ function SettingsModal({ visible, onClose }: Props): React.JSX.Element {
               value={notificationsOn}
               onValueChange={handleToggleNotifications}
               trackColor={{ false: theme.border, true: theme.accent }}
-              thumbColor="#F5F5F7"
+              thumbColor={theme.surface}
             />
           </View>
 
@@ -83,7 +83,7 @@ function SettingsModal({ visible, onClose }: Props): React.JSX.Element {
               value={vibrationOn}
               onValueChange={handleToggleVibration}
               trackColor={{ false: theme.border, true: theme.accent }}
-              thumbColor="#F5F5F7"
+              thumbColor={theme.surface}
             />
           </View>
 

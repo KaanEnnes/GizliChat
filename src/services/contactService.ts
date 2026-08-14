@@ -1,10 +1,11 @@
-import { collection, doc, onSnapshot, setDoc, Unsubscribe } from 'firebase/firestore';
+import { collection, doc, onSnapshot, setDoc, Unsubscribe, updateDoc } from 'firebase/firestore';
 import { db } from './firebase';
 
 export interface Contact {
   uid: string;
   name: string;
   addedAt: number;
+  favorite: boolean;
 }
 
 /**
@@ -17,7 +18,13 @@ export async function addContact(myUid: string, contactUid: string, name: string
   await setDoc(doc(db, 'users', myUid, 'contacts', contactUid), {
     name,
     addedAt: Date.now(),
+    favorite: false,
   });
+}
+
+/** Toggles whether a contact is pinned to the home dashboard's "Favoriler" row. */
+export async function setContactFavorite(myUid: string, contactUid: string, favorite: boolean): Promise<void> {
+  await updateDoc(doc(db, 'users', myUid, 'contacts', contactUid), { favorite });
 }
 
 export function subscribeToContacts(
@@ -34,6 +41,7 @@ export function subscribeToContacts(
           uid: docSnap.id,
           name: typeof data.name === 'string' ? data.name : 'Kişi',
           addedAt: typeof data.addedAt === 'number' ? data.addedAt : 0,
+          favorite: data.favorite === true,
         };
       });
       contacts.sort((a, b) => a.name.localeCompare(b.name, 'tr'));

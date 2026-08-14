@@ -6,6 +6,7 @@ import { getRoomId, markMessageDelivered, subscribeToLatestMessage } from '../se
 import { playNotificationSound } from '../services/soundService';
 import { isNotificationsEnabled } from '../services/notificationService';
 import { vibrateShort } from '../services/hapticsService';
+import { useTheme } from '../theme/ThemeContext';
 
 interface Props {
   myUid: string;
@@ -57,6 +58,7 @@ function randomFakeNotification(): string {
  */
 function NotificationCenter({ myUid, activeContactUid, onOpenRoom, children }: Props): React.JSX.Element {
   const insets = useSafeAreaInsets();
+  const { theme } = useTheme();
   const [toast, setToast] = useState<ToastState | null>(null);
 
   const activeContactUidRef = useRef(activeContactUid);
@@ -96,6 +98,11 @@ function NotificationCenter({ myUid, activeContactUid, onOpenRoom, children }: P
       clearTimeout(dismissTimerRef.current);
     }
     dismissTimerRef.current = setTimeout(() => {
+      // Auto-dismissed without ever being tapped open — must still clear the
+      // pending flag here, otherwise (since the activeContactUid effect is
+      // the only other place that clears it) every future notification would
+      // be silently suppressed for the rest of the session.
+      hasPendingToastRef.current = false;
       Animated.timing(translateY, {
         toValue: -120,
         duration: 220,
@@ -175,19 +182,22 @@ function NotificationCenter({ myUid, activeContactUid, onOpenRoom, children }: P
         <Animated.View
           pointerEvents="box-none"
           style={[styles.toastWrap, { top: insets.top + 10, transform: [{ translateY }] }]}>
-          <Pressable onPress={handlePress} style={styles.toastCard} accessibilityRole="button">
-            <View style={styles.toastBadge}>
+          <Pressable
+            onPress={handlePress}
+            style={[styles.toastCard, { backgroundColor: theme.surface, borderColor: theme.border }]}
+            accessibilityRole="button">
+            <View style={[styles.toastBadge, { backgroundColor: theme.identity + '2E' }]}>
               <Text style={styles.toastBadgeIcon}>🎮</Text>
             </View>
             <View style={styles.toastTextWrap}>
-              <Text style={styles.toastTitle} numberOfLines={1}>
+              <Text style={[styles.toastTitle, { color: theme.text }]} numberOfLines={1}>
                 Mini Oyunlar
               </Text>
-              <Text style={styles.toastSubtitle} numberOfLines={1}>
+              <Text style={[styles.toastSubtitle, { color: theme.textMuted }]} numberOfLines={1}>
                 {toast.body}
               </Text>
             </View>
-            <View style={styles.toastDot} />
+            <View style={[styles.toastDot, { backgroundColor: theme.success }]} />
           </Pressable>
         </Animated.View>
       )}
@@ -209,12 +219,10 @@ const styles = StyleSheet.create({
   toastCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#1C1F2A',
     borderRadius: 18,
     paddingVertical: 12,
     paddingHorizontal: 14,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.35,
@@ -224,7 +232,6 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 12,
-    backgroundColor: 'rgba(77,150,255,0.18)',
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 12,
@@ -236,12 +243,10 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   toastTitle: {
-    color: '#F5F5F7',
     fontSize: 14,
     fontWeight: '800',
   },
   toastSubtitle: {
-    color: 'rgba(245,245,247,0.6)',
     fontSize: 12,
     marginTop: 2,
   },
@@ -249,7 +254,6 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: '#6BCB77',
     marginLeft: 8,
   },
 });

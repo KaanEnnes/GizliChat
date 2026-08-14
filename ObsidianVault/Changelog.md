@@ -1,5 +1,184 @@
 # Değişiklik Günlüğü
 
+## 2026-08-14 — Arama/mesajlaşma sağlamlaştırma + tam görsel yeniden tasarım + ana sayfa/oyun/erişilebilirlik geçişi
+
+Tek oturumda birbirini izleyen üç ayrı istek üzerine yapıldı: (1) önce tüm proje "kritik/orta"
+seviye buglar için taranıp bulunanlar raporlandı, (2) kullanıcı onayıyla arama durum makinesi ve
+mesajlaşma katmanındaki bulgular düzeltildi, (3) ayrı bir istekle **merkezi bir tema/tasarım-tokeni
+sistemi** kurulup arama ekranları ve sohbet arayüzü yeniden tasarlandı, (4) son olarak ana sayfa
+(kişiler ekranı) bir gösterge paneline dönüştürüldü, oyun sunumu iyileştirildi ve genel bir
+erişilebilirlik/duyarlı-tasarım geçişi yapıldı. `tsc --noEmit`, `eslint src`, `jest` üçü de her
+aşamada temiz geçti; mevcut kimlik doğrulama/navigasyon/mesajlaşma/arama/oyun özelliklerinden
+hiçbiri kırılmadı.
+
+### 1) Arama durum senkronizasyonu + mesajlaşma sağlamlaştırma düzeltmeleri
+
+- **`src/screens/CallScreen.tsx`** — `RECONNECTING_FAILED` durumunda artık gerçekten `call.leave()`
+  çağrılıyor (öncesinde sadece yerel state temizleniyordu, bağlantı aslında geçiciyse Stream
+  tarafında çağrı canlı kalabiliyordu — kritik bug). `JOINED` olunca hem arayan hem aranan tarafında
+  kamera, çağrının gerçek türüne (`custom.isVideo`) göre açık/kapalı olarak **açıkça** ayarlanıyor —
+  **sesli aramada kamera artık hiçbir koşulda otomatik açılmıyor**, sadece görüntülü aramalarda ya da
+  kullanıcı görüşme sırasında elle açarsa.
+- **`src/services/callService.ts`** — çağrı id'sine artık `-voice`/`-video` soneki ekleniyor; başlık
+  çubuğundaki sesli/görüntülü arama butonlarına art arda hızlı dokununca aynı Stream çağrı nesnesinin
+  yarışa girmesi (kamera enable/disable çakışması) önlendi.
+- **`src/components/CallProvider.tsx`** — çağrı bitince sohbete düşülen "çağrı geçmişi" kaydı artık
+  `addDoc` yerine çağrı id'sinden türetilen sabit bir doküman id'siyle `setDoc(..., {merge:true})`
+  yazılıyor — hem arayan hem aranan taraf bağımsız olarak bu fonksiyonu çağırdığı için öncesinde
+  **her çağrı için sohbete iki kopya kayıt düşüyordu**, artık tek kayıt. Aranan taraf artık kamera
+  iznini sadece gerçekten görüntülü bir aramaysa istiyor (`custom.isVideo` kontrolü).
+- **`src/services/chatService.ts`** — `docToMessage`, Firestore'dan `{ serverTimestamps: 'estimate' }`
+  ile okuyor; öncesinde henüz sunucu onayı gelmemiş yeni gönderilen bir mesajın `createdAt`'i
+  `Date.now()`'a düşüyordu, bu da karşıdan aynı anda gelen bir mesajla sıralamanın görünür şekilde
+  karışmasına yol açabiliyordu.
+- **`src/screens/ChatRoomScreen.tsx`** — okundu-bilgisi (`markMessageRead`) artık aynı mesaj için
+  sunucu onayı gelene kadar tekrar tekrar yazılmıyor (`markedReadIdsRef` ile tekilleştirme). Gönderim
+  başarısız olursa taslak metin artık silinmiyor (kullanıcı yeniden yazmak yerine sadece tekrar
+  gönder'e basabiliyor) + eşzamanlı çift-gönderim koruması sıkılaştırıldı. Sesli/görüntülü arama
+  butonlarına çift dokunuşu engelleyen bir `callStarting` kilidi eklendi.
+- **`src/components/AudioMessagePlayer.tsx`** — sesli mesaj oynatıcısı (`react-native-nitro-sound`,
+  uygulama genelinde tek bir native singleton) artık gerçek bir duraklat/devam et akışına sahip
+  (öncesinde duraklatma sonrası devam, sıfırdan yeniden başlatıyordu); bir balon ekrandan kaybolup
+  unmount olduğunda artık **sadece kendi çaldırdığı ses gerçekten çalıyorsa** native oynatıcıyı
+  durduruyor — öncesinde, o an başka bir balonun sesi çalarken ekran dışına kayan **farklı** bir
+  balon unmount olunca o çalan sesi sessizce kesiyordu.
+- **`src/components/NotificationCenter.tsx`** — bir toast kendi zamanlayıcısıyla (kullanıcı hiç
+  dokunmadan) kaybolursa artık "beklemede" bayrağı da sıfırlanıyor; öncesinde bu durumda oturumun
+  geri kalanında **tüm** yeni mesaj bildirimleri sessizce bastırılıyordu.
+
+### 2) Merkezi tema sistemi + arama ekranları ve sohbet arayüzünün yeniden tasarımı
+
+- **`src/theme/ThemeContext.tsx`** — palet, verilen renk şemasına göre yeniden kuruldu: koyu tema
+  arkaplan `#0B132B` / yüzey `#1C2541` / CTA turuncu `#FF7A00` / birincil metin `#F8FAFC` / ikincil
+  metin `#94A3B8`; açık tema arkaplan `#F0F4F8` / yüzey `#FFFFFF` / CTA turuncu `#D95400` / birincil
+  metin `#0F172A` / ikincil metin `#475569`. Yeni semantik token'lar eklendi: `identity` (marka mavisi
+  — avatar/nokta/link gibi küçük vurgular, **CTA değil**), `accent`/`accentText` (turuncu, **sadece**
+  gönder/kabul-et/kaydet/ekle gibi birincil eylem butonları için — büyük alanlarda asla kullanılmıyor),
+  `bubbleMine`/`bubbleOther` (mesaj balonu renkleri, artık ikisi de mavi/nötr — eskisi gibi turuncu
+  değil), `waveformTrack`, `dangerSoft`/`warningSoft`. Mavi kimlik olarak baskın, turuncu sadece
+  vurgu — kullanıcı isteğinin birebir karşılığı.
+- **`src/screens/CallScreen.tsx`** — Stream SDK'nın varsayılan `RingingCallContent`'i tamamen
+  kaldırılıp WhatsApp benzeri, kendi tasarımımız bir akışla değiştirildi: büyük daire baş harf
+  avatarı (kişilerin fotoğrafı olmadığı için), giden aramada tek "Vazgeç" butonu, gelen aramada
+  yan yana kırmızı "Reddet" / turuncu "Kabul Et" büyük daire butonlar. Aktif sesli görüşme için
+  tamamen özel bir ekran (avatar + süre + sustur/kapat); aktif görüntülü görüşmede Stream'in video
+  render motorunu (`CallContent`) koruyup sadece alt kontrol çubuğunu (`VideoCallControls`: sustur,
+  kamera aç/kapa, kamerayı çevir, kapat) kendi tasarımımızla değiştirdik.
+- **`src/screens/ChatRoomScreen.tsx`**, **`src/components/MessageBubble.tsx`** — tüm sabit kodlanmış
+  renkler kaldırılıp merkezi tema token'larına taşındı. **Akıllı kaydırma** eklendi: kullanıcı zaten
+  listenin en altına yakınsa yeni mesajda otomatik aşağı kayıyor, değilse (eski mesajları okurken)
+  kaydırma pozisyonu korunuyor ve bunun yerine "Yeni mesajlar ↓" rozeti çıkıyor.
+- **`src/components/AudioMessagePlayer.tsx`, `PlaybackWaveform.tsx`, `RecordingWaveform.tsx`,
+  `NotificationCenter.tsx`, `SettingsModal.tsx`, `src/screens/ContactsScreen.tsx`,
+  `AccountScreen.tsx`** — sabit renkler yerine tema token'ları kullanacak şekilde güncellendi.
+  **Oyunların kendi renk paletlerine bilinçli olarak dokunulmadı** (2048 taş renkleri, yılan gövdesi
+  vb. işlevsel/anlamlı renkler, marka renklerine çevrilmesi kullanılabilirliği bozardı).
+
+### 3) Ana sayfa gösterge paneli + oyun sunumu + erişilebilirlik/duyarlı tasarım
+
+Bu uygulama bir **kılık değiştirme** (disguise) uygulaması — `GameHubScreen` herkesin gördüğü
+zararsız "mini oyunlar" ön kapısı, gerçek sohbet arayüzü (`ContactsScreen`) sadece gizli 10-dokunuş
+jestiyle açılıyor. Kullanıcıya bu ayrım açıkça soruldu ve **"gösterge paneli" özellikleri
+`ContactsScreen`'e eklendi, `GameHubScreen` kılığı bozulmadı** (kullanıcı onayı ile).
+
+- **`src/services/contactService.ts`** — kişilere `favorite: boolean` alanı ve
+  `setContactFavorite()` eklendi.
+- **`src/services/userService.ts`** — hafif bir "çevrimiçi" mekanizması: `updatePresenceHeartbeat()`
+  (`users/{uid}.lastActiveAt`'i periyodik günceller) ve `subscribeToPresence()`
+  (`ONLINE_THRESHOLD_MS` = 60 sn içinde son kalp atışı varsa çevrimiçi sayılır). `firestore.rules`'a
+  dokunulmadı — mevcut "sahibi kendi profilini güncelleyebilir / herkes okuyabilir" kuralı zaten
+  yeterli.
+- **`src/navigation/AppNavigator.tsx`** — hesap girişliyken 25 saniyede bir kalp atışı gönderiyor;
+  `ContactsScreen`'e oyun köşe taşına dönmek için `onOpenGames` prop'u eklendi (`HOME`'a döner).
+- **`src/screens/ContactsScreen.tsx`** — tamamen bir gösterge paneline dönüştürüldü: Oyunlar
+  kısayol kartı → Favoriler / Çevrimiçi / Son Aramalar yatay satırları (sadece dolu olanlar
+  gösteriliyor, hiçbiri kalabalık etmeyecek şekilde sınırlı) → geri kalanında sohbet listesi artık
+  en son etkinliğe göre sıralı, her satırda bir ★ favori aç/kapa butonu. "Son Aramalar" ekstra bir
+  sorgu gerektirmiyor, zaten çekilen "her kişinin son mesajı" verisinden türetiliyor.
+- **`src/components/LeaderboardModal.tsx`** (yeni) — `HomeScreen`'in kendi içine gömülü skor tablosu
+  modalı ayrı, paylaşılan bir bileşene çıkarıldı.
+- **`src/screens/GameHubScreen.tsx`** — "🏆 Skor Tablosu" butonu (paylaşılan/global tablo olduğu için
+  tek bir oyuna bağlı değil) + her oyun kartında `AsyncStorage`'dan okunan bir en-iyi-skor rozeti
+  eklendi (oyundan dönünce tazeleniyor).
+- **`src/screens/HomeScreen.tsx`** (Blok Çılgınlığı) — en yüksek skor artık gerçekten kalıcı
+  (`AsyncStorage`, diğer 4 oyunla aynı desen) — öncesinde sadece modül değişkeninde tutulduğu için
+  **uygulama tamamen kapanınca sıfırlanıyordu**, bu bir bug'dı, düzeltildi. Turuncu olmayan yeşil
+  "OYNA"/"TEKRAR OYNA" butonları artık paylaşılan `theme.accent`'e çevrildi (tutarlılık).
+- **`src/screens/SnakeGame.tsx`, `WhackAMoleGame.tsx`** — duraklat/devam et eklendi (bu ikisi gerçek
+  zamanlı olduğu için anlamlı; sıra tabanlı 2048/Renk Hafızası'na eklenmedi).
+- **`SnakeGame.tsx`, `Game2048.tsx`, `WhackAMoleGame.tsx`, `ColorMemoryGame.tsx`** — sabit piksel
+  tahta/ızgara boyutları (`useWindowDimensions()` ile) duyarlı hale getirildi — dar telefonlarda
+  taşma riski, geniş tablet ekranlarında gereksiz boşluk giderildi.
+- **Erişilebilirlik** — `CallScreen`'deki tüm daire butonlar artık en az 44×44 dokunma hedefi ve
+  `accessibilityLabel` taşıyor (özellikle ikon-only video kontrolleri); `ChatRoomScreen`'in mikrofon
+  butonu 40×40'tan 44×44'e büyütüldü; sohbet eki/gönder/mikrofon butonlarına ve emoji tepki
+  butonlarına erişilebilirlik etiketleri + daha büyük dokunma alanları eklendi. Durum hiçbir yerde
+  sadece renkle iletilmiyor (★/☆ şekli, ✓/✓✓/🕒 farklı ikonlar, "Cevapsız" metni).
+- **`__mocks__/@react-native-async-storage/async-storage.js`** — yeni `getMany` mock'u eklendi (en
+  iyi skor rozetleri için gerekti).
+
+**Bilinen, bilinçli olarak ertelenen kalanlar:** oyun ekranlarındaki "‹ Menü" geri linklerinin
+dokunma hedefi hâlâ tam 44px'in biraz altında; uygulamanın hiçbir ekranı yatay (landscape) moda
+özel bir düzene sahip değil (bu proje zaten telefon-dikey odaklı, bu geçişle değişmedi); ikinci bir
+gelen arama varken ilk arama aktifse sessizce yok sayılıyor (call-waiting yok) — bunlar ayrı bir
+istek olmadıkça bu oturumda ele alınmadı.
+
+**Etkilenen dosyalar:** yukarıda listelenenlerin tamamı + bu not. Kod tarafında geri alınan/kaldırılan
+hiçbir özellik yok, sadece düzeltme/yeniden tasarım/ek özellik.
+
+## 2026-08-14 — Yeni bir makinede sıfırdan ortam kurulumu + emülatör testi + bağımsız APK üretimi
+
+Kullanıcı isteği: "Bella yazılım" ve "gizli chat" (bu proje) repolarını GitHub'dan yeni bir Windows
+makinesine indirip GizliChat'i emülatörde çalıştırma, ardından son hâlinin bağımsız (Metro'suz)
+çalışabilen bir release APK'sını çıkarma.
+
+**Kod tarafında hiçbir değişiklik yapılmadı** — bu oturumda sadece bu makineye özel araç kurulumu,
+bir çalışma zamanı hatası düzeltmesi ve build çıktısı üretildi.
+
+**1) GitHub kurulumu.** Bu makinede `gh` CLI hiç kurulu değildi — winget ile kuruldu,
+`gh auth login --web` ile device-code akışıyla `KaanEnnes` hesabına giriş yapıldı. `GizliChat` ve
+`bella-yazilim` (ikisi de private) repoları `C:\Users\USER\Projects\` altına klonlandı.
+
+**2) Android geliştirme ortamı sıfırdan kuruldu (bu makineye özel, farklı bir bilgisayar).**
+Aşağıdaki [[05-Build-Deployment]]'taki önceki bölümde belgelenen `C:\Android\Sdk` / Eclipse Temurin
+kurulumu **başka bir makineye ait** — bu makinede yollar farklı. Detaylar [[05-Build-Deployment]]'a
+"Makine 2" başlığıyla eklendi: Microsoft OpenJDK 17, Android SDK sıfırdan (`cmdline-tools` indirilip
+`sdkmanager` ile platform-tools/platforms 34-35-36/build-tools/NDK `27.1.12297006`/CMake/emulator
+kuruldu), bir AVD oluşturuldu (Pixel 6, Android 14, x86_64, WHPX donanım hızlandırmalı).
+
+**3) Metro bundler çökmesi düzeltildi (proje geneline uygulanabilir bir not).** İlk çalıştırmada
+Metro, gradle'ın build sırasında oluşturup sonra sildiği bir CMake geçici klasörünü
+(`.../CMakeFiles/CMakeTmp/CMakeFiles`) dosya sistemi izleyicisiyle takip etmeye çalışırken `ENOENT`
+hatasıyla tamamen çöktü (Node süreci kapandı, `npx react-native start` sessizce ölmüş hâlde kaldı).
+**Çözüm:** `npx react-native start --reset-cache` ile Metro'yu yeniden başlatmak yeterli — geçici
+klasör build tamamlandığı için artık mevcut değildi, hata tekrarlamadı. **Genel kural:** eğer
+`gradlew` build'i çalışırken Metro'yu da açık tutuyorsan ve build bir CMake temp klasörünü silerse,
+Metro'nun dosya izleyicisi bazen bunu ENOENT ile çökme olarak yaşayabilir — Metro'yu sadece yeniden
+başlatmak (gerekirse `--reset-cache` ile) çözüyor, kod değişikliği gerekmiyor.
+
+**4) Debug build emülatörde çalıştırıldı ve doğrulandı.** `gradlew installDebug` + `adb shell am
+start -n com.mobile/.MainActivity` ile uygulama emülatörde başlatıldı, JS bundle Metro'dan
+yüklendi, `adb logcat`'te `ReactNativeJS` logları normal görüldü (çökme/`FATAL` yok).
+
+**5) Bağımsız release APK üretildi.** `gradlew assembleRelease` — mevcut proje ayarına göre
+(`android/app/build.gradle`) release de debug keystore ile imzalanıyor, ekstra keystore kurulumu
+gerekmedi. JS bundle APK içine gömüldü (`createBundleReleaseJsAndAssets`), yani bu APK artık Metro'ya
+veya USB bağlantısına ihtiyaç duymadan bağımsız çalışıyor. Çıktı aynı standart konumda:
+`android/app/build/outputs/apk/release/app-release.apk` (~130 MB, `versionCode 1`/`versionName
+"1.0"`, 4 mimari — arm64-v8a/armeabi-v7a/x86/x86_64 — dahil).
+
+**Performans notu:** Bu makinedeki ağ bağlantısı belirgin şekilde yavaştı (SDK/NDK indirmeleri
+zaman zaman ~50-100 KB/sn'ye düştü) — Android SDK+NDK kurulumu ~25 dk, debug build ~32 dk sürdü.
+Gradle daemon ve bağımlılık önbelleği sayesinde ardından gelen release build sadece ~13 dk sürdü
+(çoğu adım `UP-TO-DATE`).
+
+**Test edilmeyenler:** Uygulama emülatörde sadece süreç/log seviyesinde doğrulandı (çökme yok,
+JS başladı) — ekranlar tek tek gezilip görsel olarak kontrol edilmedi. Release APK gerçek bir
+cihaza kurulup denenmedi, sadece build'in başarılı olduğu ve APK'nın diskte oluştuğu doğrulandı.
+
+**Etkilenen dosyalar:** Yok (kod değişmedi). [[05-Build-Deployment]] bu makineye özel kurulum
+bilgisiyle güncellendi.
+
 ## 2026-08-12 — Oyun seçme menüsü + 3 yeni oyun, arama/ses düzeltmeleri, çağrı geçmişi, çevrimdışı uyarısı, uygulama-içi bildirim, ayarlar genişletmesi
 
 Kullanıcı isteği: (1) bir oyun seçme menüsü, 2048'e ses efekti/animasyon ekleyip "premium" hâle
