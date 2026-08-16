@@ -1,0 +1,13 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "highscores",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "game", "order": "ASCENDING" },
+        { "fieldPath": "score", "order": "DESCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

@@ -16,6 +16,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../theme/ThemeContext';
 import { playGameOverSound, playMergeSound, playTapSound, playWinSound } from '../services/soundService';
 import { vibrateMedium } from '../services/hapticsService';
+import { submitScore } from '../services/leaderboardService';
+import { getSavedPlayerName } from '../services/playerNameStorage';
 
 interface Props {
   onBack: () => void;
@@ -318,6 +320,8 @@ function Game2048({ onBack }: Props): React.JSX.Element {
 
   const tilesRef = useRef(tiles);
   tilesRef.current = tiles;
+  const scoreRef = useRef(score);
+  scoreRef.current = score;
   const nextIdRef = useRef(tiles.length);
   const animatingRef = useRef(false);
   const moveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -393,6 +397,11 @@ function Game2048({ onBack }: Props): React.JSX.Element {
           setGameOver(true);
           playGameOverSound();
           vibrateMedium();
+          if (scoreRef.current > 0) {
+            getSavedPlayerName()
+              .then(name => submitScore(name || 'Oyuncu', scoreRef.current, '2048'))
+              .catch(() => undefined);
+          }
         }
         animatingRef.current = false;
         moveTimerRef.current = null;

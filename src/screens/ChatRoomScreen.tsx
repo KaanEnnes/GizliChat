@@ -22,8 +22,10 @@ import RecordingWaveform from '../components/RecordingWaveform';
 import Avatar from '../components/Avatar';
 import StorageQuotaBanner from '../components/StorageQuotaBanner';
 import OnlineTicTacToeModal from '../components/OnlineTicTacToeModal';
+import ChessContactModal from '../components/ChessContactModal';
 import { BackChevronIcon, GameControllerIcon, ImageIcon, PhoneCallIcon, VideoCallIcon } from '../components/CallIcons';
 import { subscribeToGame, TicTacToeGame } from '../services/ticTacToeService';
+import { ChessGame, subscribeToContactChessGame } from '../services/chessService';
 import { Contact } from '../services/contactService';
 import {
   ChatMessage,
@@ -86,6 +88,8 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
   const [backgroundUri, setBackgroundUri] = useState<string | null>(null);
   const [ticTacToeGame, setTicTacToeGame] = useState<TicTacToeGame | null>(null);
   const [ticTacToeModalVisible, setTicTacToeModalVisible] = useState(false);
+  const [chessGame, setChessGame] = useState<ChessGame | null>(null);
+  const [chessModalVisible, setChessModalVisible] = useState(false);
   const listRef = useRef<FlatList<ChatMessage>>(null);
   const recordingStartedAtRef = useRef<number | null>(null);
   const lastMessageIdRef = useRef<string | null>(null);
@@ -143,6 +147,15 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
   useEffect(() => subscribeToUserProfile(contact.uid, profile => setContactPhotoUrl(profile.photoUrl)), [contact.uid]);
   useEffect(() => subscribeToUserProfile(myUid, profile => setMyVideoBytesUsed(profile.videoBytesUsed)), [myUid]);
   useEffect(() => subscribeToGame(roomId, setTicTacToeGame), [roomId]);
+  useEffect(() => subscribeToContactChessGame(roomId, setChessGame), [roomId]);
+
+  const handleOpenGameMenu = useCallback(() => {
+    Alert.alert('Oyun', `${contact.name} ile oyna`, [
+      { text: 'XOX', onPress: () => setTicTacToeModalVisible(true) },
+      { text: 'Satranç', onPress: () => setChessModalVisible(true) },
+      { text: 'Vazgeç', style: 'cancel' },
+    ]);
+  }, [contact.name]);
 
   useEffect(() => {
     let cancelled = false;
@@ -521,13 +534,13 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
           <ImageIcon color={theme.textMuted} />
         </Pressable>
         <Pressable
-          onPress={() => setTicTacToeModalVisible(true)}
+          onPress={handleOpenGameMenu}
           hitSlop={8}
           style={styles.headerIconButton}
           accessibilityRole="button"
-          accessibilityLabel={`${contact.name} ile XOX oyna`}>
+          accessibilityLabel={`${contact.name} ile oyun oyna`}>
           <GameControllerIcon color={theme.text} />
-          {ticTacToeGame?.status === 'active' && (
+          {(ticTacToeGame?.status === 'active' || chessGame?.status === 'active') && (
             <View style={[styles.headerIconBadge, { backgroundColor: theme.danger, borderColor: theme.surface }]} />
           )}
         </Pressable>
@@ -576,6 +589,15 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
         myUid={myUid}
         contact={contact}
         game={ticTacToeGame}
+      />
+
+      <ChessContactModal
+        visible={chessModalVisible}
+        onClose={() => setChessModalVisible(false)}
+        roomId={roomId}
+        myUid={myUid}
+        contact={contact}
+        game={chessGame}
       />
 
       {!isOnline && (

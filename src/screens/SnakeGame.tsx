@@ -16,6 +16,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../theme/ThemeContext';
 import { playEatSound, playGameOverSound, playTapSound } from '../services/soundService';
 import { vibrateMedium } from '../services/hapticsService';
+import { submitScore } from '../services/leaderboardService';
+import { getSavedPlayerName } from '../services/playerNameStorage';
 
 interface Props {
   onBack: () => void;
@@ -169,6 +171,10 @@ function SnakeGame({ onBack }: Props): React.JSX.Element {
       setGameOver(true);
       playGameOverSound();
       vibrateMedium();
+      const finalScore = prevSnake.length - 3;
+      if (finalScore > 0) {
+        getSavedPlayerName().then(name => submitScore(name || 'Oyuncu', finalScore, 'snake')).catch(() => undefined);
+      }
       return;
     }
 

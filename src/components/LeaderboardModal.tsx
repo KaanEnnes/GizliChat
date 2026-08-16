@@ -6,16 +6,18 @@ import { useTheme } from '../theme/ThemeContext';
 interface Props {
   visible: boolean;
   onClose: () => void;
+  /** Which game's ranking to show — see leaderboardService.ts, entries are tagged per game. */
+  gameKey: string;
+  gameLabel: string;
 }
 
 /**
- * Shared global-highscore table, reused by every game's game-over screen and
- * by GameHubScreen's own quick-access entry — the leaderboard collection
- * itself isn't per-game (see leaderboardService.ts), so a single shared
- * modal keeps the presentation consistent instead of each game rolling its
- * own copy.
+ * Shared highscore table component, reused by every game's game-over screen
+ * and by GameHubScreen's own quick-access entry — one component, but each
+ * instance is scoped to a single game's `gameKey` (see leaderboardService.ts)
+ * so a Snake score and a 2048 score are never compared in the same ranking.
  */
-function LeaderboardModal({ visible, onClose }: Props): React.JSX.Element {
+function LeaderboardModal({ visible, onClose, gameKey, gameLabel }: Props): React.JSX.Element {
   const { theme } = useTheme();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -27,17 +29,17 @@ function LeaderboardModal({ visible, onClose }: Props): React.JSX.Element {
     }
     setLoading(true);
     setError(null);
-    fetchTopScores()
+    fetchTopScores(gameKey)
       .then(setScores)
       .catch(fetchError => setError(`Skor tablosu yüklenemedi: ${fetchError.message}`))
       .finally(() => setLoading(false));
-  }, [visible]);
+  }, [visible, gameKey]);
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <View style={[styles.overlay, { backgroundColor: theme.overlay }]}>
         <View style={[styles.card, { backgroundColor: theme.surface, borderColor: theme.border }]}>
-          <Text style={[styles.title, { color: theme.text }]}>🏆 Skor Tablosu</Text>
+          <Text style={[styles.title, { color: theme.text }]}>🏆 {gameLabel}</Text>
           {loading && <ActivityIndicator color={theme.accent} style={styles.loader} />}
           {error && <Text style={[styles.errorText, { color: theme.danger }]}>{error}</Text>}
           {!loading && !error && (

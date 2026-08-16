@@ -5,6 +5,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../theme/ThemeContext';
 import { playGameOverSound, playHitSound, playMissSound, playTapSound } from '../services/soundService';
 import { vibrateMedium } from '../services/hapticsService';
+import { submitScore } from '../services/leaderboardService';
+import { getSavedPlayerName } from '../services/playerNameStorage';
 
 interface Props {
   onBack: () => void;
@@ -31,6 +33,8 @@ function WhackAMoleGame({ onBack }: Props): React.JSX.Element {
 
   const phaseRef = useRef<Phase>('idle');
   phaseRef.current = phase;
+  const scoreRef = useRef(score);
+  scoreRef.current = score;
   const activeHoleRef = useRef<number | null>(null);
   const startTimeRef = useRef(Date.now());
   const timersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
@@ -110,6 +114,11 @@ function WhackAMoleGame({ onBack }: Props): React.JSX.Element {
     setPhase('gameover');
     playGameOverSound();
     vibrateMedium();
+    if (scoreRef.current > 0) {
+      getSavedPlayerName()
+        .then(name => submitScore(name || 'Oyuncu', scoreRef.current, 'whackAMole'))
+        .catch(() => undefined);
+    }
     timersRef.current.forEach(clearTimeout);
     timersRef.current = [];
     if (activeHoleRef.current !== null) {

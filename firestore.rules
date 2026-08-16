@@ -63,6 +63,29 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    match /chessRooms/{code} {
+      // A room-code chess game anyone with the app can join, not tied to the
+      // contacts system — deliberately reachable by anonymous auth (see
+      // ensureAnonymousAuth in src/services/firebase.ts, same mechanism the
+      // public leaderboard already uses) so it works before the hidden-chat
+      // login too. Create: you may only create a room naming yourself as the
+      // sole (white) player. Update: either the creator, or a second player
+      // filling the still-empty playerBlack slot (a client-side transaction
+      // in chessService.ts prevents two people winning that race at once —
+      // this rule alone can't since Firestore rules can't observe "the other
+      // request currently in flight").
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() &&
+        request.resource.data.playerWhite == request.auth.uid &&
+        request.resource.data.playerBlack == '';
+      allow update: if isSignedIn() && (
+        request.auth.uid == resource.data.playerWhite ||
+        request.auth.uid == resource.data.playerBlack ||
+        (resource.data.playerBlack == '' && request.resource.data.playerBlack == request.auth.uid)
+      );
+      allow delete: if false;
+    }
+
     match /highscores/{scoreId} {
       // Leaderboard is intentionally public read; anyone signed in can add
       // one entry, but never edit/delete existing ones (including their
@@ -72,12 +95,13 @@ service cloud.firestore {
       // not something these rules can close.
       allow read: if true;
       allow create: if isSignedIn() &&
-        request.resource.data.keys().hasAll(['name', 'score', 'createdAt']) &&
+        request.resource.data.keys().hasAll(['name', 'score', 'game', 'createdAt']) &&
         request.resource.data.name is string &&
         request.resource.data.name.size() > 0 &&
         request.resource.data.name.size() <= 24 &&
         request.resource.data.score is number &&
-        request.resource.data.score >= 0;
+        request.resource.data.score >= 0 &&
+        request.resource.data.game is string;
       allow update, delete: if false;
     }
   }

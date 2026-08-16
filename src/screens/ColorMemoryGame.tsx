@@ -5,6 +5,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../theme/ThemeContext';
 import { playGameOverSound, playNoteSound, playTapSound, playWrongSound } from '../services/soundService';
 import { vibrateMedium } from '../services/hapticsService';
+import { submitScore } from '../services/leaderboardService';
+import { getSavedPlayerName } from '../services/playerNameStorage';
 
 interface Props {
   onBack: () => void;
@@ -121,6 +123,12 @@ function ColorMemoryGame({ onBack }: Props): React.JSX.Element {
         setPhase('gameover');
         playGameOverSound();
         vibrateMedium();
+        const finalScore = seq.length - 1;
+        if (finalScore > 0) {
+          getSavedPlayerName()
+            .then(name => submitScore(name || 'Oyuncu', finalScore, 'colorMemory'))
+            .catch(() => undefined);
+        }
         return;
       }
 

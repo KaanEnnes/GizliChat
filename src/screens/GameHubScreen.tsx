@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Animated, Pressable, StatusBar, StyleSheet, Text, View } from 'react-native';
+import { Alert, Animated, Pressable, ScrollView, StatusBar, StyleSheet, Text, View } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../theme/ThemeContext';
@@ -12,12 +12,13 @@ import SnakeGame from './SnakeGame';
 import ColorMemoryGame from './ColorMemoryGame';
 import WhackAMoleGame from './WhackAMoleGame';
 import TicTacToeGame from './TicTacToeGame';
+import ChessRoomScreen from './ChessRoomScreen';
 
 interface Props {
   onAdminTriggerReached: () => void;
 }
 
-type GameKey = 'blockBlast' | '2048' | 'snake' | 'colorMemory' | 'whackAMole' | 'ticTacToe';
+type GameKey = 'blockBlast' | '2048' | 'snake' | 'colorMemory' | 'whackAMole' | 'ticTacToe' | 'chess';
 
 interface GameCardMeta {
   key: GameKey;
@@ -78,7 +79,20 @@ const GAMES: GameCardMeta[] = [
     color: '#2E8B8B',
     bestScoreKey: 'gizlichat_tictactoe_best',
   },
+  {
+    key: 'chess',
+    title: 'Satranç',
+    subtitle: 'Oda kur veya kodla katıl, arkadaşınla online oyna',
+    icon: '♟️',
+    color: '#6B4F3A',
+    bestScoreKey: 'gizlichat_chess_unused',
+  },
 ];
+
+// XOX and Satranç aren't part of the shared online leaderboard — XOX tracks
+// a local win streak and Satranç has no single-player numeric score at all,
+// neither fits the same "highest number wins" ranking as the arcade games.
+const SCORE_LEADERBOARD_GAMES = GAMES.filter(game => game.key !== 'ticTacToe' && game.key !== 'chess');
 
 const REQUIRED_TAPS = 10;
 const TAP_RESET_MS = 3500;
@@ -102,6 +116,7 @@ function GameHubScreen({ onAdminTriggerReached }: Props): React.JSX.Element {
   const [activeGame, setActiveGame] = useState<GameKey | null>(null);
   const [settingsVisible, setSettingsVisible] = useState(false);
   const [leaderboardVisible, setLeaderboardVisible] = useState(false);
+  const [leaderboardGame, setLeaderboardGame] = useState<GameCardMeta>(GAMES[0]);
   const [bestScores, setBestScores] = useState<Partial<Record<GameKey, number>>>({});
 
   const loadBestScores = useCallback(() => {
@@ -219,8 +234,10 @@ function GameHubScreen({ onAdminTriggerReached }: Props): React.JSX.Element {
       gameElement = <ColorMemoryGame onBack={closeGame} />;
     } else if (activeGame === 'whackAMole') {
       gameElement = <WhackAMoleGame onBack={closeGame} />;
-    } else {
+    } else if (activeGame === 'ticTacToe') {
       gameElement = <TicTacToeGame onBack={closeGame} />;
+    } else {
+      gameElement = <ChessRoomScreen onBack={closeGame} />;
     }
     return (
       <>
@@ -232,12 +249,32 @@ function GameHubScreen({ onAdminTriggerReached }: Props): React.JSX.Element {
 
   return (
     <View style={[styles.container, { backgroundColor: theme.background }]}>
-      <View style={[styles.content, { paddingTop: insets.top + 24, paddingBottom: insets.bottom + 16 }]}>
+      <ScrollView
+        style={styles.container}
+        contentContainerStyle={[
+          styles.content,
+          // Extra bottom padding clears the absolutely-positioned settings
+          // gear (bottom-right) so the last game card never sits behind it.
+          { paddingTop: insets.top + 24, paddingBottom: insets.bottom + 84 },
+        ]}
+        showsVerticalScrollIndicator={false}>
         <Text style={[styles.title, { color: theme.text }]}>🎮 Mini Oyunlar</Text>
         <Text style={[styles.subtitle, { color: theme.textMuted }]}>Bir oyun seç ve başla!</Text>
 
         <Pressable
-          onPress={() => setLeaderboardVisible(true)}
+          onPress={() => {
+            const gameButtons = SCORE_LEADERBOARD_GAMES.map(game => ({
+              text: game.title,
+              onPress: () => {
+                setLeaderboardGame(game);
+                setLeaderboardVisible(true);
+              },
+            }));
+            Alert.alert('Skor Tablosu', 'Hangi oyunun tablosunu görmek istersin?', [
+              ...gameButtons,
+              { text: 'Vazgeç', style: 'cancel' },
+            ]);
+          }}
           style={({ pressed }) => [
             styles.leaderboardButton,
             { backgroundColor: theme.surface, borderColor: theme.border },
@@ -294,7 +331,7 @@ function GameHubScreen({ onAdminTriggerReached }: Props): React.JSX.Element {
             );
           })}
         </View>
-      </View>
+      </ScrollView>
 
       <Pressable
         onPress={handleIconPress}
@@ -310,7 +347,12 @@ function GameHubScreen({ onAdminTriggerReached }: Props): React.JSX.Element {
       </Pressable>
 
       <SettingsModal visible={settingsVisible} onClose={() => setSettingsVisible(false)} />
-      <LeaderboardModal visible={leaderboardVisible} onClose={() => setLeaderboardVisible(false)} />
+      <LeaderboardModal
+        visible={leaderboardVisible}
+        onClose={() => setLeaderboardVisible(false)}
+        gameKey={leaderboardGame.key}
+        gameLabel={leaderboardGame.title}
+      />
     </View>
   );
 }
@@ -320,7 +362,6 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   content: {
-    flex: 1,
     paddingHorizontal: 20,
     alignItems: 'center',
   },

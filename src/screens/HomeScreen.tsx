@@ -416,7 +416,7 @@ function HomeScreen({ onBack }: Props): React.JSX.Element {
   }, []);
 
   const submitFinalScore = useCallback((name: string, finalScore: number) => {
-    submitScore(name, finalScore).catch(() => {
+    submitScore(name, finalScore, 'blockBlast').catch(() => {
       // Non-critical: leaderboard submission failing shouldn't block play.
     });
   }, []);
@@ -1065,7 +1065,12 @@ function HomeScreen({ onBack }: Props): React.JSX.Element {
         </View>
       </Modal>
 
-      <LeaderboardModal visible={leaderboardVisible} onClose={() => setLeaderboardVisible(false)} />
+      <LeaderboardModal
+        visible={leaderboardVisible}
+        onClose={() => setLeaderboardVisible(false)}
+        gameKey="blockBlast"
+        gameLabel="Blok Çılgınlığı"
+      />
     </View>
   );
 }
