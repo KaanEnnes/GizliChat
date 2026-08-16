@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Animated, Easing, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../theme/ThemeContext';
 import { playGameOverSound, playNoteSound, playTapSound, playWrongSound } from '../services/soundService';
 import { vibrateMedium } from '../services/hapticsService';
@@ -21,6 +22,7 @@ const MAX_PAD_GRID_SIZE = 300;
 
 function ColorMemoryGame({ onBack }: Props): React.JSX.Element {
   const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
   const padGridSize = Math.min(width - 60, MAX_PAD_GRID_SIZE);
   const [phase, setPhase] = useState<Phase>('idle');
@@ -143,7 +145,7 @@ function ColorMemoryGame({ onBack }: Props): React.JSX.Element {
       : 'Oyun bitti';
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { paddingTop: insets.top + 16, paddingBottom: insets.bottom + 16 }]}>
       <View style={styles.header}>
         <Pressable onPress={onBack} hitSlop={8} accessibilityRole="button" accessibilityLabel="Oyunlara dön">
           <Text style={[styles.menuLink, { color: theme.textMuted }]}>‹ Menü</Text>
@@ -216,8 +218,8 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     alignItems: 'center',
+    justifyContent: 'center',
     paddingHorizontal: 20,
-    paddingTop: 16,
   },
   header: {
     width: '100%',

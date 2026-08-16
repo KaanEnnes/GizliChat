@@ -12,6 +12,7 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../theme/ThemeContext';
 import { playGameOverSound, playMergeSound, playTapSound, playWinSound } from '../services/soundService';
 import { vibrateMedium } from '../services/hapticsService';
@@ -21,7 +22,7 @@ interface Props {
 }
 
 const GRID_SIZE = 4;
-const MAX_BOARD_SIZE = 360;
+const MAX_BOARD_SIZE = 440;
 const BOARD_PADDING = 10;
 const CELL_GAP = 8;
 const SWIPE_THRESHOLD = 24;
@@ -305,8 +306,9 @@ function GhostTileView({ ghost, cellSize }: { ghost: GhostTileData; cellSize: nu
 
 function Game2048({ onBack }: Props): React.JSX.Element {
   const { theme } = useTheme();
-  const { width } = useWindowDimensions();
-  const boardSize = Math.min(width - 40, MAX_BOARD_SIZE);
+  const insets = useSafeAreaInsets();
+  const { width, height } = useWindowDimensions();
+  const boardSize = Math.min(width - 40, height - insets.top - insets.bottom - 260, MAX_BOARD_SIZE);
   const [tiles, setTiles] = useState<TileData[]>(startingTiles);
   const [ghosts, setGhosts] = useState<GhostTileData[]>([]);
   const [score, setScore] = useState(0);
@@ -441,7 +443,7 @@ function Game2048({ onBack }: Props): React.JSX.Element {
   const cellSize = (innerSize - CELL_GAP * (GRID_SIZE - 1)) / GRID_SIZE;
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { paddingTop: insets.top + 16, paddingBottom: insets.bottom + 16 }]}>
       <View style={styles.header}>
         <Pressable onPress={onBack} hitSlop={8} accessibilityRole="button" accessibilityLabel="Oyunlara dön">
           <Text style={[styles.menuLink, { color: theme.textMuted }]}>‹ Menü</Text>
@@ -538,8 +540,8 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     alignItems: 'center',
+    justifyContent: 'center',
     paddingHorizontal: 20,
-    paddingTop: 16,
   },
   header: {
     width: '100%',

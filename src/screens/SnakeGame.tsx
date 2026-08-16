@@ -12,6 +12,7 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../theme/ThemeContext';
 import { playEatSound, playGameOverSound, playTapSound } from '../services/soundService';
 import { vibrateMedium } from '../services/hapticsService';
@@ -25,13 +26,8 @@ interface Position {
   c: number;
 }
 
-interface SegmentAnim {
-  from: Position;
-  to: Position;
-}
-
 const GRID = 14;
-const MAX_BOARD_SIZE = 360;
+const MAX_BOARD_SIZE = 440;
 const BOARD_PADDING = 6;
 const SWIPE_THRESHOLD = 18;
 const INITIAL_TICK_MS = 220;
@@ -77,13 +73,22 @@ function angleForDir(dir: { dr: number; dc: number }): number {
 
 function SnakeGame({ onBack }: Props): React.JSX.Element {
   const { theme } = useTheme();
-  // Scales down on narrow phones (avoids clipping/overflow) and caps out on
-  // tablets/large screens (avoids an absurdly oversized, mostly-empty board).
-  const { width } = useWindowDimensions();
-  const boardSize = Math.min(width - 40, MAX_BOARD_SIZE);
+  const insets = useSafeAreaInsets();
+  // Scales down on narrow phones (avoids clipping/overflow) and grows with
+  // the available height on taller screens instead of sitting at a fixed
+  // cap regardless of device size.
+  const { width, height } = useWindowDimensions();
+  const boardSize = Math.min(width - 40, height - insets.top - insets.bottom - 260, MAX_BOARD_SIZE);
+  const innerSize = boardSize - BOARD_PADDING * 2;
+  const cellSize = innerSize / GRID;
+  const pixelPos = useCallback((pos: Position) => ({ x: pos.c * cellSize, y: pos.r * cellSize }), [cellSize]);
+
   const [snake, setSnake] = useState<Position[]>(startingSnake);
-  const [segmentsAnim, setSegmentsAnim] = useState<SegmentAnim[]>(() =>
-    startingSnake().map(pos => ({ from: pos, to: pos })),
+  // One Animated.ValueXY per snake segment, holding its actual on-screen
+  // pixel position — see the tick() comment below for why this replaced a
+  // single shared 0→1 progress value.
+  const segmentValuesRef = useRef<Animated.ValueXY[]>(
+    startingSnake().map(pos => new Animated.ValueXY(pixelPos(pos))),
   );
   const [food, setFood] = useState<Position>(() => pickFoodCell(startingSnake()));
   const [score, setScore] = useState(0);
@@ -109,7 +114,6 @@ function SnakeGame({ onBack }: Props): React.JSX.Element {
     pausedRef.current = paused;
   }, [paused]);
 
-  const progress = useRef(new Animated.Value(0)).current;
   const foodPulse = useRef(new Animated.Value(1)).current;
   const headAngle = useRef(new Animated.Value(0)).current;
   const headAngleValueRef = useRef(0);
@@ -169,10 +173,6 @@ function SnakeGame({ onBack }: Props): React.JSX.Element {
     }
 
     const newSnake = ateFood ? [newHead, ...prevSnake] : [newHead, ...prevSnake.slice(0, -1)];
-    const anim: SegmentAnim[] = newSnake.map((pos, i) => ({
-      from: i < prevSnake.length ? prevSnake[i] : pos,
-      to: pos,
-    }));
 
     const nextTickMs = Math.max(MIN_TICK_MS, INITIAL_TICK_MS - newSnake.length * 4);
     lastTickMsRef.current = nextTickMs;
@@ -183,15 +183,35 @@ function SnakeGame({ onBack }: Props): React.JSX.Element {
     const nextAbsoluteAngle = headAngleValueRef.current + angleDiff;
     headAngleValueRef.current = nextAbsoluteAngle;
 
-    setSegmentsAnim(anim);
+    // Each segment gets its own persistent Animated.ValueXY, retargeted (not
+    // reset) every tick — Animated.timing always animates from whatever the
+    // value currently holds, so there's no snap-back to re-derive here. A
+    // single shared 0→1 "progress" value used to drive every segment's
+    // interpolated from/to via React state (`segmentsAnim`); resetting that
+    // shared value to 0 happened one JS tick *before* React actually
+    // committed the new from/to range, so the already-native-driven view
+    // would briefly snap back to the previous tick's start cell before
+    // jumping forward again once the re-render landed — the visible
+    // "titreme" (jitter). Reusing the same instances per index sidesteps the
+    // whole race: growth appends one freshly-created value (no old segment
+    // to reuse for the new tail cell), everything else just retargets.
+    const prevValues = segmentValuesRef.current;
+    const nextValues: Animated.ValueXY[] = newSnake.map((pos, i) =>
+      i < prevValues.length ? prevValues[i] : new Animated.ValueXY(pixelPos(pos)),
+    );
+    segmentValuesRef.current = nextValues;
+    newSnake.forEach((pos, i) => {
+      if (i < prevValues.length) {
+        Animated.timing(nextValues[i], {
+          toValue: pixelPos(pos),
+          duration: nextTickMs,
+          easing: Easing.linear,
+          useNativeDriver: true,
+        }).start();
+      }
+    });
+
     setSnake(newSnake);
-    progress.setValue(0);
-    Animated.timing(progress, {
-      toValue: 1,
-      duration: nextTickMs,
-      easing: Easing.linear,
-      useNativeDriver: true,
-    }).start();
     Animated.timing(headAngle, {
       toValue: nextAbsoluteAngle,
       duration: nextTickMs,
@@ -206,10 +226,10 @@ function SnakeGame({ onBack }: Props): React.JSX.Element {
       foodRef.current = nextFood;
       setFood(nextFood);
     }
-    // headAngle is a stable useRef(...).current Animated.Value, never a new
-    // reference across renders — including it wouldn't change when this
-    // callback is recreated, but silences the (otherwise valid-looking) rule.
-  }, [progress, headAngle]);
+    // headAngle/pixelPos are stable across renders (useRef / cellSize-scoped
+    // useCallback) — included for lint completeness, not because they
+    // meaningfully change how often this callback is recreated.
+  }, [headAngle, pixelPos]);
 
   // Was a `setTimeout(tick, lastTickMsRef.current)` re-armed inside a
   // useEffect keyed on `snake` (so on every single tick). setTimeout's firing
@@ -259,15 +279,15 @@ function SnakeGame({ onBack }: Props): React.JSX.Element {
     lastTickMsRef.current = INITIAL_TICK_MS;
     headAngleValueRef.current = 0;
     headAngle.setValue(0);
+    segmentValuesRef.current = fresh.map(pos => new Animated.ValueXY(pixelPos(pos)));
     setSnake(fresh);
-    setSegmentsAnim(fresh.map(pos => ({ from: pos, to: pos })));
     const nextFood = pickFoodCell(fresh);
     foodRef.current = nextFood;
     setFood(nextFood);
     setScore(0);
     setGameOver(false);
     setPaused(false);
-  }, [headAngle]);
+  }, [headAngle, pixelPos]);
 
   const panResponder = useMemo(
     () =>
@@ -298,8 +318,6 @@ function SnakeGame({ onBack }: Props): React.JSX.Element {
     [],
   );
 
-  const innerSize = boardSize - BOARD_PADDING * 2;
-  const cellSize = innerSize / GRID;
   const cellInset = cellSize * 0.09;
 
   const checkerCells = useMemo(() => {
@@ -330,7 +348,7 @@ function SnakeGame({ onBack }: Props): React.JSX.Element {
   const headRotate = headAngle.interpolate({ inputRange: [0, 360], outputRange: ['0deg', '360deg'] });
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { paddingTop: insets.top + 16, paddingBottom: insets.bottom + 16 }]}>
       <View style={styles.header}>
         <Pressable onPress={onBack} hitSlop={8} accessibilityRole="button" accessibilityLabel="Oyunlara dön">
           <Text style={[styles.menuLink, { color: theme.textMuted }]}>‹ Menü</Text>
@@ -386,15 +404,8 @@ function SnakeGame({ onBack }: Props): React.JSX.Element {
           <View style={styles.foodShine} />
         </Animated.View>
 
-        {segmentsAnim.map((seg, i) => {
-          const tx = progress.interpolate({
-            inputRange: [0, 1],
-            outputRange: [seg.from.c * cellSize, seg.to.c * cellSize],
-          });
-          const ty = progress.interpolate({
-            inputRange: [0, 1],
-            outputRange: [seg.from.r * cellSize, seg.to.r * cellSize],
-          });
+        {snake.map((_pos, i) => {
+          const segValue = segmentValuesRef.current[i];
           const isHead = i === 0;
           const taper = Math.max(0.6, 1 - i * 0.025);
           return (
@@ -409,8 +420,8 @@ function SnakeGame({ onBack }: Props): React.JSX.Element {
                   backgroundColor: isHead ? theme.accent : theme.success,
                   opacity: isHead ? 1 : Math.max(0.55, 1 - i * 0.015),
                   transform: isHead
-                    ? [{ translateX: tx }, { translateY: ty }, { rotate: headRotate }]
-                    : [{ translateX: tx }, { translateY: ty }, { scale: taper }],
+                    ? [{ translateX: segValue.x }, { translateY: segValue.y }, { rotate: headRotate }]
+                    : [{ translateX: segValue.x }, { translateY: segValue.y }, { scale: taper }],
                 },
               ]}>
               {isHead && (
@@ -472,8 +483,8 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     alignItems: 'center',
+    justifyContent: 'center',
     paddingHorizontal: 20,
-    paddingTop: 16,
   },
   header: {
     width: '100%',

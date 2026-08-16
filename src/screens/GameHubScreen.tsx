@@ -11,12 +11,13 @@ import Game2048 from './Game2048';
 import SnakeGame from './SnakeGame';
 import ColorMemoryGame from './ColorMemoryGame';
 import WhackAMoleGame from './WhackAMoleGame';
+import TicTacToeGame from './TicTacToeGame';
 
 interface Props {
   onAdminTriggerReached: () => void;
 }
 
-type GameKey = 'blockBlast' | '2048' | 'snake' | 'colorMemory' | 'whackAMole';
+type GameKey = 'blockBlast' | '2048' | 'snake' | 'colorMemory' | 'whackAMole' | 'ticTacToe';
 
 interface GameCardMeta {
   key: GameKey;
@@ -68,6 +69,14 @@ const GAMES: GameCardMeta[] = [
     icon: '🔨',
     color: '#FF6B6B',
     bestScoreKey: 'gizlichat_whackamole_best',
+  },
+  {
+    key: 'ticTacToe',
+    title: 'XOX',
+    subtitle: 'Bilgisayara karşı 3\'ü yan yana getir',
+    icon: '❌',
+    color: '#2E8B8B',
+    bestScoreKey: 'gizlichat_tictactoe_best',
   },
 ];
 
@@ -208,8 +217,10 @@ function GameHubScreen({ onAdminTriggerReached }: Props): React.JSX.Element {
       gameElement = <SnakeGame onBack={closeGame} />;
     } else if (activeGame === 'colorMemory') {
       gameElement = <ColorMemoryGame onBack={closeGame} />;
-    } else {
+    } else if (activeGame === 'whackAMole') {
       gameElement = <WhackAMoleGame onBack={closeGame} />;
+    } else {
+      gameElement = <TicTacToeGame onBack={closeGame} />;
     }
     return (
       <>

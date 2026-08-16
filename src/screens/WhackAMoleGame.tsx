@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Animated, Easing, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../theme/ThemeContext';
 import { playGameOverSound, playHitSound, playMissSound, playTapSound } from '../services/soundService';
 import { vibrateMedium } from '../services/hapticsService';
@@ -16,12 +17,13 @@ const GAME_DURATION_MS = 30_000;
 const BEST_STORAGE_KEY = 'gizlichat_whackamole_best';
 const MAX_VISIBLE_MS = 950;
 const MIN_VISIBLE_MS = 450;
-const MAX_GRID_SIZE = 320;
+const MAX_GRID_SIZE = 380;
 
 function WhackAMoleGame({ onBack }: Props): React.JSX.Element {
   const { theme } = useTheme();
-  const { width } = useWindowDimensions();
-  const gridSize = Math.min(width - 40, MAX_GRID_SIZE);
+  const insets = useSafeAreaInsets();
+  const { width, height } = useWindowDimensions();
+  const gridSize = Math.min(width - 40, height - insets.top - insets.bottom - 280, MAX_GRID_SIZE);
   const [phase, setPhase] = useState<Phase>('idle');
   const [score, setScore] = useState(0);
   const [bestScore, setBestScore] = useState(0);
@@ -183,7 +185,7 @@ function WhackAMoleGame({ onBack }: Props): React.JSX.Element {
   const secondsLeft = Math.ceil(timeLeftMs / 1000);
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { paddingTop: insets.top + 16, paddingBottom: insets.bottom + 16 }]}>
       <View style={styles.header}>
         <Pressable onPress={onBack} hitSlop={8} accessibilityRole="button" accessibilityLabel="Oyunlara dön">
           <Text style={[styles.menuLink, { color: theme.textMuted }]}>‹ Menü</Text>
@@ -287,8 +289,8 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     alignItems: 'center',
+    justifyContent: 'center',
     paddingHorizontal: 20,
-    paddingTop: 16,
   },
   header: {
     width: '100%',
