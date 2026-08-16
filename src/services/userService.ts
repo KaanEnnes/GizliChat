@@ -8,6 +8,7 @@ import {
   doc,
   getDoc,
   getDocs,
+  increment,
   limit,
   onSnapshot,
   query,
@@ -21,6 +22,14 @@ import { auth, db } from './firebase';
 
 /** A contact is shown as "online" if their last heartbeat was within this window. */
 export const ONLINE_THRESHOLD_MS = 60_000;
+
+/** Soft, self-imposed cap on total video bytes a single account may upload — keeps Storage usage (and Blaze cost) predictable, not a hard Firebase limit. */
+export const VIDEO_STORAGE_QUOTA_BYTES = 5120 * 1024 * 1024;
+
+export interface UserProfile {
+  photoUrl?: string;
+  videoBytesUsed: number;
+}
 
 export interface Account {
   uid: string;
@@ -151,6 +160,31 @@ export function subscribeToPresence(
     },
     () => onLastActiveAt(null),
   );
+}
+
+/** Watches a user's profile photo and video-storage usage — used for the other person's avatar in Contacts/ChatRoom and for the storage quota banner. */
+export function subscribeToUserProfile(uid: string, onProfile: (profile: UserProfile) => void): Unsubscribe {
+  return onSnapshot(
+    doc(db, 'users', uid),
+    snap => {
+      const data = snap.data();
+      onProfile({
+        photoUrl: typeof data?.photoUrl === 'string' ? data.photoUrl : undefined,
+        videoBytesUsed: typeof data?.videoBytesUsed === 'number' ? data.videoBytesUsed : 0,
+      });
+    },
+    () => onProfile({ videoBytesUsed: 0 }),
+  );
+}
+
+/** Sets (or clears, with `null`) this account's profile picture — stored inline as a compressed base64 data URI, same approach as image messages, no Storage involved. */
+export async function updateProfilePhoto(uid: string, dataUri: string | null): Promise<void> {
+  await setDoc(doc(db, 'users', uid), { photoUrl: dataUri }, { merge: true });
+}
+
+/** Adds `bytes` to this account's running video-upload total (see VIDEO_STORAGE_QUOTA_BYTES) — called once per successful video upload. */
+export async function addVideoBytesUsed(uid: string, bytes: number): Promise<void> {
+  await setDoc(doc(db, 'users', uid), { videoBytesUsed: increment(bytes) }, { merge: true });
 }
 
 export async function findUserByUsername(username: string): Promise<Account | null> {

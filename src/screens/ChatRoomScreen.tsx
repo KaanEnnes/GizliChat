@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
+  ImageBackground,
   KeyboardAvoidingView,
   NativeScrollEvent,
   NativeSyntheticEvent,
@@ -18,6 +19,9 @@ import Sound from 'react-native-nitro-sound';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import MessageBubble from '../components/MessageBubble';
 import RecordingWaveform from '../components/RecordingWaveform';
+import Avatar from '../components/Avatar';
+import StorageQuotaBanner from '../components/StorageQuotaBanner';
+import { BackChevronIcon, ImageIcon, PhoneCallIcon, VideoCallIcon } from '../components/CallIcons';
 import { Contact } from '../services/contactService';
 import {
   ChatMessage,
@@ -35,6 +39,8 @@ import { localFileToDataUri, uploadRoomMedia } from '../services/mediaService';
 import { startVoiceCall, startVideoCall } from '../services/callService';
 import { requestMicrophonePermission } from '../services/permissionsService';
 import { markRoomRead } from '../services/readStatusService';
+import { addVideoBytesUsed, subscribeToUserProfile } from '../services/userService';
+import { getChatBackground, setChatBackground } from '../services/chatBackgroundService';
 import { useTheme } from '../theme/ThemeContext';
 import { useNetworkStatus } from '../hooks/useNetworkStatus';
 
@@ -73,6 +79,9 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
   const [recordingLevel, setRecordingLevel] = useState(0);
   const [callStarting, setCallStarting] = useState(false);
   const [newMessagesBelow, setNewMessagesBelow] = useState(false);
+  const [contactPhotoUrl, setContactPhotoUrl] = useState<string | undefined>(undefined);
+  const [myVideoBytesUsed, setMyVideoBytesUsed] = useState(0);
+  const [backgroundUri, setBackgroundUri] = useState<string | null>(null);
   const listRef = useRef<FlatList<ChatMessage>>(null);
   const recordingStartedAtRef = useRef<number | null>(null);
   const lastMessageIdRef = useRef<string | null>(null);
@@ -91,6 +100,12 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
   // Synchronous (non-state) guard against a double-tap firing handleSend
   // twice before the `sending` state's re-render lands.
   const sendingRef = useRef(false);
+  // Resolves once a just-started recording has actually finished starting
+  // (native startRecorder() is async). On a quick tap, onPressOut can fire
+  // before that promise settles — without waiting for it here, stopRecording
+  // would see isRecordingRef still false and bail out early, leaving the
+  // native recorder running with no way to stop it until the next press.
+  const startRecordingPromiseRef = useRef<Promise<void> | null>(null);
   useEffect(() => {
     isRecordingRef.current = isRecording;
   }, [isRecording]);
@@ -120,6 +135,56 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
     isNearBottomRef.current = true;
     setNewMessagesBelow(false);
   }, [roomId]);
+
+  useEffect(() => subscribeToUserProfile(contact.uid, profile => setContactPhotoUrl(profile.photoUrl)), [contact.uid]);
+  useEffect(() => subscribeToUserProfile(myUid, profile => setMyVideoBytesUsed(profile.videoBytesUsed)), [myUid]);
+
+  useEffect(() => {
+    let cancelled = false;
+    getChatBackground(roomId).then(uri => {
+      if (!cancelled) {
+        setBackgroundUri(uri);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [roomId]);
+
+  const handleChangeBackground = useCallback(() => {
+    Alert.alert('Sohbet Arka Planı', undefined, [
+      {
+        text: 'Galeriden seç',
+        onPress: () => {
+          launchImageLibrary({ mediaType: 'photo', quality: 0.6, maxWidth: 1000, maxHeight: 1000, includeBase64: true }, async result => {
+            if (result.didCancel || !result.assets || result.assets.length === 0) {
+              return;
+            }
+            const asset = result.assets[0];
+            if (!asset.base64) {
+              return;
+            }
+            const dataUri = `data:${asset.type || 'image/jpeg'};base64,${asset.base64}`;
+            setBackgroundUri(dataUri);
+            setChatBackground(roomId, dataUri).catch(() => undefined);
+          });
+        },
+      },
+      ...(backgroundUri
+        ? [
+            {
+              text: 'Arka planı kaldır',
+              style: 'destructive' as const,
+              onPress: () => {
+                setBackgroundUri(null);
+                setChatBackground(roomId, null).catch(() => undefined);
+              },
+            },
+          ]
+        : []),
+      { text: 'Vazgeç', style: 'cancel' as const },
+    ]);
+  }, [roomId, backgroundUri]);
 
   useEffect(() => {
     const unsubscribe = subscribeToMessages(
@@ -302,8 +367,11 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
           const extension = isVideo ? 'mp4' : 'jpg';
           setUploadingMedia(true);
           try {
-            const mediaUrl = await uploadRoomMedia(roomId, isVideo ? 'video' : 'image', asset.uri, extension);
-            await sendMediaMessage(roomId, myUid, isVideo ? 'video' : 'image', mediaUrl);
+            const { url, sizeBytes } = await uploadRoomMedia(roomId, isVideo ? 'video' : 'image', asset.uri, extension);
+            await sendMediaMessage(roomId, myUid, isVideo ? 'video' : 'image', url);
+            if (isVideo) {
+              addVideoBytesUsed(myUid, sizeBytes).catch(() => undefined);
+            }
           } catch (error) {
             setConnectionError(`Medya gönderilemedi: ${(error as Error).message}`);
           } finally {
@@ -323,30 +391,46 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
     ]);
   }, [handlePickMedia]);
 
-  const handleStartRecording = useCallback(async () => {
-    const granted = await requestMicrophonePermission();
-    if (!granted) {
-      setConnectionError('Sesli mesaj için mikrofon izni gerekiyor.');
-      return;
-    }
-    try {
-      await Sound.startRecorder(undefined, undefined, true);
-      recordingStartedAtRef.current = Date.now();
-      setIsRecording(true);
-      setRecordingLevel(0);
-      Sound.addRecordBackListener(status => {
-        const db = status.currentMetering ?? -60;
-        setRecordingLevel(Math.min(1, Math.max(0, (db + 60) / 60)));
-      });
-    } catch (error) {
-      setConnectionError(`Kayıt başlatılamadı: ${(error as Error).message}`);
-    }
+  const handleStartRecording = useCallback(() => {
+    const startPromise = (async () => {
+      const granted = await requestMicrophonePermission();
+      if (!granted) {
+        setConnectionError('Sesli mesaj için mikrofon izni gerekiyor.');
+        return;
+      }
+      try {
+        await Sound.startRecorder(undefined, undefined, true);
+        recordingStartedAtRef.current = Date.now();
+        isRecordingRef.current = true;
+        setIsRecording(true);
+        setRecordingLevel(0);
+        Sound.addRecordBackListener(status => {
+          const db = status.currentMetering ?? -60;
+          setRecordingLevel(Math.min(1, Math.max(0, (db + 60) / 60)));
+        });
+      } catch (error) {
+        setConnectionError(`Kayıt başlatılamadı: ${(error as Error).message}`);
+      }
+    })();
+    startRecordingPromiseRef.current = startPromise;
+    startPromise.finally(() => {
+      if (startRecordingPromiseRef.current === startPromise) {
+        startRecordingPromiseRef.current = null;
+      }
+    });
   }, []);
 
   const handleStopRecording = useCallback(async () => {
-    if (!isRecording) {
+    // A quick tap can release before handleStartRecording's native call
+    // above has actually resolved — wait for it so this doesn't miss a
+    // recording that's still in the middle of starting.
+    if (startRecordingPromiseRef.current) {
+      await startRecordingPromiseRef.current;
+    }
+    if (!isRecordingRef.current) {
       return;
     }
+    isRecordingRef.current = false;
     setIsRecording(false);
     setRecordingLevel(0);
     Sound.removeRecordBackListener();
@@ -390,7 +474,7 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
     } finally {
       setUploadingMedia(false);
     }
-  }, [isRecording, roomId, myUid]);
+  }, [roomId, myUid]);
 
   const handleToggleReaction = useCallback(
     (message: ChatMessage, emoji: string) => {
@@ -407,15 +491,30 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
   return (
     <KeyboardAvoidingView
       style={[styles.container, { backgroundColor: theme.background }]}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      // Android's manifest already sets windowSoftInputMode="adjustResize",
+      // which resizes the native window above the keyboard on its own —
+      // stacking a JS-side "height" behavior on top of that double-adjusts
+      // and was leaving the input bar rendered behind/below the keyboard
+      // instead of just above it. iOS has no such native resize, so it still
+      // needs the "padding" behavior here.
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       keyboardVerticalOffset={0}>
       <View style={[styles.header, { backgroundColor: theme.surface, borderBottomColor: theme.border, paddingTop: insets.top + 12 }]}>
         <Pressable onPress={onBack} hitSlop={8} style={styles.backButton}>
-          <Text style={[styles.backText, { color: theme.textMuted }]}>‹</Text>
+          <BackChevronIcon color={theme.textMuted} />
         </Pressable>
+        <Avatar name={contact.name} size={34} photoUrl={contactPhotoUrl} />
         <Text style={[styles.headerTitle, { color: theme.text }]} numberOfLines={1}>
           {contact.name}
         </Text>
+        <Pressable
+          onPress={handleChangeBackground}
+          hitSlop={8}
+          style={styles.headerIconButton}
+          accessibilityRole="button"
+          accessibilityLabel="Sohbet arka planını değiştir">
+          <ImageIcon color={theme.textMuted} />
+        </Pressable>
         <Pressable
           onPress={() => {
             if (callStarting) {
@@ -431,7 +530,7 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
           hitSlop={8}
           disabled={callStarting}
           style={[styles.headerIconButton, callStarting && styles.headerIconButtonDisabled]}>
-          <Text style={styles.headerIconText}>📞</Text>
+          <PhoneCallIcon color={theme.text} />
         </Pressable>
         <Pressable
           onPress={() => {
@@ -448,9 +547,11 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
           hitSlop={8}
           disabled={callStarting}
           style={[styles.headerIconButton, callStarting && styles.headerIconButtonDisabled]}>
-          <Text style={styles.headerIconText}>🎥</Text>
+          <VideoCallIcon color={theme.text} />
         </Pressable>
       </View>
+
+      <StorageQuotaBanner usedBytes={myVideoBytesUsed} variant="strip" />
 
       {!isOnline && (
         <View style={[styles.offlineBanner, { backgroundColor: theme.warningSoft }]}>
@@ -464,7 +565,10 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
         </View>
       )}
 
-      <View style={styles.listWrap}>
+      <ImageBackground
+        source={backgroundUri ? { uri: backgroundUri } : undefined}
+        style={styles.listWrap}
+        imageStyle={styles.listBackgroundImage}>
         <FlatList
           ref={listRef}
           data={messages}
@@ -498,7 +602,7 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
             <Text style={[styles.jumpToBottomText, { color: theme.identityText }]}>Yeni mesajlar ↓</Text>
           </Pressable>
         )}
-      </View>
+      </ImageBackground>
 
       {uploadingMedia && (
         <View style={[styles.uploadingBanner, { backgroundColor: theme.background }]}>
@@ -598,7 +702,8 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 17,
     fontWeight: '700',
-    textAlign: 'center',
+    textAlign: 'left',
+    marginLeft: 10,
   },
   headerIconButton: {
     paddingHorizontal: 8,
@@ -628,6 +733,9 @@ const styles = StyleSheet.create({
   },
   listWrap: {
     flex: 1,
+  },
+  listBackgroundImage: {
+    resizeMode: 'cover',
   },
   listContent: {
     paddingHorizontal: 12,

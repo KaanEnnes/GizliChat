@@ -90,6 +90,13 @@ export async function displayFakeGameNotification(senderId: string): Promise<voi
     android: {
       channelId: CHANNEL_ID,
       pressAction: { id: 'default', launchActivity: 'default' },
+      // Explicit timestamp + showTimestamp: without this, Android doesn't
+      // render a relative "X dk önce" age in the notification shade — a
+      // burst of messages updating the same notification (same `id`, above)
+      // also bumps this each time, so the age always reflects the latest
+      // message rather than when the notification first appeared.
+      timestamp: Date.now(),
+      showTimestamp: true,
     },
   });
 }

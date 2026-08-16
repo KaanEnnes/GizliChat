@@ -11,13 +11,23 @@ import {
   View,
   useWindowDimensions,
 } from 'react-native';
+import { launchImageLibrary } from 'react-native-image-picker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { addContact, Contact, setContactFavorite, subscribeToContacts } from '../services/contactService';
 import { ChatMessage, getRoomId, subscribeToLatestMessage } from '../services/chatService';
 import { getLastReadAt, markRoomRead } from '../services/readStatusService';
-import { Account, findUserByUsername, ONLINE_THRESHOLD_MS, subscribeToPresence } from '../services/userService';
+import {
+  Account,
+  findUserByUsername,
+  ONLINE_THRESHOLD_MS,
+  subscribeToPresence,
+  subscribeToUserProfile,
+  updateProfilePhoto,
+} from '../services/userService';
 import { useTheme } from '../theme/ThemeContext';
 import { useNetworkStatus } from '../hooks/useNetworkStatus';
+import Avatar from '../components/Avatar';
+import StorageQuotaBanner from '../components/StorageQuotaBanner';
 
 const WEEKDAYS_TR = ['Paz', 'Pzt', 'Sal', 'Çar', 'Per', 'Cum', 'Cmt'];
 // How often "online" status is re-evaluated against the wall clock — a
@@ -86,41 +96,6 @@ interface Props {
   onLogout: () => void;
 }
 
-/** Small circular initials avatar, reused across every dashboard section. Shows a green-free "online" dot (identity blue) when present. */
-function Avatar({
-  name,
-  size,
-  theme,
-  online,
-}: {
-  name: string;
-  size: number;
-  theme: ReturnType<typeof useTheme>['theme'];
-  online?: boolean;
-}): React.JSX.Element {
-  return (
-    <View style={{ width: size, height: size }}>
-      <View
-        style={[
-          styles.avatar,
-          { width: size, height: size, borderRadius: size / 2, backgroundColor: theme.identity },
-        ]}>
-        <Text style={[styles.avatarText, { color: theme.identityText, fontSize: size * 0.4 }]}>
-          {name.slice(0, 1).toUpperCase()}
-        </Text>
-      </View>
-      {online && (
-        <View
-          style={[
-            styles.onlineDot,
-            { backgroundColor: theme.success, borderColor: theme.background, width: size * 0.3, height: size * 0.3, borderRadius: size * 0.15 },
-          ]}
-        />
-      )}
-    </View>
-  );
-}
-
 function ContactsScreen({ account, onOpenRoom, onOpenGames, onLogout }: Props): React.JSX.Element {
   const insets = useSafeAreaInsets();
   const { theme } = useTheme();
@@ -131,9 +106,15 @@ function ContactsScreen({ account, onOpenRoom, onOpenGames, onLogout }: Props): 
   const [latestMessages, setLatestMessages] = useState<Record<string, ChatMessage | null>>({});
   const [lastReadMap, setLastReadMap] = useState<Record<string, number>>({});
   const [presenceMap, setPresenceMap] = useState<Record<string, number | null>>({});
+  const [contactPhotos, setContactPhotos] = useState<Record<string, string | undefined>>({});
+  const [ownProfile, setOwnProfile] = useState<{ photoUrl?: string; videoBytesUsed: number }>({
+    videoBytesUsed: 0,
+  });
+  const [changingPhoto, setChangingPhoto] = useState(false);
   const [nowTick, setNowTick] = useState(Date.now());
   const roomUnsubscribesRef = useRef<(() => void)[]>([]);
   const presenceUnsubscribesRef = useRef<(() => void)[]>([]);
+  const profileUnsubscribesRef = useRef<(() => void)[]>([]);
 
   const [addModalVisible, setAddModalVisible] = useState(false);
   const [usernameDraft, setUsernameDraft] = useState('');
@@ -158,6 +139,7 @@ function ContactsScreen({ account, onOpenRoom, onOpenGames, onLogout }: Props): 
         // each update rather than diffing, same pattern as NotificationCenter.
         roomUnsubscribesRef.current.forEach(unsub => unsub());
         presenceUnsubscribesRef.current.forEach(unsub => unsub());
+        profileUnsubscribesRef.current.forEach(unsub => unsub());
         roomUnsubscribesRef.current = nextContacts.map(contact => {
           const roomId = getRoomId(account.uid, contact.uid);
           getLastReadAt(roomId).then(readAt => {
@@ -172,6 +154,11 @@ function ContactsScreen({ account, onOpenRoom, onOpenGames, onLogout }: Props): 
             setPresenceMap(prev => (prev[contact.uid] === lastActiveAt ? prev : { ...prev, [contact.uid]: lastActiveAt }));
           }),
         );
+        profileUnsubscribesRef.current = nextContacts.map(contact =>
+          subscribeToUserProfile(contact.uid, profile => {
+            setContactPhotos(prev => (prev[contact.uid] === profile.photoUrl ? prev : { ...prev, [contact.uid]: profile.photoUrl }));
+          }),
+        );
       },
       error => setLoadError(`Kişiler yüklenemedi: ${error.message}`),
     );
@@ -181,8 +168,37 @@ function ContactsScreen({ account, onOpenRoom, onOpenGames, onLogout }: Props): 
       roomUnsubscribesRef.current = [];
       presenceUnsubscribesRef.current.forEach(unsub => unsub());
       presenceUnsubscribesRef.current = [];
+      profileUnsubscribesRef.current.forEach(unsub => unsub());
+      profileUnsubscribesRef.current = [];
     };
   }, [account.uid]);
+
+  useEffect(() => {
+    return subscribeToUserProfile(account.uid, setOwnProfile);
+  }, [account.uid]);
+
+  const handleChangeOwnPhoto = useCallback(() => {
+    if (changingPhoto) {
+      return;
+    }
+    launchImageLibrary({ mediaType: 'photo', quality: 0.5, maxWidth: 300, maxHeight: 300, includeBase64: true }, async result => {
+      if (result.didCancel || !result.assets || result.assets.length === 0) {
+        return;
+      }
+      const asset = result.assets[0];
+      if (!asset.base64) {
+        return;
+      }
+      setChangingPhoto(true);
+      try {
+        await updateProfilePhoto(account.uid, `data:${asset.type || 'image/jpeg'};base64,${asset.base64}`);
+      } catch {
+        // Non-fatal — profile photo is a cosmetic touch, worth a silent retry-next-time over a modal.
+      } finally {
+        setChangingPhoto(false);
+      }
+    });
+  }, [account.uid, changingPhoto]);
 
   const handleOpenRoom = useCallback(
     (contact: Contact) => {
@@ -309,7 +325,7 @@ function ContactsScreen({ account, onOpenRoom, onOpenGames, onLogout }: Props): 
                 style={({ pressed }) => [styles.chipCard, pressed && styles.pressed]}
                 accessibilityRole="button"
                 accessibilityLabel={`${contact.name} ile sohbet aç`}>
-                <Avatar name={contact.name} size={54} theme={theme} online={isContactOnline(contact.uid)} />
+                <Avatar name={contact.name} size={54} photoUrl={contactPhotos[contact.uid]} online={isContactOnline(contact.uid)} />
                 <Text style={[styles.chipLabel, { color: theme.text }]} numberOfLines={1}>
                   {contact.name}
                 </Text>
@@ -330,7 +346,7 @@ function ContactsScreen({ account, onOpenRoom, onOpenGames, onLogout }: Props): 
                 style={({ pressed }) => [styles.chipCard, pressed && styles.pressed]}
                 accessibilityRole="button"
                 accessibilityLabel={`${contact.name}, çevrimiçi, sohbet aç`}>
-                <Avatar name={contact.name} size={54} theme={theme} online />
+                <Avatar name={contact.name} size={54} photoUrl={contactPhotos[contact.uid]} online />
                 <Text style={[styles.chipLabel, { color: theme.text }]} numberOfLines={1}>
                   {contact.name}
                 </Text>
@@ -353,7 +369,7 @@ function ContactsScreen({ account, onOpenRoom, onOpenGames, onLogout }: Props): 
                   style={({ pressed }) => [styles.callCard, { backgroundColor: theme.surface, borderColor: theme.border }, pressed && styles.pressed]}
                   accessibilityRole="button"
                   accessibilityLabel={`${contact.name} ile son arama, sohbeti aç`}>
-                  <Avatar name={contact.name} size={40} theme={theme} />
+                  <Avatar name={contact.name} size={40} photoUrl={contactPhotos[contact.uid]} />
                   <View style={styles.callCardTextWrap}>
                     <Text style={[styles.callCardName, { color: theme.text }]} numberOfLines={1}>
                       {contact.name}
@@ -379,14 +395,25 @@ function ContactsScreen({ account, onOpenRoom, onOpenGames, onLogout }: Props): 
     <View style={[styles.container, { backgroundColor: theme.background }]}>
       <View style={[styles.centered, { maxWidth: contentMaxWidth }]}>
         <View style={[styles.header, { borderBottomColor: theme.border, paddingTop: insets.top + 12 }]}>
-          <View>
-            <Text style={[styles.headerTitle, { color: theme.text }]}>Merhaba, {account.username}</Text>
-            <Text style={[styles.headerSubtitle, { color: theme.textFaint }]}>@{account.username}</Text>
+          <View style={styles.headerIdentity}>
+            <Pressable
+              onPress={handleChangeOwnPhoto}
+              disabled={changingPhoto}
+              accessibilityRole="button"
+              accessibilityLabel="Profil fotoğrafını değiştir">
+              <Avatar name={account.username} size={40} photoUrl={ownProfile.photoUrl} />
+            </Pressable>
+            <View style={styles.headerTextWrap}>
+              <Text style={[styles.headerTitle, { color: theme.text }]}>Merhaba, {account.username}</Text>
+              <Text style={[styles.headerSubtitle, { color: theme.textFaint }]}>@{account.username}</Text>
+            </View>
           </View>
           <Pressable onPress={onLogout} hitSlop={8} accessibilityRole="button" accessibilityLabel="Çıkış yap">
             <Text style={[styles.logoutText, { color: theme.danger }]}>Çıkış</Text>
           </Pressable>
         </View>
+
+        <StorageQuotaBanner usedBytes={ownProfile.videoBytesUsed} variant="card" />
 
         {!isOnline && (
           <View style={[styles.offlineBanner, { backgroundColor: theme.warningSoft }]}>
@@ -424,7 +451,7 @@ function ContactsScreen({ account, onOpenRoom, onOpenGames, onLogout }: Props): 
                   pressed && styles.contactRowPressed,
                 ]}
                 onPress={() => handleOpenRoom(item)}>
-                <Avatar name={item.name} size={44} theme={theme} online={isContactOnline(item.uid)} />
+                <Avatar name={item.name} size={44} photoUrl={contactPhotos[item.uid]} online={isContactOnline(item.uid)} />
                 <View style={styles.contactBody}>
                   <Text style={[styles.contactName, { color: theme.text }]} numberOfLines={1}>
                     {item.name}
@@ -559,6 +586,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingBottom: 12,
     borderBottomWidth: 1,
+  },
+  headerIdentity: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  headerTextWrap: {
+    marginLeft: 10,
   },
   headerTitle: {
     fontSize: 18,

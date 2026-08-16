@@ -1,0 +1,667 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8" />
+<title>GizliChat — PC</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root {
+    --bg: #f3f5fb;
+    --surface: #ffffff;
+    --border: #e2e6f0;
+    --text: #1b2440;
+    --text-muted: #6b7590;
+    --text-faint: #9aa2ba;
+    --identity: #2b5fe0;
+    --identity-text: #ffffff;
+    --bubble-mine: #dce8ff;
+    --bubble-other: #ffffff;
+    --danger: #d3454f;
+    --danger-soft: #fbe4e6;
+    --warning: #b8720a;
+    --warning-soft: #fdf1de;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    height: 100vh;
+    overflow: hidden;
+  }
+  #app { display: flex; height: 100vh; }
+  .hidden { display: none !important; }
+
+  /* ---- Auth screen ---- */
+  #authScreen {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .authCard {
+    width: 340px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 28px;
+  }
+  .authCard h1 { font-size: 20px; margin: 0 0 4px; }
+  .authCard p.sub { color: var(--text-muted); font-size: 13px; margin: 0 0 20px; }
+  .authCard input {
+    width: 100%;
+    padding: 11px 12px;
+    margin-bottom: 10px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    font-size: 14px;
+  }
+  .authCard button.primary {
+    width: 100%;
+    padding: 12px;
+    border: none;
+    border-radius: 10px;
+    background: var(--identity);
+    color: var(--identity-text);
+    font-weight: 700;
+    font-size: 14px;
+    cursor: pointer;
+    margin-top: 4px;
+  }
+  .authCard button.primary:disabled { opacity: .6; cursor: default; }
+  .authToggle {
+    text-align: center;
+    margin-top: 14px;
+    font-size: 13px;
+    color: var(--identity);
+    cursor: pointer;
+  }
+  .authError { color: var(--danger); font-size: 12.5px; margin-bottom: 10px; }
+
+  /* ---- Main layout ---- */
+  #mainScreen { display: flex; flex: 1; min-height: 0; }
+  #sidebar {
+    width: 300px;
+    border-right: 1px solid var(--border);
+    background: var(--surface);
+    display: flex;
+    flex-direction: column;
+  }
+  #sidebarHeader {
+    padding: 16px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  #sidebarHeader .who { font-weight: 700; font-size: 15px; }
+  #sidebarHeader .who span { color: var(--text-muted); font-weight: 400; font-size: 12px; display: block; }
+  #logoutBtn { background: none; border: none; color: var(--danger); font-size: 13px; cursor: pointer; }
+  #quotaBanner {
+    margin: 12px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    font-size: 11.5px;
+    font-weight: 600;
+    color: var(--text-muted);
+  }
+  #quotaBanner .track { height: 4px; background: var(--border); border-radius: 2px; margin-top: 6px; overflow: hidden; }
+  #quotaBanner .fill { height: 100%; background: var(--identity); }
+  #addContactRow { padding: 0 12px 12px; }
+  #addContactRow input {
+    width: 100%;
+    padding: 9px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    font-size: 13px;
+  }
+  #contactList { flex: 1; overflow-y: auto; padding: 0 8px; }
+  .contactRow {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px;
+    border-radius: 12px;
+    cursor: pointer;
+    margin-bottom: 4px;
+  }
+  .contactRow:hover { background: var(--bg); }
+  .contactRow.active { background: var(--bubble-mine); }
+  .avatar {
+    width: 40px; height: 40px; border-radius: 50%;
+    background: var(--identity); color: var(--identity-text);
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 800; font-size: 15px; flex-shrink: 0; overflow: hidden;
+  }
+  .avatar img { width: 100%; height: 100%; object-fit: cover; }
+  .contactMeta { flex: 1; min-width: 0; }
+  .contactMeta .name { font-weight: 700; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .contactMeta .preview { font-size: 12px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  #chatArea { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  #chatEmpty { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--text-faint); font-size: 14px; }
+  #chatHeader {
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-weight: 700;
+  }
+  #chatQuota { margin: 10px 18px 0; padding: 8px 12px; border: 1px solid var(--border); border-radius: 10px; font-size: 11px; color: var(--text-muted); font-weight: 600; }
+  #messages { flex: 1; overflow-y: auto; padding: 16px 18px; }
+  .msgRow { display: flex; margin-bottom: 8px; }
+  .msgRow.mine { justify-content: flex-end; }
+  .bubble {
+    max-width: 60%;
+    padding: 9px 13px;
+    border-radius: 16px;
+    font-size: 14px;
+    line-height: 1.4;
+    background: var(--bubble-other);
+    border: 1px solid var(--border);
+  }
+  .msgRow.mine .bubble { background: var(--bubble-mine); border-color: transparent; }
+  .bubble img, .bubble video { max-width: 100%; border-radius: 10px; display: block; }
+  .bubble .time { font-size: 10.5px; color: var(--text-faint); margin-top: 4px; text-align: right; }
+  #composer {
+    border-top: 1px solid var(--border);
+    background: var(--surface);
+    padding: 12px 18px;
+    display: flex;
+    gap: 10px;
+    align-items: center;
+  }
+  #composer input[type=text] {
+    flex: 1;
+    padding: 11px 14px;
+    border-radius: 20px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    font-size: 14px;
+  }
+  #composer button {
+    border: none;
+    border-radius: 20px;
+    padding: 10px 16px;
+    background: var(--identity);
+    color: var(--identity-text);
+    font-weight: 700;
+    cursor: pointer;
+    font-size: 13px;
+  }
+  #composer button.iconBtn {
+    background: var(--bg);
+    color: var(--text);
+    padding: 10px 12px;
+  }
+  #uploadStatus { font-size: 12px; color: var(--text-muted); padding: 4px 18px; }
+  #globalError { background: var(--danger-soft); color: var(--danger); font-size: 12.5px; padding: 8px 18px; }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- AUTH -->
+  <div id="authScreen">
+    <div class="authCard">
+      <h1>GizliChat</h1>
+      <p class="sub">Bilgisayardan yazışmaya devam et.</p>
+      <div id="authError" class="authError hidden"></div>
+      <input id="authUsername" type="text" placeholder="Kullanıcı adı" autocomplete="username" />
+      <input id="authPassword" type="password" placeholder="Şifre" autocomplete="current-password" />
+      <button id="authSubmit" class="primary">Giriş yap</button>
+      <div id="authToggle" class="authToggle">Hesabın yok mu? Kayıt ol</div>
+    </div>
+  </div>
+
+  <!-- MAIN -->
+  <div id="mainScreen" class="hidden">
+    <div id="sidebar">
+      <div id="sidebarHeader">
+        <div class="who" id="whoLabel">—<span id="whoSub"></span></div>
+        <button id="logoutBtn">Çıkış</button>
+      </div>
+      <div id="quotaBanner"></div>
+      <div id="addContactRow">
+        <input id="addContactInput" type="text" placeholder="Kullanıcı adıyla kişi ekle, Enter'a bas" />
+      </div>
+      <div id="contactList"></div>
+    </div>
+
+    <div id="chatArea">
+      <div id="chatEmpty">Sohbet açmak için soldan bir kişi seç.</div>
+      <div id="chatHeaderWrap" class="hidden" style="display:flex; flex-direction:column; min-height:0; flex:1;">
+        <div id="chatHeader"></div>
+        <div id="chatQuota"></div>
+        <div id="globalError" class="hidden"></div>
+        <div id="messages"></div>
+        <div id="uploadStatus" class="hidden"></div>
+        <div id="composer">
+          <button id="attachBtn" class="iconBtn" title="Fotoğraf/Video gönder">📎</button>
+          <input id="fileInput" type="file" accept="image/*,video/*" class="hidden" />
+          <input id="textInput" type="text" placeholder="Mesaj yaz..." />
+          <button id="sendBtn">Gönder</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script type="module">
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.17.1/firebase-app.js';
+import {
+  getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword,
+  onAuthStateChanged, signOut, setPersistence, browserLocalPersistence,
+} from 'https://www.gstatic.com/firebasejs/12.17.1/firebase-auth.js';
+import {
+  getFirestore, doc, setDoc, getDoc, getDocs, collection, addDoc, query, where,
+  orderBy, limit, onSnapshot, serverTimestamp, Timestamp, increment,
+} from 'https://www.gstatic.com/firebasejs/12.17.1/firebase-firestore.js';
+import {
+  getStorage, ref, uploadBytes, getDownloadURL,
+} from 'https://www.gstatic.com/firebasejs/12.17.1/firebase-storage.js';
+
+// Same project config as the mobile app (src/config/firebaseConfig.ts) —
+// these are not secrets, just public client identifiers; access is gated
+// entirely by Firestore/Storage security rules, same as the mobile client.
+const FIREBASE_CONFIG = {
+  apiKey: 'AIzaSyDcQNyvWOHFYYxC1ToBSHdl0KS62fXAKaU',
+  authDomain: 'kaanchatmercan.firebaseapp.com',
+  projectId: 'kaanchatmercan',
+  storageBucket: 'kaanchatmercan.firebasestorage.app',
+  messagingSenderId: '710001652885',
+  appId: '1:710001652885:web:5f1dcd75d07c1753efd79c',
+};
+
+const app = initializeApp(FIREBASE_CONFIG);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const storage = getStorage(app);
+
+// Auth's default persistence tries to open an IndexedDB connection, which is
+// flaky enough on a file:// origin in Chrome to throw "Database is
+// closing/hidden" and break login entirely. localStorage-based persistence
+// avoids IndexedDB altogether and still survives a page reload.
+setPersistence(auth, browserLocalPersistence).catch(() => undefined);
+
+const USERNAME_EMAIL_DOMAIN = '@gizlichat.local';
+const VIDEO_QUOTA_BYTES = 5120 * 1024 * 1024;
+const usernameToEmail = u => `${u.trim().toLowerCase()}${USERNAME_EMAIL_DOMAIN}`;
+const roomIdFor = (a, b) => [a, b].sort().join('__');
+
+// ---- DOM refs ----
+const $ = id => document.getElementById(id);
+const authScreen = $('authScreen'), mainScreen = $('mainScreen');
+const authUsername = $('authUsername'), authPassword = $('authPassword');
+const authSubmit = $('authSubmit'), authToggle = $('authToggle'), authError = $('authError');
+const whoLabel = $('whoLabel'), whoSub = $('whoSub'), quotaBanner = $('quotaBanner');
+const addContactInput = $('addContactInput'), contactList = $('contactList');
+const chatEmpty = $('chatEmpty'), chatHeaderWrap = $('chatHeaderWrap'), chatHeader = $('chatHeader');
+const chatQuota = $('chatQuota'), messagesEl = $('messages'), globalError = $('globalError');
+const textInput = $('textInput'), sendBtn = $('sendBtn');
+const attachBtn = $('attachBtn'), fileInput = $('fileInput'), uploadStatus = $('uploadStatus');
+
+let isRegisterMode = false;
+let myUid = null, myUsername = null;
+let contacts = []; // {uid, name}
+let activeContactUid = null;
+let roomUnsub = null;
+let contactListUnsubs = [];
+let profileUnsub = null;
+// When this session started — only messages newer than this trigger a
+// desktop notification, so re-opening the app doesn't re-notify for the
+// whole existing history. Tracked per contact so a burst from the same
+// sender doesn't repeat the same message id twice.
+const sessionStartedAt = Date.now();
+const notifiedMessageIds = new Set();
+
+function requestNotificationPermission() {
+  if (typeof Notification === 'undefined' || Notification.permission !== 'default') return;
+  Notification.requestPermission().catch(() => undefined);
+}
+
+/**
+ * Real OS-level desktop notification with the actual sender name and
+ * message content — unlike the mobile app's deliberately-disguised fake
+ * game notifications, the PC client isn't hiding behind a cover app, so
+ * there's no reason to hide the content here.
+ */
+function showDesktopNotification(contactName, bodyText) {
+  if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+  try {
+    new Notification(`${contactName} adlı kişiden mesaj geldi`, { body: bodyText });
+  } catch {
+    // Notification construction can throw in some restricted contexts
+    // (e.g. certain file:// sandboxes) — silently skip, not worth surfacing.
+  }
+}
+
+function showError(msg) {
+  globalError.textContent = msg;
+  globalError.classList.remove('hidden');
+  setTimeout(() => globalError.classList.add('hidden'), 5000);
+}
+
+function formatMb(bytes) { return Math.round(bytes / (1024 * 1024)); }
+function renderQuota(el, usedBytes) {
+  const usedMb = formatMb(usedBytes || 0);
+  const totalMb = formatMb(VIDEO_QUOTA_BYTES);
+  const ratio = Math.min(1, (usedBytes || 0) / VIDEO_QUOTA_BYTES);
+  el.innerHTML = `geriye kalan video yükleme alanı: ${usedMb}mb / ${totalMb}mb
+    <div class="track"><div class="fill" style="width:${ratio * 100}%"></div></div>`;
+}
+
+// ---- Auth ----
+authToggle.addEventListener('click', () => {
+  isRegisterMode = !isRegisterMode;
+  authSubmit.textContent = isRegisterMode ? 'Kayıt ol' : 'Giriş yap';
+  authToggle.textContent = isRegisterMode ? 'Zaten hesabın var mı? Giriş yap' : 'Hesabın yok mu? Kayıt ol';
+});
+
+authSubmit.addEventListener('click', async () => {
+  const username = authUsername.value.trim();
+  const password = authPassword.value;
+  if (!username || !password) {
+    authError.textContent = 'Kullanıcı adı ve şifre gerekli.';
+    authError.classList.remove('hidden');
+    return;
+  }
+  authSubmit.disabled = true;
+  authError.classList.add('hidden');
+  try {
+    if (isRegisterMode) {
+      const credential = await createUserWithEmailAndPassword(auth, usernameToEmail(username), password);
+      await setDoc(doc(db, 'users', credential.user.uid), {
+        username, usernameLower: username.toLowerCase(), createdAt: Date.now(),
+      });
+    } else {
+      await signInWithEmailAndPassword(auth, usernameToEmail(username), password);
+    }
+  } catch (error) {
+    authError.textContent = mapAuthError(error);
+    authError.classList.remove('hidden');
+  } finally {
+    authSubmit.disabled = false;
+  }
+});
+
+function mapAuthError(error) {
+  switch (error.code) {
+    case 'auth/email-already-in-use': return 'Bu kullanıcı adı zaten alınmış.';
+    case 'auth/weak-password': return 'Şifre en az 6 karakter olmalı.';
+    case 'auth/user-not-found':
+    case 'auth/wrong-password':
+    case 'auth/invalid-credential': return 'Kullanıcı adı veya şifre hatalı.';
+    default: return error.message || 'Beklenmeyen bir hata oluştu.';
+  }
+}
+
+$('logoutBtn').addEventListener('click', () => signOut(auth));
+
+onAuthStateChanged(auth, async user => {
+  if (!user) {
+    myUid = null;
+    authScreen.classList.remove('hidden');
+    mainScreen.classList.add('hidden');
+    cleanupSession();
+    return;
+  }
+  myUid = user.uid;
+  const snap = await getDoc(doc(db, 'users', myUid));
+  myUsername = snap.exists() && snap.data().username ? snap.data().username : user.email.split('@')[0];
+  whoLabel.textContent = `Merhaba, ${myUsername}`;
+  whoSub.textContent = `@${myUsername}`;
+  authScreen.classList.add('hidden');
+  mainScreen.classList.remove('hidden');
+  startSession();
+});
+
+function cleanupSession() {
+  contactListUnsubs.forEach(u => u());
+  contactListUnsubs = [];
+  if (roomUnsub) roomUnsub();
+  if (profileUnsub) profileUnsub();
+  contacts = [];
+  activeContactUid = null;
+  contactList.innerHTML = '';
+  messagesEl.innerHTML = '';
+}
+
+function startSession() {
+  requestNotificationPermission();
+  profileUnsub = onSnapshot(doc(db, 'users', myUid), snap => {
+    const data = snap.data() || {};
+    renderQuota(quotaBanner, data.videoBytesUsed || 0);
+  });
+
+  onSnapshot(collection(db, 'users', myUid, 'contacts'), async snapshot => {
+    contacts = snapshot.docs.map(d => ({ uid: d.id, name: d.data().name || 'Kişi' }));
+    contacts.sort((a, b) => a.name.localeCompare(b.name, 'tr'));
+    renderContactList();
+  });
+}
+
+// ---- Contacts ----
+addContactInput.addEventListener('keydown', async e => {
+  if (e.key !== 'Enter') return;
+  const username = addContactInput.value.trim();
+  if (!username) return;
+  addContactInput.disabled = true;
+  try {
+    const q = query(collection(db, 'users'), where('usernameLower', '==', username.toLowerCase()), limit(1));
+    const snap = await getDocs(q);
+    if (snap.empty) { showError('Bu kullanıcı adıyla bir hesap bulunamadı.'); return; }
+    const found = snap.docs[0];
+    if (found.id === myUid) { showError('Kendini ekleyemezsin.'); return; }
+    await setDoc(doc(db, 'users', myUid, 'contacts', found.id), {
+      name: found.data().username, addedAt: Date.now(), favorite: false,
+    });
+    addContactInput.value = '';
+  } catch (error) {
+    showError(`Kişi eklenemedi: ${error.message}`);
+  } finally {
+    addContactInput.disabled = false;
+  }
+});
+
+function renderContactList() {
+  contactListUnsubs.forEach(u => u());
+  contactListUnsubs = [];
+  contactList.innerHTML = '';
+  contacts.forEach(contact => {
+    const row = document.createElement('div');
+    row.className = 'contactRow' + (contact.uid === activeContactUid ? ' active' : '');
+    row.innerHTML = `
+      <div class="avatar" id="avatar_${contact.uid}">${contact.name.slice(0, 1).toUpperCase()}</div>
+      <div class="contactMeta">
+        <div class="name">${escapeHtml(contact.name)}</div>
+        <div class="preview" id="preview_${contact.uid}">Henüz mesaj yok</div>
+      </div>`;
+    row.addEventListener('click', () => openRoom(contact));
+    contactList.appendChild(row);
+
+    const roomId = roomIdFor(myUid, contact.uid);
+    const latestQ = query(collection(db, 'rooms', roomId, 'messages'), orderBy('createdAt', 'desc'), limit(1));
+    contactListUnsubs.push(onSnapshot(latestQ, snap => {
+      const previewEl = document.getElementById(`preview_${contact.uid}`);
+      if (snap.empty) { if (previewEl) previewEl.textContent = 'Henüz mesaj yok'; return; }
+      const docSnap = snap.docs[0];
+      const data = docSnap.data();
+      if (previewEl) previewEl.textContent = previewText(data, myUid);
+
+      // Same suppression rule as the mobile app: no notification for a
+      // message from the contact whose room is currently open on screen.
+      const createdAtMs = data.createdAt instanceof Timestamp ? data.createdAt.toMillis() : Date.now();
+      if (
+        data.senderId !== myUid &&
+        data.type !== 'call' &&
+        createdAtMs > sessionStartedAt &&
+        contact.uid !== activeContactUid &&
+        !notifiedMessageIds.has(docSnap.id)
+      ) {
+        notifiedMessageIds.add(docSnap.id);
+        showDesktopNotification(contact.name, previewText(data, myUid));
+      }
+    }));
+    contactListUnsubs.push(onSnapshot(doc(db, 'users', contact.uid), snap => {
+      const avatarEl = document.getElementById(`avatar_${contact.uid}`);
+      if (!avatarEl) return;
+      const photoUrl = snap.data()?.photoUrl;
+      avatarEl.innerHTML = photoUrl ? `<img src="${photoUrl}" />` : contact.name.slice(0, 1).toUpperCase();
+    }));
+  });
+}
+
+function previewText(data, myUid) {
+  const mine = data.senderId === myUid ? 'Sen: ' : '';
+  switch (data.type) {
+    case 'image': return `${mine}📷 Fotoğraf`;
+    case 'video': return `${mine}🎥 Video`;
+    case 'audio': return `${mine}🎤 Sesli mesaj`;
+    case 'call': return `📞 Arama`;
+    default: return `${mine}${data.text || ''}`;
+  }
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+// ---- Chat room ----
+function openRoom(contact) {
+  activeContactUid = contact.uid;
+  chatEmpty.classList.add('hidden');
+  chatHeaderWrap.classList.remove('hidden');
+  chatHeader.textContent = contact.name;
+  renderContactList();
+
+  if (roomUnsub) roomUnsub();
+  const roomId = roomIdFor(myUid, contact.uid);
+  const messagesQ = query(collection(db, 'rooms', roomId, 'messages'), orderBy('createdAt', 'desc'), limit(50));
+  roomUnsub = onSnapshot(messagesQ, snapshot => {
+    const docs = snapshot.docs.slice().reverse();
+    messagesEl.innerHTML = '';
+    docs.forEach(d => messagesEl.appendChild(renderMessage(d.data())));
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }, error => showError(`Sohbete bağlanılamadı: ${error.message}`));
+}
+
+function formatTime(ts) {
+  const ms = ts instanceof Timestamp ? ts.toMillis() : (typeof ts === 'number' ? ts : Date.now());
+  const d = new Date(ms);
+  return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
+}
+
+function renderMessage(data) {
+  const row = document.createElement('div');
+  row.className = 'msgRow' + (data.senderId === myUid ? ' mine' : '');
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble';
+
+  if (data.type === 'image' && data.mediaUrl) {
+    bubble.innerHTML = `<img src="${data.mediaUrl}" />`;
+  } else if (data.type === 'video' && data.mediaUrl) {
+    bubble.innerHTML = `<video src="${data.mediaUrl}" controls></video>`;
+  } else if (data.type === 'audio' && data.mediaUrl) {
+    bubble.innerHTML = `<audio src="${data.mediaUrl}" controls></audio>`;
+  } else if (data.type === 'call') {
+    bubble.textContent = `${data.callVideo ? '🎥 Görüntülü' : '📞 Sesli'} arama`;
+  } else {
+    bubble.appendChild(document.createTextNode(data.text || ''));
+  }
+  const time = document.createElement('div');
+  time.className = 'time';
+  time.textContent = formatTime(data.createdAt);
+  bubble.appendChild(time);
+  row.appendChild(bubble);
+  return row;
+}
+
+// ---- Sending ----
+async function sendText() {
+  const trimmed = textInput.value.trim();
+  if (!trimmed || !activeContactUid) return;
+  textInput.value = '';
+  const roomId = roomIdFor(myUid, activeContactUid);
+  try {
+    await addDoc(collection(db, 'rooms', roomId, 'messages'), {
+      type: 'text', text: trimmed, senderId: myUid, createdAt: serverTimestamp(),
+    });
+  } catch (error) {
+    showError(`Mesaj gönderilemedi: ${error.message}`);
+  }
+}
+sendBtn.addEventListener('click', sendText);
+textInput.addEventListener('keydown', e => { if (e.key === 'Enter') sendText(); });
+
+attachBtn.addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', async () => {
+  const file = fileInput.files[0];
+  fileInput.value = '';
+  if (!file || !activeContactUid) return;
+  const roomId = roomIdFor(myUid, activeContactUid);
+  const isVideo = file.type.startsWith('video');
+  uploadStatus.textContent = 'Gönderiliyor…';
+  uploadStatus.classList.remove('hidden');
+  try {
+    if (isVideo) {
+      const ext = (file.name.split('.').pop() || 'mp4');
+      const path = `rooms/${roomId}/media/video/${Date.now()}-${Math.random().toString(36).slice(2, 10)}.${ext}`;
+      const storageRef = ref(storage, path);
+      await uploadBytes(storageRef, file, { contentType: file.type || undefined });
+      const url = await getDownloadURL(storageRef);
+      await addDoc(collection(db, 'rooms', roomId, 'messages'), {
+        type: 'video', text: '', senderId: myUid, createdAt: serverTimestamp(), mediaUrl: url,
+      });
+      await setDoc(doc(db, 'users', myUid), { videoBytesUsed: increment(file.size) }, { merge: true });
+    } else {
+      const dataUri = await resizeImageToDataUri(file, 1280, 0.7);
+      if (dataUri.length > 900000) {
+        showError('Fotoğraf çok büyük, daha düşük çözünürlüklü bir fotoğraf seç.');
+        return;
+      }
+      await addDoc(collection(db, 'rooms', roomId, 'messages'), {
+        type: 'image', text: '', senderId: myUid, createdAt: serverTimestamp(), mediaUrl: dataUri,
+      });
+    }
+  } catch (error) {
+    showError(`Medya gönderilemedi: ${error.message}`);
+  } finally {
+    uploadStatus.classList.add('hidden');
+  }
+});
+
+function resizeImageToDataUri(file, maxSize, quality) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error || new Error('Dosya okunamadı.'));
+    reader.onload = () => { img.src = reader.result; };
+    img.onerror = () => reject(new Error('Görsel işlenemedi.'));
+    img.onload = () => {
+      let { width, height } = img;
+      if (width > maxSize || height > maxSize) {
+        const scale = maxSize / Math.max(width, height);
+        width = Math.round(width * scale);
+        height = Math.round(height * scale);
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+      resolve(canvas.toDataURL('image/jpeg', quality));
+    };
+    reader.readAsDataURL(file);
+  });
+}
+</script>
+</body>
+</html>

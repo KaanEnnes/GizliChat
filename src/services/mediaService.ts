@@ -17,13 +17,14 @@ export async function uploadRoomMedia(
   kind: MediaKind,
   localUri: string,
   fileExtension: string,
-): Promise<string> {
+): Promise<{ url: string; sizeBytes: number }> {
   const response = await fetch(localUri);
   const blob = await response.blob();
   const fileName = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}.${fileExtension}`;
   const storageRef = ref(storage, `rooms/${roomId}/media/${kind}/${fileName}`);
   await uploadBytes(storageRef, blob, { contentType: blob.type || undefined });
-  return getDownloadURL(storageRef);
+  const url = await getDownloadURL(storageRef);
+  return { url, sizeBytes: blob.size };
 }
 
 /**
