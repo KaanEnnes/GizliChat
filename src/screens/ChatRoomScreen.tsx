@@ -21,7 +21,9 @@ import MessageBubble from '../components/MessageBubble';
 import RecordingWaveform from '../components/RecordingWaveform';
 import Avatar from '../components/Avatar';
 import StorageQuotaBanner from '../components/StorageQuotaBanner';
-import { BackChevronIcon, ImageIcon, PhoneCallIcon, VideoCallIcon } from '../components/CallIcons';
+import OnlineTicTacToeModal from '../components/OnlineTicTacToeModal';
+import { BackChevronIcon, GameControllerIcon, ImageIcon, PhoneCallIcon, VideoCallIcon } from '../components/CallIcons';
+import { subscribeToGame, TicTacToeGame } from '../services/ticTacToeService';
 import { Contact } from '../services/contactService';
 import {
   ChatMessage,
@@ -82,6 +84,8 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
   const [contactPhotoUrl, setContactPhotoUrl] = useState<string | undefined>(undefined);
   const [myVideoBytesUsed, setMyVideoBytesUsed] = useState(0);
   const [backgroundUri, setBackgroundUri] = useState<string | null>(null);
+  const [ticTacToeGame, setTicTacToeGame] = useState<TicTacToeGame | null>(null);
+  const [ticTacToeModalVisible, setTicTacToeModalVisible] = useState(false);
   const listRef = useRef<FlatList<ChatMessage>>(null);
   const recordingStartedAtRef = useRef<number | null>(null);
   const lastMessageIdRef = useRef<string | null>(null);
@@ -138,6 +142,7 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
 
   useEffect(() => subscribeToUserProfile(contact.uid, profile => setContactPhotoUrl(profile.photoUrl)), [contact.uid]);
   useEffect(() => subscribeToUserProfile(myUid, profile => setMyVideoBytesUsed(profile.videoBytesUsed)), [myUid]);
+  useEffect(() => subscribeToGame(roomId, setTicTacToeGame), [roomId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -516,6 +521,17 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
           <ImageIcon color={theme.textMuted} />
         </Pressable>
         <Pressable
+          onPress={() => setTicTacToeModalVisible(true)}
+          hitSlop={8}
+          style={styles.headerIconButton}
+          accessibilityRole="button"
+          accessibilityLabel={`${contact.name} ile XOX oyna`}>
+          <GameControllerIcon color={theme.text} />
+          {ticTacToeGame?.status === 'active' && (
+            <View style={[styles.headerIconBadge, { backgroundColor: theme.danger, borderColor: theme.surface }]} />
+          )}
+        </Pressable>
+        <Pressable
           onPress={() => {
             if (callStarting) {
               return;
@@ -552,6 +568,15 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
       </View>
 
       <StorageQuotaBanner usedBytes={myVideoBytesUsed} variant="strip" />
+
+      <OnlineTicTacToeModal
+        visible={ticTacToeModalVisible}
+        onClose={() => setTicTacToeModalVisible(false)}
+        roomId={roomId}
+        myUid={myUid}
+        contact={contact}
+        game={ticTacToeGame}
+      />
 
       {!isOnline && (
         <View style={[styles.offlineBanner, { backgroundColor: theme.warningSoft }]}>
@@ -708,6 +733,16 @@ const styles = StyleSheet.create({
   headerIconButton: {
     paddingHorizontal: 8,
     paddingVertical: 4,
+    position: 'relative',
+  },
+  headerIconBadge: {
+    position: 'absolute',
+    top: 2,
+    right: 4,
+    width: 9,
+    height: 9,
+    borderRadius: 5,
+    borderWidth: 1.5,
   },
   headerIconText: {
     fontSize: 20,

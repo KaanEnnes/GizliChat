@@ -56,6 +56,22 @@ export function BackChevronIcon({ color, size = 22 }: Props): React.JSX.Element 
   );
 }
 
+/** Game controller icon used on the "play XOX with this contact" header button. */
+export function GameControllerIcon({ color, size = 20 }: Props): React.JSX.Element {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Path
+        d="M7 8.5h10a4.5 4.5 0 0 1 4.4 5.46l-.56 2.55a2.6 2.6 0 0 1-4.63 1.02L15 16H9l-1.21 1.53a2.6 2.6 0 0 1-4.63-1.02l-.56-2.55A4.5 4.5 0 0 1 7 8.5Z"
+        stroke={color}
+        strokeWidth={1.8}
+        strokeLinejoin="round"
+      />
+      <Path d="M7.5 11v3M6 12.5h3" stroke={color} strokeWidth={1.6} strokeLinecap="round" />
+      <Path d="M16 11.5h.01M18 13h.01" stroke={color} strokeWidth={2.2} strokeLinecap="round" />
+    </Svg>
+  );
+}
+
 /** Small image icon used on the "chat background" option (options menu). */
 export function ImageIcon({ color, size = 18 }: Props): React.JSX.Element {
   return (

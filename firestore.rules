@@ -52,6 +52,17 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    match /rooms/{roomId}/game/{gameId} {
+      // Live XOX state between the two room members (see ticTacToeService.ts)
+      // — same relaxed, client-trusted write model as messages/highscores
+      // above: any move a room member submits is accepted as-is, since a
+      // wrong move in a casual 2-player game between two people who already
+      // trust each other with a shared chat isn't worth a stricter (and far
+      // more complex) rule that re-validates whose turn it is server-side.
+      allow read, create, update: if isRoomMember(roomId);
+      allow delete: if false;
+    }
+
     match /highscores/{scoreId} {
       // Leaderboard is intentionally public read; anyone signed in can add
       // one entry, but never edit/delete existing ones (including their
