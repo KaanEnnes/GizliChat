@@ -6,20 +6,38 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <style>
   :root {
-    --bg: #f3f5fb;
+    --bg: #f0f4f8;
     --surface: #ffffff;
     --border: #e2e6f0;
-    --text: #1b2440;
-    --text-muted: #6b7590;
+    --text: #0f172a;
+    --text-muted: #475569;
     --text-faint: #9aa2ba;
-    --identity: #2b5fe0;
+    --identity: #2e5aac;
     --identity-text: #ffffff;
-    --bubble-mine: #dce8ff;
+    --bubble-mine: #dce8fb;
     --bubble-other: #ffffff;
-    --danger: #d3454f;
+    --danger: #dc2626;
     --danger-soft: #fbe4e6;
-    --warning: #b8720a;
+    --warning: #d97706;
     --warning-soft: #fdf1de;
+  }
+  /* Same dark palette as the mobile app's ThemeContext.tsx (DARK) — kept in
+     sync by hand since this file has no build step to share it from. */
+  :root[data-theme="dark"] {
+    --bg: #0b132b;
+    --surface: #1c2541;
+    --border: rgba(148,163,184,0.16);
+    --text: #f8fafc;
+    --text-muted: #94a3b8;
+    --text-faint: rgba(148,163,184,0.5);
+    --identity: #3d63b8;
+    --identity-text: #f8fafc;
+    --bubble-mine: #25355f;
+    --bubble-other: #1c2541;
+    --danger: #f87171;
+    --danger-soft: rgba(248,113,113,0.14);
+    --warning: #fbbf24;
+    --warning-soft: rgba(251,191,36,0.14);
   }
   * { box-sizing: border-box; }
   body {
@@ -201,9 +219,29 @@
   }
   #uploadStatus { font-size: 12px; color: var(--text-muted); padding: 4px 18px; }
   #globalError { background: var(--danger-soft); color: var(--danger); font-size: 12.5px; padding: 8px 18px; }
+
+  #themeToggle {
+    position: fixed;
+    top: 14px;
+    right: 16px;
+    z-index: 50;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+    font-size: 16px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  #themeToggle:hover { opacity: 0.85; }
 </style>
 </head>
 <body>
+<button id="themeToggle" title="Açık/koyu tema"></button>
 <div id="app">
 
   <!-- AUTH -->
@@ -289,6 +327,31 @@ const storage = getStorage(app);
 // closing/hidden" and break login entirely. localStorage-based persistence
 // avoids IndexedDB altogether and still survives a page reload.
 setPersistence(auth, browserLocalPersistence).catch(() => undefined);
+
+// ---- Theme (defaults to dark, same as the mobile app's default) ----
+const THEME_STORAGE_KEY = 'gizlichat_pc_theme';
+const themeToggleBtn = document.getElementById('themeToggle');
+
+// localStorage can throw (private-browsing edge cases, restricted preview
+// sandboxes) — theme preference is a nice-to-have, never worth crashing the
+// whole module (and with it auth/Firestore) over.
+function readStoredTheme() {
+  try { return localStorage.getItem(THEME_STORAGE_KEY); } catch { return null; }
+}
+function writeStoredTheme(mode) {
+  try { localStorage.setItem(THEME_STORAGE_KEY, mode); } catch { /* ignore */ }
+}
+
+function applyTheme(mode) {
+  document.documentElement.setAttribute('data-theme', mode);
+  themeToggleBtn.textContent = mode === 'dark' ? '☀️' : '🌙';
+}
+applyTheme(readStoredTheme() === 'light' ? 'light' : 'dark');
+themeToggleBtn.addEventListener('click', () => {
+  const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+  applyTheme(next);
+  writeStoredTheme(next);
+});
 
 const USERNAME_EMAIL_DOMAIN = '@gizlichat.local';
 const VIDEO_QUOTA_BYTES = 5120 * 1024 * 1024;
