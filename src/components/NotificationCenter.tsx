@@ -4,7 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Contact, subscribeToContacts } from '../services/contactService';
 import { getRoomId, markMessageDelivered, subscribeToLatestMessage } from '../services/chatService';
 import { playNotificationSound } from '../services/soundService';
-import { isNotificationsEnabled } from '../services/notificationService';
+import { isNotificationsEnabled, randomFakeNotification } from '../services/notificationService';
 import { vibrateShort } from '../services/hapticsService';
 import { useTheme } from '../theme/ThemeContext';
 
@@ -23,32 +23,15 @@ interface ToastState {
 
 const TOAST_VISIBLE_MS = 3200;
 
-// Deliberately generic, game-flavored copy — no sender name or message
-// content ever surfaces here, so a toast reveals nothing about the disguise
-// underneath even if someone else is glancing at the screen. One is picked
-// at random per notification.
-const FAKE_GAME_NOTIFICATIONS = [
-  'Günlük ödülünü almayı unutma!',
-  'Yeni bir yüksek skor kırıldı!',
-  'Bugünkü meydan okuma seni bekliyor.',
-  'Enerjin doldu, hemen oyna!',
-  'Arkadaşın seni skor tablosunda geçti!',
-  'Yeni bir mini oyun eklendi, dene!',
-];
-
-function randomFakeNotification(): string {
-  return FAKE_GAME_NOTIFICATIONS[Math.floor(Math.random() * FAKE_GAME_NOTIFICATIONS.length)];
-}
-
 /**
  * Wraps the authenticated screens (like CallProvider) and watches every
  * contact's room for new incoming messages, surfacing them as an in-app,
- * game-styled toast (per product decision — see ObsidianVault Changelog —
- * this is the "works only while the app is open/foreground" option chosen
- * over a full FCM background-push setup, which was deferred). Deliberately
- * built as a self-contained watcher + a single `notify()`-shaped entry point
- * (`showToast`) so swapping in real push later only means changing *how*
- * `showToast` gets triggered, not this component's structure.
+ * game-styled toast whenever the app is open/foreground. When the app is
+ * backgrounded or fully killed, `fcmService.ts` takes over via a real FCM
+ * push + a `notifee` local notification instead (same fake-game copy, see
+ * `notificationService.randomFakeNotification`) — this component only ever
+ * needs to handle the foreground case, since Android itself won't deliver
+ * FCM messages to a JS listener like this one while the app isn't running.
  *
  * At most one toast is ever "pending" at a time: once shown, no further
  * toast fires — for that contact or any other — until the current one is

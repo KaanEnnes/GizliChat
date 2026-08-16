@@ -255,7 +255,18 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
     (source: 'library' | 'camera') => {
       const pickerFn = source === 'library' ? launchImageLibrary : launchCamera;
       pickerFn(
-        { mediaType: 'mixed', quality: 0.7, maxWidth: 1280, maxHeight: 1280, includeBase64: true },
+        {
+          mediaType: 'mixed',
+          quality: 0.7,
+          maxWidth: 1280,
+          maxHeight: 1280,
+          includeBase64: true,
+          // Videolar cihazda seçilir seçilmez düşük kalitede yeniden
+          // kodlanır (OS seviyesinde) — sunucuya çok daha küçük dosya
+          // gidiyor, ekstra bir sıkıştırma kütüphanesine gerek kalmadan.
+          // Fotoğrafları etkilemiyor, onlar zaten ayrı `quality` ile küçültülüyor.
+          videoQuality: 'low',
+        },
         async result => {
           if (result.didCancel || !result.assets || result.assets.length === 0) {
             return;

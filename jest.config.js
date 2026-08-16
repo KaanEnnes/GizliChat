@@ -4,7 +4,7 @@ module.exports = {
   // this they're left untransformed like the rest of node_modules and
   // Jest's CJS runtime chokes on their `export` syntax.
   transformIgnorePatterns: [
-    'node_modules/(?!((jest-)?react-native|@react-native(-community)?|@react-native-async-storage|firebase|@firebase|react-native-sound)/)',
+    'node_modules/(?!((jest-)?react-native|@react-native(-community)?|@react-native-async-storage|@react-native-firebase|@notifee|firebase|@firebase|react-native-sound)/)',
   ],
   transform: {
     '^.+\\.(js|jsx|mjs|ts|tsx)$': 'babel-jest',

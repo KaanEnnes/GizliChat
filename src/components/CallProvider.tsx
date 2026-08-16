@@ -36,6 +36,12 @@ function IncomingCallWatcher({ myUid }: { myUid: string }): React.JSX.Element | 
       // video (see `custom.isVideo`, set by the caller in callService.ts) —
       // a voice call must never prompt for or touch the camera.
       const isVideoCall = Boolean((ringingCall.state.custom as { isVideo?: boolean } | undefined)?.isVideo);
+      // Result intentionally unused for flow control: if denied,
+      // requestCallPermissions itself already shows the "İzin gerekli" /
+      // "Ayarlara Git" alert. The call is still allowed to connect —
+      // Stream will just publish without the missing track — since
+      // silently blocking the answer entirely would be worse than a
+      // one-way call.
       requestCallPermissions(isVideoCall).catch(() => undefined);
     }
   }, [calls, activeCall]);

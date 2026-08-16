@@ -1,0 +1,13 @@
+{
+  "name": "functions",
+  "description": "Cloud Functions for GizliChat — sends a real FCM push when a new chat message arrives, for the app-fully-closed case (see ObsidianVault/02-Screens-and-Features.md, NotificationCenter section).",
+  "private": true,
+  "engines": {
+    "node": "20"
+  },
+  "main": "index.js",
+  "dependencies": {
+    "firebase-admin": "^12.6.0",
+    "firebase-functions": "^5.1.1"
+  }
+}

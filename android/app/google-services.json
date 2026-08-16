@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "710001652885",
+    "project_id": "kaanchatmercan",
+    "storage_bucket": "kaanchatmercan.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:710001652885:android:359ace78d94ef960efd79c",
+        "android_client_info": {
+          "package_name": "com.mobile"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyA7qPTleUWd7N5n6KGQ-ynayIwfTiUXPbI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

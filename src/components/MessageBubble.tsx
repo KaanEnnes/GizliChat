@@ -1,9 +1,34 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Image, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import Video from 'react-native-video';
 import type { ChatMessage } from '../services/chatService';
 import AudioMessagePlayer from './AudioMessagePlayer';
 import { useTheme } from '../theme/ThemeContext';
+import { getCachedVideoUri } from '../services/videoCacheService';
+
+/** Resolves a video message's remote URL to a locally-cached file path (see videoCacheService), downloading it at most once per device. */
+function useCachedVideoUri(remoteUrl: string | undefined): string | undefined {
+  const [uri, setUri] = useState<string | undefined>(undefined);
+
+  useEffect(() => {
+    if (!remoteUrl) {
+      setUri(undefined);
+      return;
+    }
+    let cancelled = false;
+    setUri(remoteUrl); // stream the remote URL immediately while the cached copy downloads
+    getCachedVideoUri(remoteUrl).then(cachedUri => {
+      if (!cancelled) {
+        setUri(cachedUri);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [remoteUrl]);
+
+  return uri;
+}
 
 interface Props {
   message: ChatMessage;
@@ -46,6 +71,7 @@ function MessageBubble({ message, isMine, myUid, onToggleReaction }: Props): Rea
     {},
   );
   const hasReactions = Object.keys(reactionCounts).length > 0;
+  const cachedVideoUri = useCachedVideoUri(message.type === 'video' ? message.mediaUrl : undefined);
   const status: 'pending' | 'sent' | 'delivered' | 'read' = message.pending
     ? 'pending'
     : message.readAt
@@ -113,10 +139,10 @@ function MessageBubble({ message, isMine, myUid, onToggleReaction }: Props): Rea
           </Pressable>
         )}
 
-        {message.type === 'video' && message.mediaUrl && (
+        {message.type === 'video' && cachedVideoUri && (
           <Pressable onPress={() => setViewerOpen(true)} style={styles.videoThumbWrap}>
             <Video
-              source={{ uri: message.mediaUrl }}
+              source={{ uri: cachedVideoUri }}
               style={styles.mediaImage}
               paused
               muted
@@ -201,12 +227,14 @@ function MessageBubble({ message, isMine, myUid, onToggleReaction }: Props): Rea
             {message.type === 'image' ? (
               <Image source={{ uri: message.mediaUrl }} style={styles.viewerImage} resizeMode="contain" />
             ) : (
-              <Video
-                source={{ uri: message.mediaUrl }}
-                style={styles.viewerImage}
-                controls
-                resizeMode="contain"
-              />
+              cachedVideoUri && (
+                <Video
+                  source={{ uri: cachedVideoUri }}
+                  style={styles.viewerImage}
+                  controls
+                  resizeMode="contain"
+                />
+              )
             )}
           </Pressable>
         </Modal>

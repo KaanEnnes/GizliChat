@@ -3,6 +3,7 @@ import { Modal, Pressable, StyleSheet, Switch, Text, View } from 'react-native';
 import { useTheme } from '../theme/ThemeContext';
 import { isSoundEnabled, setSoundEnabled } from '../services/soundService';
 import { isNotificationsEnabled, setNotificationsEnabled } from '../services/notificationService';
+import { syncNotificationsEnabledToServer } from '../services/fcmService';
 import { isVibrationEnabled, setVibrationEnabled } from '../services/hapticsService';
 
 interface Props {
@@ -29,6 +30,10 @@ function SettingsModal({ visible, onClose }: Props): React.JSX.Element {
   const handleToggleNotifications = (value: boolean) => {
     setNotificationsOn(value);
     setNotificationsEnabled(value);
+    // Mirrors the flag onto this user's Firestore profile (no-op if signed
+    // out) so the server-side Cloud Function that sends real push
+    // notifications knows to skip this device too, not just the in-app toast.
+    syncNotificationsEnabledToServer(value);
   };
 
   const handleToggleVibration = (value: boolean) => {
@@ -65,9 +70,6 @@ function SettingsModal({ visible, onClose }: Props): React.JSX.Element {
           <View style={[styles.row, { borderBottomColor: theme.border }]}>
             <View style={styles.rowTextWrap}>
               <Text style={[styles.rowLabel, { color: theme.text }]}>Bildirimler</Text>
-              <Text style={[styles.rowHint, { color: theme.textFaint }]}>
-                Uygulama açıkken yeni mesaj bildirimleri
-              </Text>
             </View>
             <Switch
               value={notificationsOn}

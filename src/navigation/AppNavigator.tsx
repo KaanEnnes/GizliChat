@@ -8,6 +8,8 @@ import CallProvider from '../components/CallProvider';
 import NotificationCenter from '../components/NotificationCenter';
 import { Contact } from '../services/contactService';
 import { Account, logoutAccount, updatePresenceHeartbeat } from '../services/userService';
+import { initFcm } from '../services/fcmService';
+import { setActiveChatUid } from '../services/notificationService';
 
 // How often this device stamps itself as "recently active" for other users'
 // online indicators — well under ONLINE_THRESHOLD_MS so a contact never
@@ -48,6 +50,31 @@ function AppNavigator(): React.JSX.Element {
     }, PRESENCE_HEARTBEAT_MS);
     return () => clearInterval(interval);
   }, [account]);
+
+  useEffect(() => {
+    if (!account) {
+      return undefined;
+    }
+    let cleanup: (() => void) | undefined;
+    let cancelled = false;
+    initFcm(account.uid).then(unsubscribe => {
+      if (cancelled) {
+        unsubscribe();
+      } else {
+        cleanup = unsubscribe;
+      }
+    });
+    return () => {
+      cancelled = true;
+      cleanup?.();
+    };
+  }, [account]);
+
+  useEffect(() => {
+    const openContactUid = screen === 'CHAT_ROOM' ? activeContact?.uid ?? null : null;
+    setActiveChatUid(openContactUid);
+    return () => setActiveChatUid(null);
+  }, [screen, activeContact]);
 
   const openRoom = (contact: Contact) => {
     setActiveContact(contact);
