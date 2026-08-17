@@ -32,8 +32,11 @@ type Stage = 'menu' | 'joining' | 'in_room';
 function ChessRoomScreen({ onBack }: Props): React.JSX.Element {
   const { theme } = useTheme();
   const insets = useSafeAreaInsets();
-  const { width } = useWindowDimensions();
-  const boardSize = Math.min(width - 60, 360);
+  const { width, height } = useWindowDimensions();
+  // Fills the actual available screen instead of sitting at a small fixed
+  // cap — same approach as SnakeGame's boardSize, minus the fixed chrome
+  // above (header + code badge + status line) and below (turn dot) the board.
+  const boardSize = Math.min(width - 24, height - insets.top - insets.bottom - 210, 560);
 
   const [stage, setStage] = useState<Stage>('menu');
   const [myUid, setMyUid] = useState<string | null>(null);
@@ -234,38 +237,56 @@ function ChessRoomScreen({ onBack }: Props): React.JSX.Element {
 
       {stage === 'in_room' && code && (
         <View style={styles.roomBody}>
-          <Pressable
-            onPress={() => Clipboard.setString(code)}
-            style={[styles.codeBadge, { backgroundColor: theme.surface, borderColor: theme.border }]}
-            accessibilityRole="button"
-            accessibilityLabel="Oda kodunu kopyala">
-            <Text style={[styles.codeBadgeLabel, { color: theme.textFaint }]}>ODA KODU (kopyalamak için dokun)</Text>
-            <Text style={[styles.codeBadgeValue, { color: theme.text }]}>{code}</Text>
-          </Pressable>
-
-          <Text style={[styles.status, { color: theme.textMuted }]}>{statusText}</Text>
-
-          {game?.status === 'waiting' ? (
-            <ActivityIndicator color={theme.identity} style={styles.waitingSpinner} />
-          ) : (
-            <ChessBoard
-              fen={game?.fen ?? 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'}
-              myColor={myColor}
-              isMyTurn={isMyTurn}
-              onMove={handleMove}
-              size={boardSize}
-            />
-          )}
-
-          {game?.status === 'finished' && (
+          <View style={styles.roomTop}>
             <Pressable
-              onPress={handleRestart}
-              style={[styles.primaryButton, styles.restartButton, { backgroundColor: theme.accent }]}
+              onPress={() => Clipboard.setString(code)}
+              style={[styles.codeBadge, { backgroundColor: theme.surface, borderColor: theme.border }]}
               accessibilityRole="button"
-              accessibilityLabel="Yeniden oyna">
-              <Text style={[styles.primaryButtonText, { color: theme.accentText }]}>YENİDEN OYNA</Text>
+              accessibilityLabel="Oda kodunu kopyala">
+              <Text style={[styles.codeBadgeLabel, { color: theme.textFaint }]}>ODA KODU · kopyalamak için dokun</Text>
+              <Text style={[styles.codeBadgeValue, { color: theme.text }]}>{code}</Text>
             </Pressable>
-          )}
+
+            <View style={styles.statusRow}>
+              {game?.status === 'active' && (
+                <View
+                  style={[
+                    styles.turnDot,
+                    {
+                      backgroundColor: isMyTurn ? theme.accent : theme.textFaint,
+                    },
+                  ]}
+                />
+              )}
+              <Text style={[styles.status, { color: theme.textMuted }]}>{statusText}</Text>
+            </View>
+          </View>
+
+          <View style={styles.boardWrap}>
+            {game?.status === 'waiting' ? (
+              <ActivityIndicator color={theme.identity} style={styles.waitingSpinner} />
+            ) : (
+              <ChessBoard
+                fen={game?.fen ?? 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'}
+                myColor={myColor}
+                isMyTurn={isMyTurn}
+                onMove={handleMove}
+                size={boardSize}
+              />
+            )}
+          </View>
+
+          <View style={styles.roomBottom}>
+            {game?.status === 'finished' && (
+              <Pressable
+                onPress={handleRestart}
+                style={[styles.primaryButton, styles.restartButton, { backgroundColor: theme.accent }]}
+                accessibilityRole="button"
+                accessibilityLabel="Yeniden oyna">
+                <Text style={[styles.primaryButtonText, { color: theme.accentText }]}>YENİDEN OYNA</Text>
+              </Pressable>
+            )}
+          </View>
         </View>
       )}
     </View>
@@ -276,7 +297,7 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     alignItems: 'center',
-    paddingHorizontal: 20,
+    paddingHorizontal: 12,
   },
   header: {
     width: '100%',
@@ -360,15 +381,32 @@ const styles = StyleSheet.create({
     opacity: 0.5,
   },
   roomBody: {
+    flex: 1,
+    width: '100%',
     alignItems: 'center',
+  },
+  roomTop: {
+    width: '100%',
+    alignItems: 'center',
+  },
+  boardWrap: {
+    flex: 1,
+    width: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  roomBottom: {
+    width: '100%',
+    alignItems: 'center',
+    minHeight: 8,
   },
   codeBadge: {
     borderRadius: 14,
     borderWidth: 1,
-    paddingVertical: 10,
+    paddingVertical: 8,
     paddingHorizontal: 20,
     alignItems: 'center',
-    marginBottom: 14,
+    marginBottom: 10,
   },
   codeBadgeLabel: {
     fontSize: 10,
@@ -377,20 +415,31 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   codeBadgeValue: {
-    fontSize: 22,
+    fontSize: 20,
     fontWeight: '800',
     letterSpacing: 6,
+  },
+  statusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  turnDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginRight: 7,
   },
   status: {
     fontSize: 13,
     fontWeight: '600',
-    marginBottom: 16,
   },
   waitingSpinner: {
     marginTop: 40,
   },
   restartButton: {
-    marginTop: 20,
+    marginTop: 8,
+    marginBottom: 4,
     width: 200,
   },
 });

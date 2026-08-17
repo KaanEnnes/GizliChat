@@ -1,15 +1,19 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Animated, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Animated, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import {
+  AudioDevice,
+  AudioDeviceEndpointType,
   Call,
   CallContent,
   CallingState,
   StreamCall,
   callManager,
+  useAudioDeviceStatus,
   useCall,
   useCallStateHooks,
 } from '@stream-io/video-react-native-sdk';
 import { ThemePalette, useTheme } from '../theme/ThemeContext';
+import { findMatchingDevice, getAudioOutputPreference } from '../services/audioOutputService';
 
 /** Handed to `onLeave` once a call ends, so the caller can log a WhatsApp-style call entry in the chat. */
 export interface CallSummary {
@@ -126,6 +130,100 @@ function RoundButton({
       </Pressable>
       {label ? <Text style={[styles.roundButtonLabel, { color: labelColor }]}>{label}</Text> : null}
     </View>
+  );
+}
+
+const AUDIO_DEVICE_ICONS: Record<AudioDeviceEndpointType, string> = {
+  'Bluetooth Device': '🎧',
+  Earpiece: '📱',
+  Speaker: '🔊',
+  'Wired Headset': '🎧',
+  Unknown: '🔊',
+};
+
+function audioDeviceIcon(type: AudioDeviceEndpointType): string {
+  return AUDIO_DEVICE_ICONS[type] ?? '🔊';
+}
+
+/** Bottom-sheet listing every currently available audio output device — tap one to switch to it. */
+function AudioDevicePickerModal({
+  visible,
+  devices,
+  selectedDeviceId,
+  onSelect,
+  onClose,
+}: {
+  visible: boolean;
+  devices: AudioDevice[];
+  selectedDeviceId: string | undefined;
+  onSelect: (device: AudioDevice) => void;
+  onClose: () => void;
+}): React.JSX.Element {
+  const { theme } = useTheme();
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <Pressable style={styles.deviceModalBackdrop} onPress={onClose}>
+        <Pressable
+          style={[styles.deviceSheet, { backgroundColor: theme.surface, borderColor: theme.border }]}
+          onPress={() => undefined}>
+          <Text style={[styles.deviceSheetTitle, { color: theme.text }]}>Ses Çıkışı</Text>
+          {devices.map(device => {
+            const isSelected = device.id === selectedDeviceId;
+            return (
+              <Pressable
+                key={device.id}
+                onPress={() => onSelect(device)}
+                style={[
+                  styles.deviceRow,
+                  isSelected && { backgroundColor: `${theme.identity}22` },
+                ]}
+                accessibilityRole="button"
+                accessibilityLabel={device.name}>
+                <Text style={styles.deviceRowIcon}>{audioDeviceIcon(device.type)}</Text>
+                <Text style={[styles.deviceRowLabel, { color: theme.text }]} numberOfLines={1}>
+                  {device.name}
+                </Text>
+                {isSelected && <Text style={[styles.deviceRowCheck, { color: theme.identity }]}>✓</Text>}
+              </Pressable>
+            );
+          })}
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
+
+/** Round control button that opens the audio-output picker — mirrors a real phone's speaker/earpiece/bluetooth toggle. */
+function AudioDeviceButton({ size = 54 }: { size?: number }): React.JSX.Element | null {
+  const { theme } = useTheme();
+  const status = useAudioDeviceStatus();
+  const [pickerOpen, setPickerOpen] = useState(false);
+
+  // Nothing to switch between (e.g. only the built-in speaker is available) — no point showing the control.
+  if (!status || status.devices.length <= 1) {
+    return null;
+  }
+
+  return (
+    <>
+      <RoundButton
+        icon={audioDeviceIcon(status.currentEndpointType)}
+        accessibilityLabel="Ses çıkışını değiştir"
+        color="rgba(255,255,255,0.16)"
+        size={size}
+        onPress={() => setPickerOpen(true)}
+      />
+      <AudioDevicePickerModal
+        visible={pickerOpen}
+        devices={status.devices}
+        selectedDeviceId={status.selectedDeviceId}
+        onSelect={device => {
+          callManager.audioDevices.select(device.id);
+          setPickerOpen(false);
+        }}
+        onClose={() => setPickerOpen(false)}
+      />
+    </>
   );
 }
 
@@ -277,6 +375,7 @@ function ActiveVoiceScreen({ call, elapsedSeconds }: { call: Call; elapsedSecond
               call.leave().catch(() => undefined);
             }}
           />
+          <AudioDeviceButton size={58} />
         </View>
       </View>
     </View>
@@ -315,6 +414,7 @@ function VideoCallControls(): React.JSX.Element {
         size={54}
         onPress={() => camera.flip().catch(() => undefined)}
       />
+      <AudioDeviceButton size={54} />
       <RoundButton
         icon="✕"
         accessibilityLabel="Görüşmeyi sonlandır"
@@ -399,6 +499,28 @@ function CallContentSwitcher({ onLeave }: { onLeave: (summary: CallSummary) => v
       audioRole: 'communicator',
       deviceEndpointType: 'speaker',
     });
+    // start() above always forces the speaker as the initial route. When the
+    // user's saved preference (Ayarlar → Arama ses çıkışı) is 'auto', that's
+    // corrected by handing routing back to whatever external device (a
+    // Bluetooth/wired headset) was already in use going into the call — e.g.
+    // earbuds playing music right before answering — since forcing the
+    // speaker would otherwise silently undo that. A specific saved
+    // preference (speaker/earpiece/bluetooth/wired) is matched against this
+    // call's actual device list instead, when available. Either way the
+    // in-call button (AudioDeviceButton) still lets the user override it.
+    const preference = getAudioOutputPreference();
+    callManager.audioDevices
+      .getStatus()
+      .then(status => {
+        const target =
+          preference.kind === 'device'
+            ? findMatchingDevice(status.devices, preference)
+            : status.devices.find(d => d.type === 'Bluetooth Device' || d.type === 'Wired Headset');
+        if (target && target.id !== status.selectedDeviceId) {
+          callManager.audioDevices.select(target.id);
+        }
+      })
+      .catch(() => undefined);
     return () => {
       callManager.stop();
     };
@@ -664,6 +786,48 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 20,
     paddingVertical: 20,
+  },
+  deviceModalBackdrop: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    backgroundColor: 'rgba(0,0,0,0.5)',
+  },
+  deviceSheet: {
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    borderWidth: 1,
+    borderBottomWidth: 0,
+    paddingTop: 16,
+    paddingBottom: 32,
+    paddingHorizontal: 8,
+  },
+  deviceSheetTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    letterSpacing: 0.4,
+    marginBottom: 8,
+    marginLeft: 12,
+  },
+  deviceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 12,
+    paddingVertical: 13,
+    paddingHorizontal: 12,
+  },
+  deviceRowIcon: {
+    fontSize: 20,
+    marginRight: 14,
+  },
+  deviceRowLabel: {
+    flex: 1,
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  deviceRowCheck: {
+    fontSize: 16,
+    fontWeight: '800',
+    marginLeft: 8,
   },
 });
 
