@@ -29,15 +29,21 @@ import { ChessGame, subscribeToContactChessGame } from '../services/chessService
 import { Contact } from '../services/contactService';
 import {
   ChatMessage,
+  deleteMessage,
+  editMessage,
+  fetchMessageById,
   getRoomId,
   INITIAL_MESSAGE_LIMIT,
   markMessageRead,
   MAX_MESSAGE_LIMIT,
   MESSAGE_LIMIT_STEP,
+  pinMessage,
   sendMediaMessage,
   sendMessage,
   setMessageReaction,
   subscribeToMessages,
+  subscribeToPinnedMessageId,
+  unpinMessage,
 } from '../services/chatService';
 import { localFileToDataUri, uploadRoomMedia } from '../services/mediaService';
 import { startVoiceCall, startVideoCall } from '../services/callService';
@@ -90,6 +96,9 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
   const [ticTacToeModalVisible, setTicTacToeModalVisible] = useState(false);
   const [chessGame, setChessGame] = useState<ChessGame | null>(null);
   const [chessModalVisible, setChessModalVisible] = useState(false);
+  const [pinnedMessageId, setPinnedMessageId] = useState<string | null>(null);
+  const [pinnedMessagePreview, setPinnedMessagePreview] = useState<ChatMessage | null>(null);
+  const [editingMessage, setEditingMessage] = useState<ChatMessage | null>(null);
   const listRef = useRef<FlatList<ChatMessage>>(null);
   const recordingStartedAtRef = useRef<number | null>(null);
   const lastMessageIdRef = useRef<string | null>(null);
@@ -143,6 +152,33 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
     isNearBottomRef.current = true;
     setNewMessagesBelow(false);
   }, [roomId]);
+
+  useEffect(() => subscribeToPinnedMessageId(roomId, setPinnedMessageId), [roomId]);
+
+  // Resolves the pinned message's content for the banner preview — first
+  // from whatever's already loaded in `messages` (the common case, no extra
+  // read), falling back to a one-off fetch if it's scrolled out of the
+  // currently-loaded page.
+  useEffect(() => {
+    if (!pinnedMessageId) {
+      setPinnedMessagePreview(null);
+      return;
+    }
+    const loaded = messages.find(m => m.id === pinnedMessageId);
+    if (loaded) {
+      setPinnedMessagePreview(loaded);
+      return;
+    }
+    let cancelled = false;
+    fetchMessageById(roomId, pinnedMessageId).then(msg => {
+      if (!cancelled) {
+        setPinnedMessagePreview(msg);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [pinnedMessageId, messages, roomId]);
 
   useEffect(() => subscribeToUserProfile(contact.uid, profile => setContactPhotoUrl(profile.photoUrl)), [contact.uid]);
   useEffect(() => subscribeToUserProfile(myUid, profile => setMyVideoBytesUsed(profile.videoBytesUsed)), [myUid]);
@@ -312,6 +348,11 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
     listRef.current?.scrollToEnd({ animated: true });
   }, []);
 
+  const handleCancelEdit = useCallback(() => {
+    setEditingMessage(null);
+    setDraft('');
+  }, []);
+
   const handleSend = useCallback(() => {
     const trimmed = draft.trim();
     if (!trimmed || sendingRef.current) {
@@ -319,23 +360,26 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
     }
     sendingRef.current = true;
     setSending(true);
-    sendMessage(roomId, trimmed, myUid)
+    const editing = editingMessage;
+    const request = editing ? editMessage(roomId, editing.id, trimmed) : sendMessage(roomId, trimmed, myUid);
+    request
       .then(() => {
         // Only cleared on success — on failure the draft stays in the input
         // so the user can just press send again instead of retyping it.
         setDraft('');
+        setEditingMessage(null);
       })
       .catch(error => {
-        setConnectionError(`Mesaj gönderilemedi: ${error.message}`);
+        setConnectionError(editing ? `Mesaj düzenlenemedi: ${error.message}` : `Mesaj gönderilemedi: ${error.message}`);
       })
       .finally(() => {
         sendingRef.current = false;
         setSending(false);
       });
-  }, [draft, roomId, myUid]);
+  }, [draft, roomId, myUid, editingMessage]);
 
   const handlePickMedia = useCallback(
-    (source: 'library' | 'camera') => {
+    (source: 'library' | 'camera', hidden?: boolean) => {
       const pickerFn = source === 'library' ? launchImageLibrary : launchCamera;
       pickerFn(
         {
@@ -373,7 +417,7 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
             }
             setUploadingMedia(true);
             try {
-              await sendMediaMessage(roomId, myUid, 'image', dataUri);
+              await sendMediaMessage(roomId, myUid, 'image', dataUri, undefined, hidden);
             } catch (error) {
               setConnectionError(`Fotoğraf gönderilemedi: ${(error as Error).message}`);
             } finally {
@@ -386,7 +430,7 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
           setUploadingMedia(true);
           try {
             const { url, sizeBytes } = await uploadRoomMedia(roomId, isVideo ? 'video' : 'image', asset.uri, extension);
-            await sendMediaMessage(roomId, myUid, isVideo ? 'video' : 'image', url);
+            await sendMediaMessage(roomId, myUid, isVideo ? 'video' : 'image', url, undefined, hidden);
             if (isVideo) {
               addVideoBytesUsed(myUid, sizeBytes).catch(() => undefined);
             }
@@ -405,6 +449,7 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
     Alert.alert('Medya Gönder', undefined, [
       { text: 'Galeri', onPress: () => handlePickMedia('library') },
       { text: 'Kamera', onPress: () => handlePickMedia('camera') },
+      { text: '🙈 Gizli Fotoğraf', onPress: () => handlePickMedia('library', true) },
       { text: 'Vazgeç', style: 'cancel' },
     ]);
   }, [handlePickMedia]);
@@ -504,6 +549,59 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
     [roomId, myUid],
   );
 
+  const handlePinMessage = useCallback(
+    (message: ChatMessage) => {
+      pinMessage(roomId, message.id).catch(error => {
+        setConnectionError(`Sabitlenemedi: ${(error as Error).message}`);
+      });
+    },
+    [roomId],
+  );
+
+  const handleUnpinMessage = useCallback(() => {
+    unpinMessage(roomId).catch(error => {
+      setConnectionError(`Sabit kaldırılamadı: ${(error as Error).message}`);
+    });
+  }, [roomId]);
+
+  const handleEditRequest = useCallback((message: ChatMessage) => {
+    setEditingMessage(message);
+    setDraft(message.text);
+  }, []);
+
+  const handleDeleteMessage = useCallback(
+    (message: ChatMessage) => {
+      Alert.alert('Mesajı sil', 'Bu mesaj herkes için silinecek.', [
+        { text: 'Vazgeç', style: 'cancel' },
+        {
+          text: 'Sil',
+          style: 'destructive',
+          onPress: () => {
+            deleteMessage(roomId, message.id).catch(error => {
+              setConnectionError(`Silinemedi: ${(error as Error).message}`);
+            });
+          },
+        },
+      ]);
+    },
+    [roomId],
+  );
+
+  const handleJumpToPinned = useCallback(() => {
+    if (!pinnedMessagePreview) {
+      return;
+    }
+    const target = messages.find(m => m.id === pinnedMessagePreview.id);
+    if (!target) {
+      return;
+    }
+    try {
+      listRef.current?.scrollToItem({ item: target, animated: true, viewPosition: 0.3 });
+    } catch {
+      // Item not in the currently-rendered window — nothing reasonable to do without getItemLayout.
+    }
+  }, [pinnedMessagePreview, messages]);
+
   const canSend = draft.trim().length > 0 && !sending;
 
   return (
@@ -600,6 +698,36 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
         game={chessGame}
       />
 
+      {pinnedMessagePreview && (
+        <Pressable
+          onPress={handleJumpToPinned}
+          style={[styles.pinnedBanner, { backgroundColor: theme.surface, borderBottomColor: theme.border }]}
+          accessibilityRole="button"
+          accessibilityLabel="Sabitlenmiş mesaja git">
+          <Text style={styles.pinnedBannerIcon}>📌</Text>
+          <Text style={[styles.pinnedBannerText, { color: theme.textMuted }]} numberOfLines={1}>
+            {pinnedMessagePreview.deleted
+              ? 'Bu mesaj silindi'
+              : pinnedMessagePreview.type === 'text'
+              ? pinnedMessagePreview.text
+              : pinnedMessagePreview.type === 'image'
+              ? '📷 Fotoğraf'
+              : pinnedMessagePreview.type === 'video'
+              ? '🎥 Video'
+              : pinnedMessagePreview.type === 'audio'
+              ? '🎤 Sesli mesaj'
+              : 'Mesaj'}
+          </Text>
+          <Pressable
+            onPress={handleUnpinMessage}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel="Sabiti kaldır">
+            <Text style={[styles.pinnedBannerClose, { color: theme.textFaint }]}>✕</Text>
+          </Pressable>
+        </Pressable>
+      )}
+
       {!isOnline && (
         <View style={[styles.offlineBanner, { backgroundColor: theme.warningSoft }]}>
           <Text style={[styles.offlineBannerText, { color: theme.warning }]}>📡 İnternet bağlantısı yok</Text>
@@ -625,7 +753,12 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
               message={item}
               isMine={item.senderId === myUid}
               myUid={myUid}
+              isPinned={item.id === pinnedMessageId}
               onToggleReaction={handleToggleReaction}
+              onPin={handlePinMessage}
+              onUnpin={handleUnpinMessage}
+              onEdit={handleEditRequest}
+              onDelete={handleDeleteMessage}
             />
           )}
           contentContainerStyle={styles.listContent}
@@ -662,6 +795,18 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
         <View style={[styles.recordingBanner, { backgroundColor: theme.background }]}>
           <View style={[styles.recordingDot, { backgroundColor: theme.danger }]} />
           <RecordingWaveform level={recordingLevel} color={theme.identity} />
+        </View>
+      )}
+
+      {editingMessage && (
+        <View style={[styles.editingBanner, { backgroundColor: theme.surfaceAlt, borderTopColor: theme.border }]}>
+          <Text style={[styles.editingBannerIcon, { color: theme.identity }]}>✏️</Text>
+          <Text style={[styles.editingBannerText, { color: theme.textMuted }]} numberOfLines={1}>
+            Mesajı düzenliyorsun: {editingMessage.text}
+          </Text>
+          <Pressable onPress={handleCancelEdit} hitSlop={8} accessibilityRole="button" accessibilityLabel="Düzenlemeyi iptal et">
+            <Text style={[styles.editingBannerClose, { color: theme.textFaint }]}>✕</Text>
+          </Pressable>
         </View>
       )}
 
@@ -702,7 +847,9 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
             {sending ? (
               <ActivityIndicator color={theme.accentText} size="small" />
             ) : (
-              <Text style={[styles.sendButtonText, { color: theme.accentText }]}>Gönder</Text>
+              <Text style={[styles.sendButtonText, { color: theme.accentText }]}>
+                {editingMessage ? 'Kaydet' : 'Gönder'}
+              </Text>
             )}
           </Pressable>
         ) : (
@@ -787,6 +934,48 @@ const styles = StyleSheet.create({
   offlineBannerText: {
     fontSize: 12.5,
     fontWeight: '600',
+  },
+  pinnedBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderBottomWidth: 1,
+  },
+  pinnedBannerIcon: {
+    fontSize: 14,
+    marginRight: 8,
+  },
+  pinnedBannerText: {
+    flex: 1,
+    fontSize: 12.5,
+    fontWeight: '600',
+  },
+  pinnedBannerClose: {
+    fontSize: 14,
+    fontWeight: '700',
+    paddingHorizontal: 6,
+  },
+  editingBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderTopWidth: 1,
+  },
+  editingBannerIcon: {
+    fontSize: 13,
+    marginRight: 8,
+  },
+  editingBannerText: {
+    flex: 1,
+    fontSize: 12.5,
+    fontWeight: '600',
+  },
+  editingBannerClose: {
+    fontSize: 14,
+    fontWeight: '700',
+    paddingHorizontal: 6,
   },
   listWrap: {
     flex: 1,

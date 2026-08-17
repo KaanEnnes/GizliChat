@@ -3,6 +3,7 @@ import {
   collection,
   deleteField,
   doc,
+  getDoc,
   limit,
   onSnapshot,
   orderBy,
@@ -47,6 +48,12 @@ export interface ChatMessage {
   deliveredAt?: number;
   /** Set by the recipient's device once the message has actually been shown on screen in the open chat room. */
   readAt?: number;
+  /** Set when the sender edits a text message's content after sending — drives the "(düzenlendi)" tag. */
+  editedAt?: number;
+  /** Soft-delete flag — the sender's own message, `text`/`mediaUrl` are cleared server-side and the bubble renders a "message deleted" placeholder instead of the original content. */
+  deleted?: boolean;
+  /** Present for image/video messages sent as "gizli" (hidden) — the bubble shows a reveal button instead of the media until tapped. */
+  hidden?: boolean;
 }
 
 // Each 1-1 conversation gets its own room under rooms/{roomId}/messages.
@@ -130,6 +137,9 @@ function docToMessage(docSnap: {
     pending: docSnap.metadata.hasPendingWrites,
     deliveredAt: data.deliveredAt instanceof Timestamp ? data.deliveredAt.toMillis() : undefined,
     readAt: data.readAt instanceof Timestamp ? data.readAt.toMillis() : undefined,
+    editedAt: data.editedAt instanceof Timestamp ? data.editedAt.toMillis() : undefined,
+    deleted: data.deleted === true,
+    hidden: data.hidden === true,
   };
 }
 
@@ -224,13 +234,14 @@ export async function sendCallLogMessage(
   );
 }
 
-/** Sends an already-uploaded image/video/audio message (see mediaService.ts for the upload step). */
+/** Sends an already-uploaded image/video/audio message (see mediaService.ts for the upload step). `hidden` marks an image/video as "gizli" — MessageBubble shows a reveal button instead of the media until the recipient taps it. */
 export async function sendMediaMessage(
   roomId: string,
   senderId: string,
   type: Exclude<MessageType, 'text'>,
   mediaUrl: string,
   durationSeconds?: number,
+  hidden?: boolean,
 ): Promise<void> {
   await addDoc(collection(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION), {
     type,
@@ -239,5 +250,53 @@ export async function sendMediaMessage(
     createdAt: serverTimestamp(),
     mediaUrl,
     ...(durationSeconds !== undefined ? { durationSeconds } : {}),
+    ...(hidden ? { hidden: true } : {}),
   });
+}
+
+/** Edits a text message's content — sender-only (enforced by firestore.rules), and only while it hasn't been deleted. */
+export async function editMessage(roomId: string, messageId: string, newText: string): Promise<void> {
+  const trimmed = newText.trim();
+  if (!trimmed) {
+    return;
+  }
+  const messageRef = doc(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION, messageId);
+  await updateDoc(messageRef, { text: trimmed, editedAt: serverTimestamp() });
+}
+
+/** Soft-deletes a message: clears its content but keeps the doc (and its position in history) so the other side sees a "message deleted" placeholder — sender-only (enforced by firestore.rules). */
+export async function deleteMessage(roomId: string, messageId: string): Promise<void> {
+  const messageRef = doc(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION, messageId);
+  await updateDoc(messageRef, { deleted: true, text: '', mediaUrl: deleteField() });
+}
+
+// ---- Pinned message: one per room, stored on the room doc itself ----
+
+function roomDocRef(roomId: string) {
+  return doc(db, ROOMS_COLLECTION, roomId);
+}
+
+export function subscribeToPinnedMessageId(roomId: string, onPinnedId: (messageId: string | null) => void): Unsubscribe {
+  return onSnapshot(
+    roomDocRef(roomId),
+    snap => {
+      const data = snap.data();
+      onPinnedId(typeof data?.pinnedMessageId === 'string' ? data.pinnedMessageId : null);
+    },
+    () => onPinnedId(null),
+  );
+}
+
+export async function pinMessage(roomId: string, messageId: string): Promise<void> {
+  await setDoc(roomDocRef(roomId), { pinnedMessageId: messageId }, { merge: true });
+}
+
+export async function unpinMessage(roomId: string): Promise<void> {
+  await setDoc(roomDocRef(roomId), { pinnedMessageId: deleteField() }, { merge: true });
+}
+
+/** One-off lookup used when the pinned message has scrolled out of the currently-loaded page — falls back to fetching just that doc instead of widening the whole live query. */
+export async function fetchMessageById(roomId: string, messageId: string): Promise<ChatMessage | null> {
+  const snap = await getDoc(doc(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION, messageId));
+  return snap.exists() ? docToMessage(snap) : null;
 }

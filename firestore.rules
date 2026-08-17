@@ -32,22 +32,40 @@ service cloud.firestore {
       }
     }
 
+    match /rooms/{roomId} {
+      // Room-level document only holds the pinned-message pointer (see
+      // pinMessage/unpinMessage in chatService.ts) — same relaxed,
+      // client-trusted model as the game subcollections below.
+      allow read, write: if isRoomMember(roomId);
+    }
+
     match /rooms/{roomId}/messages/{messageId} {
       allow read: if isRoomMember(roomId);
       allow create: if isRoomMember(roomId) &&
         request.resource.data.senderId == request.auth.uid;
       // Messages are otherwise append-only (no editing text/media/sender after
-      // the fact) — two narrow carve-outs:
+      // the fact) — four narrow carve-outs:
       // 1) emoji reactions: a room member may set/clear only their own single
       //    key under `reactions`, nothing else.
       // 2) delivered/read receipts: only the OTHER room member (never the
       //    sender themself) may stamp `deliveredAt`/`readAt` on a message,
       //    driving the sender's WhatsApp-style tick icons.
+      // 3) edit: only the sender, only a text message, only while it hasn't
+      //    been soft-deleted, may rewrite `text` and stamp `editedAt`.
+      // 4) delete: only the sender may flip `deleted` to true, which must be
+      //    paired with clearing `text`/`mediaUrl` (see deleteMessage()).
       allow update: if isRoomMember(roomId) && (
         (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reactions']) &&
           request.resource.data.reactions.diff(resource.data.get('reactions', {})).affectedKeys().hasOnly([request.auth.uid])) ||
         (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['deliveredAt', 'readAt']) &&
-          resource.data.senderId != request.auth.uid)
+          resource.data.senderId != request.auth.uid) ||
+        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['text', 'editedAt']) &&
+          resource.data.senderId == request.auth.uid &&
+          resource.data.type == 'text' &&
+          resource.data.get('deleted', false) == false) ||
+        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['deleted', 'text', 'mediaUrl']) &&
+          resource.data.senderId == request.auth.uid &&
+          request.resource.data.deleted == true)
       );
       allow delete: if false;
     }

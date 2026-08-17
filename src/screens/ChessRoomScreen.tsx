@@ -15,19 +15,33 @@ import { playGameOverSound, playTapSound, playWinSound } from '../services/sound
 import { ensureAnonymousAuth } from '../services/firebase';
 import ChessBoard from '../components/ChessBoard';
 import {
+  Chess,
   ChessGame,
   createChessRoom,
   joinChessRoom,
   playRoomChessMove,
   restartChessRoom,
+  START_FEN,
   subscribeToChessRoom,
 } from '../services/chessService';
+import {
+  BOT_DIFFICULTY_LABELS,
+  ChessDifficulty,
+  classifyMove,
+  getBotMove,
+  MOVE_QUALITY_LABELS,
+  MoveQuality,
+} from '../services/chessBotService';
 
 interface Props {
   onBack: () => void;
 }
 
-type Stage = 'menu' | 'joining' | 'in_room';
+type Stage = 'menu' | 'joining' | 'in_room' | 'bot_difficulty' | 'vs_bot';
+type BotOutcome = 'player' | 'bot' | 'draw' | null;
+type SquareRef = { from: string; to: string };
+
+const BOT_DIFFICULTIES: ChessDifficulty[] = ['easy', 'medium', 'hard'];
 
 function ChessRoomScreen({ onBack }: Props): React.JSX.Element {
   const { theme } = useTheme();
@@ -47,6 +61,18 @@ function ChessRoomScreen({ onBack }: Props): React.JSX.Element {
   const [game, setGame] = useState<ChessGame | null>(null);
   const gameUnsubRef = useRef<(() => void) | null>(null);
   const lastAnnouncedRef = useRef<number | null>(null);
+
+  const [botDifficulty, setBotDifficulty] = useState<ChessDifficulty | null>(null);
+  const [botFen, setBotFen] = useState(START_FEN);
+  const [botStatus, setBotStatus] = useState<'active' | 'finished'>('active');
+  const [botOutcome, setBotOutcome] = useState<BotOutcome>(null);
+  const [botThinking, setBotThinking] = useState(false);
+  const [botLastMove, setBotLastMove] = useState<SquareRef | null>(null);
+  const [premove, setPremove] = useState<SquareRef | null>(null);
+  const [moveQuality, setMoveQuality] = useState<MoveQuality | null>(null);
+  const [analyzing, setAnalyzing] = useState(false);
+  const botMoveSeqRef = useRef(0);
+  const analysisSeqRef = useRef(0);
 
   useEffect(() => {
     return () => {
@@ -137,11 +163,143 @@ function ChessRoomScreen({ onBack }: Props): React.JSX.Element {
   const handleLeave = useCallback(() => {
     gameUnsubRef.current?.();
     gameUnsubRef.current = null;
+    botMoveSeqRef.current += 1; // invalidate any in-flight bot move
+    analysisSeqRef.current += 1;
     setStage('menu');
     setCode(null);
     setGame(null);
     setError(null);
+    setBotDifficulty(null);
   }, []);
+
+  const startBotGame = useCallback((difficulty: ChessDifficulty) => {
+    botMoveSeqRef.current += 1;
+    analysisSeqRef.current += 1;
+    playTapSound();
+    setBotDifficulty(difficulty);
+    setBotFen(START_FEN);
+    setBotStatus('active');
+    setBotOutcome(null);
+    setBotThinking(false);
+    setBotLastMove(null);
+    setPremove(null);
+    setMoveQuality(null);
+    setAnalyzing(false);
+    setStage('vs_bot');
+  }, []);
+
+  const requestBotReply = useCallback((fen: string) => {
+    const seq = ++botMoveSeqRef.current;
+    setBotThinking(true);
+    getBotMove(fen, botDifficulty ?? 'medium')
+      .then(move => {
+        if (seq !== botMoveSeqRef.current || !move) {
+          return;
+        }
+        const chess = new Chess(fen);
+        try {
+          chess.move({ from: move.from, to: move.to, promotion: move.promotion ?? 'q' });
+        } catch {
+          return; // bot proposed something illegal (stale/edge response) — leave the board as-is
+        }
+        setBotFen(chess.fen());
+        setBotLastMove({ from: move.from, to: move.to });
+        if (chess.isCheckmate()) {
+          setBotStatus('finished');
+          setBotOutcome('bot');
+        } else if (chess.isGameOver()) {
+          setBotStatus('finished');
+          setBotOutcome('draw');
+        }
+      })
+      .finally(() => {
+        if (seq === botMoveSeqRef.current) {
+          setBotThinking(false);
+        }
+      });
+  }, [botDifficulty]);
+
+  const handleBotMove = useCallback(
+    (from: string, to: string) => {
+      if (botStatus !== 'active' || botThinking) {
+        return;
+      }
+      const fenBeforeMove = botFen;
+      const chess = new Chess(fenBeforeMove);
+      if (chess.turn() !== 'w') {
+        return;
+      }
+      playTapSound();
+      try {
+        chess.move({ from, to, promotion: 'q' });
+      } catch {
+        return;
+      }
+      const nextFen = chess.fen();
+      setBotFen(nextFen);
+      setBotLastMove({ from, to });
+      setMoveQuality(null);
+
+      const analysisSeq = ++analysisSeqRef.current;
+      setAnalyzing(true);
+      classifyMove(fenBeforeMove, from, to, nextFen)
+        .then(quality => {
+          if (analysisSeq === analysisSeqRef.current) {
+            setMoveQuality(quality);
+          }
+        })
+        .finally(() => {
+          if (analysisSeq === analysisSeqRef.current) {
+            setAnalyzing(false);
+          }
+        });
+
+      if (chess.isCheckmate()) {
+        setBotStatus('finished');
+        setBotOutcome('player');
+        return;
+      }
+      if (chess.isGameOver()) {
+        setBotStatus('finished');
+        setBotOutcome('draw');
+        return;
+      }
+      requestBotReply(nextFen);
+    },
+    [botFen, botStatus, botThinking, requestBotReply],
+  );
+
+  // Auto-plays a queued premove the instant it becomes the player's turn again —
+  // silently drops it if it's no longer legal against the bot's actual reply.
+  useEffect(() => {
+    if (!premove || botStatus !== 'active' || botThinking) {
+      return;
+    }
+    if (new Chess(botFen).turn() !== 'w') {
+      return;
+    }
+    const pm = premove;
+    setPremove(null);
+    handleBotMove(pm.from, pm.to);
+  }, [premove, botStatus, botThinking, botFen, handleBotMove]);
+
+  const handleBotRestart = useCallback(() => {
+    if (!botDifficulty) {
+      return;
+    }
+    startBotGame(botDifficulty);
+  }, [botDifficulty, startBotGame]);
+
+  useEffect(() => {
+    if (stage !== 'vs_bot' || botStatus !== 'finished') {
+      return;
+    }
+    if (botOutcome === 'player') {
+      playWinSound();
+    } else {
+      playGameOverSound();
+    }
+  }, [stage, botStatus, botOutcome]);
 
   const myColor: 'w' | 'b' | null =
     game && myUid ? (game.playerWhite === myUid ? 'w' : game.playerBlack === myUid ? 'b' : null) : null;
@@ -178,7 +336,7 @@ function ChessRoomScreen({ onBack }: Props): React.JSX.Element {
     <View style={[styles.container, { paddingTop: insets.top + 16, paddingBottom: insets.bottom + 16 }]}>
       <View style={styles.header}>
         <Pressable
-          onPress={stage === 'in_room' ? handleLeave : onBack}
+          onPress={stage === 'in_room' || stage === 'vs_bot' ? handleLeave : stage === 'bot_difficulty' ? () => setStage('menu') : onBack}
           hitSlop={8}
           accessibilityRole="button"
           accessibilityLabel="Oyunlara dön">
@@ -232,6 +390,110 @@ function ChessRoomScreen({ onBack }: Props): React.JSX.Element {
             accessibilityLabel="Odaya katıl">
             <Text style={[styles.secondaryButtonText, { color: theme.text }]}>ODAYA KATIL</Text>
           </Pressable>
+
+          <Text style={[styles.orText, { color: theme.textFaint }]}>veya</Text>
+
+          <Pressable
+            onPress={() => setStage('bot_difficulty')}
+            style={[styles.secondaryButton, { borderColor: theme.border }]}
+            accessibilityRole="button"
+            accessibilityLabel="Bilgisayara karşı oyna">
+            <Text style={[styles.secondaryButtonText, { color: theme.text }]}>BİLGİSAYARA KARŞI OYNA</Text>
+          </Pressable>
+        </View>
+      )}
+
+      {stage === 'bot_difficulty' && (
+        <View style={styles.menuBody}>
+          <Text style={[styles.menuHint, { color: theme.textMuted }]}>Zorluk seviyesi seç.</Text>
+          {BOT_DIFFICULTIES.map(level => (
+            <Pressable
+              key={level}
+              onPress={() => startBotGame(level)}
+              style={[styles.secondaryButton, styles.difficultyButton, { borderColor: theme.border }]}
+              accessibilityRole="button"
+              accessibilityLabel={BOT_DIFFICULTY_LABELS[level]}>
+              <Text style={[styles.secondaryButtonText, { color: theme.text }]}>
+                {BOT_DIFFICULTY_LABELS[level].toUpperCase()}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+      )}
+
+      {stage === 'vs_bot' && botDifficulty && (
+        <View style={styles.roomBody}>
+          <View style={styles.roomTop}>
+            <View style={[styles.codeBadge, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+              <Text style={[styles.codeBadgeLabel, { color: theme.textFaint }]}>BİLGİSAYAR</Text>
+              <Text style={[styles.codeBadgeValue, { color: theme.text }]}>
+                {BOT_DIFFICULTY_LABELS[botDifficulty].toUpperCase()}
+              </Text>
+            </View>
+
+            <View style={styles.statusRow}>
+              {botStatus === 'active' && (
+                <View
+                  style={[
+                    styles.turnDot,
+                    { backgroundColor: !botThinking ? theme.accent : theme.textFaint },
+                  ]}
+                />
+              )}
+              <Text style={[styles.status, { color: theme.textMuted }]}>
+                {botStatus === 'finished'
+                  ? botOutcome === 'draw'
+                    ? 'Berabere'
+                    : botOutcome === 'player'
+                    ? 'Kazandın! 🎉'
+                    : 'Bilgisayar kazandı'
+                  : botThinking
+                  ? 'Bilgisayar düşünüyor…'
+                  : 'Sırası sende'}
+              </Text>
+            </View>
+
+            {(analyzing || moveQuality) && (
+              <Text style={[styles.qualityBadge, { color: theme.textMuted }]}>
+                {analyzing ? 'Analiz ediliyor…' : moveQuality ? MOVE_QUALITY_LABELS[moveQuality] : ''}
+              </Text>
+            )}
+
+            {premove && (
+              <Pressable onPress={() => setPremove(null)} accessibilityRole="button" accessibilityLabel="Ön hamleyi iptal et">
+                <Text style={[styles.premoveBadge, { color: theme.danger }]}>
+                  Ön hamle: {premove.from} → {premove.to} · iptal için dokun
+                </Text>
+              </Pressable>
+            )}
+          </View>
+
+          <View style={styles.boardWrap}>
+            <ChessBoard
+              fen={botFen}
+              myColor="w"
+              isMyTurn={botStatus === 'active' && !botThinking}
+              onMove={handleBotMove}
+              size={boardSize}
+              lastMove={botLastMove}
+              allowPremove={botStatus === 'active'}
+              premove={premove}
+              onSetPremove={(from, to) => setPremove({ from, to })}
+              onClearPremove={() => setPremove(null)}
+            />
+          </View>
+
+          <View style={styles.roomBottom}>
+            {botStatus === 'finished' && (
+              <Pressable
+                onPress={handleBotRestart}
+                style={[styles.primaryButton, styles.restartButton, { backgroundColor: theme.accent }]}
+                accessibilityRole="button"
+                accessibilityLabel="Yeniden oyna">
+                <Text style={[styles.primaryButtonText, { color: theme.accentText }]}>YENİDEN OYNA</Text>
+              </Pressable>
+            )}
+          </View>
         </View>
       )}
 
@@ -377,6 +639,9 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     letterSpacing: 0.5,
   },
+  difficultyButton: {
+    marginBottom: 12,
+  },
   disabled: {
     opacity: 0.5,
   },
@@ -433,6 +698,16 @@ const styles = StyleSheet.create({
   status: {
     fontSize: 13,
     fontWeight: '600',
+  },
+  qualityBadge: {
+    fontSize: 12,
+    fontWeight: '700',
+    marginTop: 4,
+  },
+  premoveBadge: {
+    fontSize: 11,
+    fontWeight: '700',
+    marginTop: 6,
   },
   waitingSpinner: {
     marginTop: 40,

@@ -1,7 +1,12 @@
-import React, { useMemo, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useTheme } from '../theme/ThemeContext';
 import { Chess } from '../services/chessService';
+
+interface SquareRef {
+  from: string;
+  to: string;
+}
 
 interface Props {
   fen: string;
@@ -10,6 +15,13 @@ interface Props {
   isMyTurn: boolean;
   onMove: (from: string, to: string) => void;
   size: number;
+  /** Most recent move by either side, highlighted like chess.com's yellow from/to squares. */
+  lastMove?: SquareRef | null;
+  /** Lets the player queue a move while it's not their turn (e.g. bot is thinking); executed by the caller once it becomes their turn. */
+  allowPremove?: boolean;
+  premove?: SquareRef | null;
+  onSetPremove?: (from: string, to: string) => void;
+  onClearPremove?: () => void;
 }
 
 const FILES = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
@@ -28,12 +40,56 @@ const PIECE_GLYPHS: Record<string, string> = {
   bp: '♟',
 };
 
+// Fixed chess.com-style palette — the board keeps this look regardless of
+// app light/dark theme, same as every mainstream chess client does.
+const LIGHT_SQUARE = '#EEEED2';
+const DARK_SQUARE = '#769656';
+const SELECTED_OVERLAY = 'rgba(246,246,105,0.85)';
+const LAST_MOVE_OVERLAY = 'rgba(246,246,105,0.5)';
+const PREMOVE_OVERLAY = 'rgba(235,97,80,0.55)';
+const CHECK_OVERLAY = 'rgba(235,97,80,0.85)';
+const LEGAL_DOT = 'rgba(20,20,20,0.22)';
+const CAPTURE_RING = 'rgba(20,20,20,0.35)';
+
+interface AnimPiece {
+  uid: string;
+  type: string;
+  color: string;
+  square: string;
+  anim: Animated.ValueXY;
+  opacity: Animated.Value;
+}
+
+function boardToList(board: ReturnType<InstanceType<typeof Chess>['board']>): { type: string; color: string; square: string }[] {
+  const list: { type: string; color: string; square: string }[] = [];
+  board.forEach((row, r) => {
+    row.forEach((piece, f) => {
+      if (piece) {
+        list.push({ type: piece.type, color: piece.color, square: `${FILES[f]}${8 - r}` });
+      }
+    });
+  });
+  return list;
+}
+
 /**
- * Reusable 8x8 board shared by the two chess entry points (ChatRoomScreen's
- * direct-with-a-contact game and Mini Oyunlar's room-code game) — both just
- * hand it a FEN string and a move callback, see chessService.ts.
+ * Reusable 8x8 board shared by the chess entry points (ChatRoomScreen's
+ * direct-with-a-contact game, Mini Oyunlar's room-code game, and the
+ * vs-computer game) — all hand it a FEN string and a move callback, see
+ * chessService.ts / chessBotService.ts.
  */
-function ChessBoard({ fen, myColor, isMyTurn, onMove, size }: Props): React.JSX.Element {
+function ChessBoard({
+  fen,
+  myColor,
+  isMyTurn,
+  onMove,
+  size,
+  lastMove,
+  allowPremove,
+  premove,
+  onSetPremove,
+  onClearPremove,
+}: Props): React.JSX.Element {
   const { theme } = useTheme();
   const [selected, setSelected] = useState<string | null>(null);
 
@@ -42,11 +98,11 @@ function ChessBoard({ fen, myColor, isMyTurn, onMove, size }: Props): React.JSX.
   const inCheck = chess.inCheck();
 
   const legalTargets = useMemo(() => {
-    if (!selected) {
+    if (!selected || !isMyTurn) {
       return new Set<string>();
     }
     return new Set(chess.moves({ square: selected as never, verbose: true }).map(m => m.to));
-  }, [chess, selected]);
+  }, [chess, selected, isMyTurn]);
 
   const cellSize = size / 8;
   // Flip the board for black so each player always sees their own pieces
@@ -54,8 +110,98 @@ function ChessBoard({ fen, myColor, isMyTurn, onMove, size }: Props): React.JSX.
   const ranks = myColor === 'b' ? [1, 2, 3, 4, 5, 6, 7, 8] : [8, 7, 6, 5, 4, 3, 2, 1];
   const files = myColor === 'b' ? [...FILES].reverse() : FILES;
 
+  const squareToXY = (square: string) => {
+    const fileIdx = files.indexOf(square[0]);
+    const rankIdx = ranks.indexOf(Number(square[1]));
+    return { x: fileIdx * cellSize, y: rankIdx * cellSize };
+  };
+
+  // ---- Piece layer with slide/fade animation, decoupled from the square grid ----
+  const piecesRef = useRef<AnimPiece[]>([]);
+  const uidCounter = useRef(0);
+  const [renderPieces, setRenderPieces] = useState<AnimPiece[]>([]);
+
+  useEffect(() => {
+    const newList = boardToList(board);
+    const prev = piecesRef.current;
+    const usedPrev = new Set<number>();
+    const matched: (AnimPiece | null)[] = new Array(newList.length).fill(null);
+
+    newList.forEach((n, ni) => {
+      const idx = prev.findIndex((p, pi) => !usedPrev.has(pi) && p.square === n.square && p.type === n.type && p.color === n.color);
+      if (idx !== -1) {
+        usedPrev.add(idx);
+        matched[ni] = prev[idx];
+      }
+    });
+    newList.forEach((n, ni) => {
+      if (matched[ni]) {
+        return;
+      }
+      const idx = prev.findIndex((p, pi) => !usedPrev.has(pi) && p.type === n.type && p.color === n.color);
+      if (idx !== -1) {
+        usedPrev.add(idx);
+        matched[ni] = prev[idx];
+      }
+    });
+
+    const newAnimList: AnimPiece[] = newList.map((n, ni) => {
+      const target = squareToXY(n.square);
+      const entry = matched[ni];
+      if (entry) {
+        entry.square = n.square;
+        Animated.timing(entry.anim, {
+          toValue: target,
+          duration: 220,
+          easing: Easing.out(Easing.quad),
+          useNativeDriver: true,
+        }).start();
+        return entry;
+      }
+      const anim = new Animated.ValueXY(target);
+      const opacity = new Animated.Value(0);
+      Animated.timing(opacity, { toValue: 1, duration: 150, useNativeDriver: true }).start();
+      uidCounter.current += 1;
+      return { uid: `p${uidCounter.current}`, type: n.type, color: n.color, square: n.square, anim, opacity };
+    });
+
+    const captured = prev.filter((_, pi) => !usedPrev.has(pi));
+    captured.forEach(c => {
+      Animated.timing(c.opacity, { toValue: 0, duration: 180, useNativeDriver: true }).start();
+    });
+
+    piecesRef.current = newAnimList;
+    setRenderPieces([...newAnimList, ...captured]);
+    if (captured.length) {
+      const t = setTimeout(() => {
+        setRenderPieces(cur => cur.filter(p => newAnimList.includes(p)));
+      }, 200);
+      return () => clearTimeout(t);
+    }
+    return undefined;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fen, myColor]);
+
   const handleSquarePress = (square: string) => {
-    if (!isMyTurn || !myColor) {
+    if (!myColor) {
+      return;
+    }
+    if (!isMyTurn) {
+      if (!allowPremove || !onSetPremove) {
+        return;
+      }
+      if (selected && selected !== square) {
+        onSetPremove(selected, square);
+        setSelected(null);
+        return;
+      }
+      const piece = chess.get(square as never);
+      if (piece && piece.color === myColor) {
+        setSelected(square);
+      } else {
+        setSelected(null);
+        onClearPremove?.();
+      }
       return;
     }
     if (selected && legalTargets.has(square)) {
@@ -86,7 +232,6 @@ function ChessBoard({ fen, myColor, isMyTurn, onMove, size }: Props): React.JSX.
             width: size,
             height: size,
             borderColor: theme.border,
-            backgroundColor: theme.surface,
           },
         ]}>
         {ranks.map(rank => (
@@ -100,6 +245,8 @@ function ChessBoard({ fen, myColor, isMyTurn, onMove, size }: Props): React.JSX.
               const isSelected = selected === square;
               const isTarget = legalTargets.has(square);
               const isKingInCheck = inCheck && piece?.type === 'k' && piece.color === chess.turn();
+              const isLastMove = lastMove && (lastMove.from === square || lastMove.to === square);
+              const isPremove = premove && (premove.from === square || premove.to === square);
               const isFirstFile = file === files[0];
               const isLastRank = rank === ranks[ranks.length - 1];
 
@@ -112,39 +259,24 @@ function ChessBoard({ fen, myColor, isMyTurn, onMove, size }: Props): React.JSX.
                     {
                       width: cellSize,
                       height: cellSize,
-                      backgroundColor: isSelected
-                        ? `${theme.identity}55`
-                        : isKingInCheck
-                        ? `${theme.danger}55`
-                        : isDark
-                        ? theme.surfaceAlt
-                        : theme.surface,
+                      backgroundColor: isDark ? DARK_SQUARE : LIGHT_SQUARE,
                     },
                   ]}>
-                  {piece && (
-                    <Text
-                      style={[
-                        styles.pieceText,
-                        {
-                          fontSize: cellSize * 0.68,
-                          textShadowColor:
-                            theme.mode === 'dark' ? 'rgba(0,0,0,0.55)' : 'rgba(15,23,42,0.25)',
-                        },
-                      ]}>
-                      {PIECE_GLYPHS[`${piece.color}${piece.type}`]}
-                    </Text>
-                  )}
+                  {isLastMove && <View style={[StyleSheet.absoluteFill, { backgroundColor: LAST_MOVE_OVERLAY }]} />}
+                  {isKingInCheck && <View style={[StyleSheet.absoluteFill, { backgroundColor: CHECK_OVERLAY }]} />}
+                  {isPremove && <View style={[StyleSheet.absoluteFill, { backgroundColor: PREMOVE_OVERLAY }]} />}
+                  {isSelected && <View style={[StyleSheet.absoluteFill, { backgroundColor: SELECTED_OVERLAY }]} />}
                   {isTarget && !piece && (
-                    <View style={[styles.moveDot, { backgroundColor: `${theme.identity}88` }]} />
+                    <View style={[styles.moveDot, { backgroundColor: LEGAL_DOT }]} />
                   )}
                   {isTarget && piece && (
-                    <View style={[styles.captureRing, { borderColor: `${theme.danger}aa` }]} />
+                    <View style={[styles.captureRing, { borderColor: CAPTURE_RING }]} />
                   )}
                   {isFirstFile && (
                     <Text
                       style={[
                         styles.rankLabel,
-                        { fontSize: coordSize, color: isDark ? theme.surface : theme.surfaceAlt },
+                        { fontSize: coordSize, color: isDark ? LIGHT_SQUARE : DARK_SQUARE },
                       ]}>
                       {rank}
                     </Text>
@@ -153,7 +285,7 @@ function ChessBoard({ fen, myColor, isMyTurn, onMove, size }: Props): React.JSX.
                     <Text
                       style={[
                         styles.fileLabel,
-                        { fontSize: coordSize, color: isDark ? theme.surface : theme.surfaceAlt },
+                        { fontSize: coordSize, color: isDark ? LIGHT_SQUARE : DARK_SQUARE },
                       ]}>
                       {file}
                     </Text>
@@ -163,6 +295,33 @@ function ChessBoard({ fen, myColor, isMyTurn, onMove, size }: Props): React.JSX.
             })}
           </View>
         ))}
+
+        <View style={StyleSheet.absoluteFill} pointerEvents="none">
+          {renderPieces.map(p => (
+            <Animated.View
+              key={p.uid}
+              style={[
+                styles.pieceLayer,
+                {
+                  width: cellSize,
+                  height: cellSize,
+                  opacity: p.opacity,
+                  transform: [{ translateX: p.anim.x }, { translateY: p.anim.y }],
+                },
+              ]}>
+              <Text
+                style={[
+                  styles.pieceText,
+                  {
+                    fontSize: cellSize * 0.68,
+                    textShadowColor: 'rgba(0,0,0,0.35)',
+                  },
+                ]}>
+                {PIECE_GLYPHS[`${p.color}${p.type}`]}
+              </Text>
+            </Animated.View>
+          ))}
+        </View>
       </View>
     </View>
   );
@@ -179,13 +338,20 @@ const styles = StyleSheet.create({
   },
   board: {
     borderWidth: 1,
-    borderRadius: 10,
+    borderRadius: 4,
     overflow: 'hidden',
   },
   row: {
     flexDirection: 'row',
   },
   square: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pieceLayer: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -212,14 +378,14 @@ const styles = StyleSheet.create({
     top: 2,
     left: 3,
     fontWeight: '700',
-    opacity: 0.75,
+    opacity: 0.85,
   },
   fileLabel: {
     position: 'absolute',
     bottom: 1,
     right: 3,
     fontWeight: '700',
-    opacity: 0.75,
+    opacity: 0.85,
   },
 });
 

@@ -34,7 +34,12 @@ interface Props {
   message: ChatMessage;
   isMine: boolean;
   myUid: string;
+  isPinned: boolean;
   onToggleReaction: (message: ChatMessage, emoji: string) => void;
+  onPin: (message: ChatMessage) => void;
+  onUnpin: () => void;
+  onEdit: (message: ChatMessage) => void;
+  onDelete: (message: ChatMessage) => void;
 }
 
 const QUICK_EMOJIS = ['❤️', '🤍', '😂', '😮', '😢', '🙏', '👍'];
@@ -56,10 +61,21 @@ function formatCallDuration(totalSeconds: number): string {
   return `${minutes}:${seconds}`;
 }
 
-function MessageBubble({ message, isMine, myUid, onToggleReaction }: Props): React.JSX.Element {
+function MessageBubble({
+  message,
+  isMine,
+  myUid,
+  isPinned,
+  onToggleReaction,
+  onPin,
+  onUnpin,
+  onEdit,
+  onDelete,
+}: Props): React.JSX.Element {
   const { theme } = useTheme();
   const [viewerOpen, setViewerOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [revealed, setRevealed] = useState(false);
   const bubbleColor = isMine ? theme.bubbleMine : theme.bubbleOther;
   const bubbleTextColor = isMine ? theme.bubbleMineText : theme.bubbleOtherText;
   const myReaction = message.reactions?.[myUid];
@@ -83,6 +99,32 @@ function MessageBubble({ message, isMine, myUid, onToggleReaction }: Props): Rea
   const handlePickEmoji = (emoji: string) => {
     setPickerOpen(false);
     onToggleReaction(message, emoji);
+  };
+
+  const handleLongPress = () => {
+    if (message.deleted) {
+      return;
+    }
+    setPickerOpen(true);
+  };
+
+  const handlePin = () => {
+    setPickerOpen(false);
+    if (isPinned) {
+      onUnpin();
+    } else {
+      onPin(message);
+    }
+  };
+
+  const handleEdit = () => {
+    setPickerOpen(false);
+    onEdit(message);
+  };
+
+  const handleDelete = () => {
+    setPickerOpen(false);
+    onDelete(message);
   };
 
   // WhatsApp-style call log entry — centered, not a left/right chat bubble.
@@ -118,6 +160,19 @@ function MessageBubble({ message, isMine, myUid, onToggleReaction }: Props): Rea
     );
   }
 
+  // Soft-deleted — content is already cleared server-side, just show the placeholder.
+  if (message.deleted) {
+    return (
+      <View style={[styles.row, isMine ? styles.rowRight : styles.rowLeft]}>
+        <View style={[styles.bubble, styles.deletedBubble, { borderColor: theme.border }]}>
+          <Text style={[styles.deletedText, { color: theme.textFaint }]}>🚫 Bu mesaj silindi</Text>
+        </View>
+      </View>
+    );
+  }
+
+  const showHiddenOverlay = message.type === 'image' && message.hidden && !revealed;
+
   return (
     <View
       style={[
@@ -125,15 +180,30 @@ function MessageBubble({ message, isMine, myUid, onToggleReaction }: Props): Rea
         isMine ? styles.rowRight : styles.rowLeft,
         hasReactions && styles.rowWithReactions,
       ]}>
+      {isPinned && (
+        <Text style={[styles.pinnedTag, { color: theme.textFaint }]}>📌 Sabitlendi</Text>
+      )}
       <Pressable
-        onLongPress={() => setPickerOpen(true)}
+        onLongPress={handleLongPress}
         delayLongPress={280}
         style={[
           styles.bubble,
           { backgroundColor: bubbleColor },
           isMine ? styles.bubbleMine : styles.bubbleOther,
         ]}>
-        {message.type === 'image' && message.mediaUrl && (
+        {message.type === 'image' && message.mediaUrl && showHiddenOverlay && (
+          <Pressable
+            onPress={() => setRevealed(true)}
+            style={[styles.hiddenMediaBox, { backgroundColor: theme.surfaceAlt }]}
+            accessibilityRole="button"
+            accessibilityLabel="Gizli fotoğrafı göster">
+            <Text style={styles.hiddenMediaIcon}>🙈</Text>
+            <Text style={[styles.hiddenMediaText, { color: theme.text }]}>Gizli Fotoğraf</Text>
+            <Text style={[styles.hiddenMediaHint, { color: theme.textMuted }]}>Görmek için dokun</Text>
+          </Pressable>
+        )}
+
+        {message.type === 'image' && message.mediaUrl && !showHiddenOverlay && (
           <Pressable onPress={() => setViewerOpen(true)}>
             <Image source={{ uri: message.mediaUrl }} style={styles.mediaImage} resizeMode="cover" />
           </Pressable>
@@ -166,6 +236,9 @@ function MessageBubble({ message, isMine, myUid, onToggleReaction }: Props): Rea
         {message.type === 'text' && <Text style={[styles.messageText, { color: bubbleTextColor }]}>{message.text}</Text>}
 
         <View style={styles.metaRow}>
+          {!!message.editedAt && (
+            <Text style={[styles.timeText, styles.mutedMeta, { color: bubbleTextColor }]}>düzenlendi · </Text>
+          )}
           <Text style={[styles.timeText, styles.mutedMeta, { color: bubbleTextColor }]}>
             {formatTime(message.createdAt)}
           </Text>
@@ -217,6 +290,36 @@ function MessageBubble({ message, isMine, myUid, onToggleReaction }: Props): Rea
                 </Text>
               </Pressable>
             ))}
+          </View>
+
+          <View style={[styles.actionCard, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+            <Pressable
+              style={styles.actionRow}
+              onPress={handlePin}
+              accessibilityRole="button"
+              accessibilityLabel={isPinned ? 'Sabiti kaldır' : 'Mesajı sabitle'}>
+              <Text style={[styles.actionRowText, { color: theme.text }]}>
+                {isPinned ? '📌  Sabiti Kaldır' : '📌  Sabitle'}
+              </Text>
+            </Pressable>
+            {isMine && message.type === 'text' && (
+              <Pressable
+                style={styles.actionRow}
+                onPress={handleEdit}
+                accessibilityRole="button"
+                accessibilityLabel="Mesajı düzenle">
+                <Text style={[styles.actionRowText, { color: theme.text }]}>✏️  Düzenle</Text>
+              </Pressable>
+            )}
+            {isMine && (
+              <Pressable
+                style={styles.actionRow}
+                onPress={handleDelete}
+                accessibilityRole="button"
+                accessibilityLabel="Mesajı sil">
+                <Text style={[styles.actionRowText, { color: theme.danger }]}>🗑️  Sil</Text>
+              </Pressable>
+            )}
           </View>
         </Pressable>
       </Modal>
@@ -310,6 +413,55 @@ const styles = StyleSheet.create({
   },
   pickerEmojiTextActive: {
     opacity: 0.4,
+  },
+  actionCard: {
+    marginTop: 10,
+    borderRadius: 14,
+    borderWidth: 1,
+    paddingVertical: 4,
+    minWidth: 180,
+    overflow: 'hidden',
+  },
+  actionRow: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  actionRowText: {
+    fontSize: 14.5,
+    fontWeight: '600',
+  },
+  deletedBubble: {
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    backgroundColor: 'transparent',
+  },
+  deletedText: {
+    fontSize: 13.5,
+    fontStyle: 'italic',
+  },
+  pinnedTag: {
+    fontSize: 10.5,
+    fontWeight: '700',
+    marginBottom: 2,
+  },
+  hiddenMediaBox: {
+    width: 220,
+    height: 220,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  hiddenMediaIcon: {
+    fontSize: 34,
+    marginBottom: 8,
+  },
+  hiddenMediaText: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  hiddenMediaHint: {
+    fontSize: 11.5,
+    marginTop: 2,
   },
   messageText: {
     fontSize: 15.5,
