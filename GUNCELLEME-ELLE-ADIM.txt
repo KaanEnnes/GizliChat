@@ -1,0 +1,34 @@
+GizliChat — Güncelleme sistemi için tek kalan elle adım
+==========================================================
+
+Ne yapıldı (otomatik):
+- android/app/build.gradle: versionCode 2, versionName "1.1" olarak güncellendi.
+- Bağımsız (Metro gerektirmeyen, JS bundle gömülü) release APK derlendi:
+  android/app/build/outputs/apk/release/app-release.apk
+- Bu APK, public/app-release-1.1.apk olarak Firebase Hosting'e deploy edildi.
+  Yeni indirme adresi: https://kaanchatmercan.web.app/app-release-1.1.apk
+  (Eski, sürüm numarası tutarsız olan app-debug-test-2.apk hosting'den kaldırıldı.)
+- Emulator üzerinde uçtan uca test edildi: banner doğru çıkıyor, indirme ve kurulum
+  gerçekten çalışıyor (bkz. bu oturumun sohbet geçmişi).
+
+Neden hâlâ eski banner görünüyor / "çalışmıyor" gibi duruyor:
+- firestore.rules bilerek "app_config/android" dokümanına programatik yazmayı
+  engelliyor (allow write: if false) — bu doküman SADECE Firebase Console'dan
+  elle güncellenebilsin diye bilinçli olarak böyle tasarlanmış (projenin diğer
+  Console-only adımlarıyla aynı desen, bkz. YAPILACAKLAR.txt).
+- Şu an Firestore'da hâlâ ESKİ test değerleri duruyor (versionCode 2 ama
+  gerçek dosya versionCode 1'di) — bu yüzden telefon "güncelle"meye devam
+  ediyor ama sürüm hiç değişmiyor.
+
+Yapman gereken tek şey (30 saniye):
+1) https://console.firebase.google.com adresine git, "kaanchatmercan" projesini aç.
+2) Sol menüden Firestore Database -> "app_config" koleksiyonu -> "android" dokümanı.
+3) Alanları şu değerlerle güncelle:
+   - versionCode (number): 2
+   - versionName (string): 1.1
+   - apkUrl (string): https://kaanchatmercan.web.app/app-release-1.1.apk
+   - notes (string, opsiyonel): "Gizli video (aç/kapa), dosya gönderme, uygulama içi güncelleme"
+4) Kaydet.
+
+Bu adımdan sonra telefondaki eski sürüm (versionCode 1) banner'da "Güncelle"ye
+bastığında gerçek 1.1 sürümünü indirip kuracak ve banner bir daha çıkmayacak.
