@@ -167,9 +167,138 @@
     background: var(--surface);
     display: flex;
     align-items: center;
+    justify-content: space-between;
     gap: 10px;
     font-weight: 700;
   }
+  #chatHeader .iconBtn {
+    border: none;
+    border-radius: 10px;
+    padding: 7px 10px;
+    background: var(--bg);
+    color: var(--text);
+    cursor: pointer;
+    font-size: 15px;
+  }
+
+  /* ---- Game modals (XOX / Chess) ---- */
+  .modalOverlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(6,10,24,0.55);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+  }
+  .modalCard {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    padding: 20px;
+    width: 100%;
+    max-width: 380px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  .modalHeaderRow {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 6px;
+  }
+  .modalTitle { font-size: 16px; font-weight: 800; }
+  .modalClose {
+    border: none;
+    background: none;
+    color: var(--text-muted);
+    font-size: 16px;
+    font-weight: 700;
+    cursor: pointer;
+    padding: 4px;
+  }
+  .modalStatus { font-size: 13px; font-weight: 600; color: var(--text-muted); margin-bottom: 16px; }
+  .modalStartBtn {
+    margin-top: 20px;
+    border: none;
+    border-radius: 14px;
+    padding: 12px 26px;
+    background: var(--identity);
+    color: var(--identity-text);
+    font-weight: 800;
+    font-size: 13px;
+    letter-spacing: 0.5px;
+    cursor: pointer;
+  }
+  .pickerBtn {
+    width: 100%;
+    padding: 14px;
+    margin-bottom: 10px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text);
+    font-size: 15px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .xoxBoard {
+    display: flex;
+    flex-direction: column;
+    border-radius: 12px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+  }
+  .xoxRow { display: flex; }
+  .xoxCell {
+    width: 84px;
+    height: 84px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 34px;
+    font-weight: 800;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    cursor: pointer;
+    color: var(--text);
+  }
+  .xoxCell.win { background: rgba(217,84,0,0.15); }
+  .xoxCell.x { color: var(--identity); }
+  .xoxCell.o { color: #D95400; }
+
+  .chessBoard {
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    overflow: hidden;
+    box-shadow: 0 6px 14px rgba(0,0,0,0.28);
+  }
+  .chessRowEl { display: flex; }
+  .chessSquare {
+    width: 40px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 27px;
+    cursor: pointer;
+    position: relative;
+    user-select: none;
+  }
+  .chessSquare.light { background: #EEEED2; }
+  .chessSquare.dark { background: #769656; }
+  .chessSquare.selected::after {
+    content: ''; position: absolute; inset: 0; background: rgba(246,246,105,0.85);
+  }
+  .chessSquare.target::after {
+    content: ''; position: absolute; inset: 0; background: rgba(20,20,20,0.14);
+  }
+  .chessSquare .piece { position: relative; z-index: 1; }
   #chatQuota { margin: 10px 18px 0; padding: 8px 12px; border: 1px solid var(--border); border-radius: 10px; font-size: 11px; color: var(--text-muted); font-weight: 600; }
   #messages { flex: 1; overflow-y: auto; padding: 16px 18px; }
   .msgRow { display: flex; margin-bottom: 8px; }
@@ -274,7 +403,10 @@
     <div id="chatArea">
       <div id="chatEmpty">Sohbet açmak için soldan bir kişi seç.</div>
       <div id="chatHeaderWrap" class="hidden" style="display:flex; flex-direction:column; min-height:0; flex:1;">
-        <div id="chatHeader"></div>
+        <div id="chatHeader">
+          <span id="chatHeaderName"></span>
+          <button id="gameBtn" class="iconBtn" title="Oyun oyna">🎮</button>
+        </div>
         <div id="chatQuota"></div>
         <div id="globalError" class="hidden"></div>
         <div id="messages"></div>
@@ -286,6 +418,44 @@
           <button id="sendBtn">Gönder</button>
         </div>
       </div>
+    </div>
+  </div>
+
+  <!-- Game picker: choose XOX or Chess -->
+  <div id="gamePickerModal" class="modalOverlay hidden">
+    <div class="modalCard">
+      <div class="modalHeaderRow">
+        <span class="modalTitle">Oyun — <span id="gamePickerContactName"></span></span>
+        <button class="modalClose" id="gamePickerClose">✕</button>
+      </div>
+      <button class="pickerBtn" id="pickXoxBtn">❌⭕ XOX</button>
+      <button class="pickerBtn" id="pickChessBtn">♟️ Satranç</button>
+    </div>
+  </div>
+
+  <!-- XOX modal -->
+  <div id="xoxModal" class="modalOverlay hidden">
+    <div class="modalCard">
+      <div class="modalHeaderRow">
+        <span class="modalTitle">XOX — <span id="xoxContactName"></span></span>
+        <button class="modalClose" id="xoxClose">✕</button>
+      </div>
+      <div class="modalStatus" id="xoxStatus"></div>
+      <div class="xoxBoard" id="xoxBoard"></div>
+      <button class="modalStartBtn hidden" id="xoxStartBtn"></button>
+    </div>
+  </div>
+
+  <!-- Chess modal -->
+  <div id="chessModal" class="modalOverlay hidden">
+    <div class="modalCard">
+      <div class="modalHeaderRow">
+        <span class="modalTitle">Satranç — <span id="chessContactName"></span></span>
+        <button class="modalClose" id="chessClose">✕</button>
+      </div>
+      <div class="modalStatus" id="chessStatus"></div>
+      <div class="chessBoard" id="chessBoard"></div>
+      <button class="modalStartBtn hidden" id="chessStartBtn"></button>
     </div>
   </div>
 
@@ -304,6 +474,10 @@ import {
 import {
   getStorage, ref, uploadBytes, getDownloadURL,
 } from 'https://www.gstatic.com/firebasejs/12.17.1/firebase-storage.js';
+// Same chess engine/version as the mobile app's package.json ("chess.js":
+// "^1.4.0") — legality checking must agree between the two clients since
+// they read/write the exact same rooms/{roomId}/game/chess Firestore doc.
+import { Chess } from 'https://esm.sh/chess.js@1.4.0';
 
 // Same project config as the mobile app (src/config/firebaseConfig.ts) —
 // these are not secrets, just public client identifiers; access is gated
@@ -366,17 +540,27 @@ const authSubmit = $('authSubmit'), authToggle = $('authToggle'), authError = $(
 const whoLabel = $('whoLabel'), whoSub = $('whoSub'), quotaBanner = $('quotaBanner');
 const addContactInput = $('addContactInput'), contactList = $('contactList');
 const chatEmpty = $('chatEmpty'), chatHeaderWrap = $('chatHeaderWrap'), chatHeader = $('chatHeader');
+const chatHeaderName = $('chatHeaderName'), gameBtn = $('gameBtn');
 const chatQuota = $('chatQuota'), messagesEl = $('messages'), globalError = $('globalError');
 const textInput = $('textInput'), sendBtn = $('sendBtn');
 const attachBtn = $('attachBtn'), fileInput = $('fileInput'), uploadStatus = $('uploadStatus');
+const gamePickerModal = $('gamePickerModal'), gamePickerContactName = $('gamePickerContactName');
+const pickXoxBtn = $('pickXoxBtn'), pickChessBtn = $('pickChessBtn'), gamePickerClose = $('gamePickerClose');
+const xoxModal = $('xoxModal'), xoxContactName = $('xoxContactName'), xoxStatus = $('xoxStatus');
+const xoxBoardEl = $('xoxBoard'), xoxStartBtn = $('xoxStartBtn'), xoxClose = $('xoxClose');
+const chessModal = $('chessModal'), chessContactName = $('chessContactName'), chessStatus = $('chessStatus');
+const chessBoardEl = $('chessBoard'), chessStartBtn = $('chessStartBtn'), chessClose = $('chessClose');
 
 let isRegisterMode = false;
 let myUid = null, myUsername = null;
 let contacts = []; // {uid, name}
 let activeContactUid = null;
+let activeContact = null;
 let roomUnsub = null;
 let contactListUnsubs = [];
 let profileUnsub = null;
+let xoxUnsub = null, xoxGame = null;
+let chessUnsub = null, chessGameState = null, chessSelected = null;
 // When this session started — only messages newer than this trigger a
 // desktop notification, so re-opening the app doesn't re-notify for the
 // whole existing history. Tracked per contact so a burst from the same
@@ -490,8 +674,11 @@ function cleanupSession() {
   contactListUnsubs = [];
   if (roomUnsub) roomUnsub();
   if (profileUnsub) profileUnsub();
+  if (xoxUnsub) xoxUnsub();
+  if (chessUnsub) chessUnsub();
   contacts = [];
   activeContactUid = null;
+  activeContact = null;
   contactList.innerHTML = '';
   messagesEl.innerHTML = '';
 }
@@ -601,9 +788,10 @@ function escapeHtml(str) {
 // ---- Chat room ----
 function openRoom(contact) {
   activeContactUid = contact.uid;
+  activeContact = contact;
   chatEmpty.classList.add('hidden');
   chatHeaderWrap.classList.remove('hidden');
-  chatHeader.textContent = contact.name;
+  chatHeaderName.textContent = contact.name;
   renderContactList();
 
   if (roomUnsub) roomUnsub();
@@ -615,6 +803,17 @@ function openRoom(contact) {
     docs.forEach(d => messagesEl.appendChild(renderMessage(d.data())));
     messagesEl.scrollTop = messagesEl.scrollHeight;
   }, error => showError(`Sohbete bağlanılamadı: ${error.message}`));
+
+  if (xoxUnsub) xoxUnsub();
+  xoxUnsub = onSnapshot(gameDocRef(roomId, 'ticTacToe'), snap => {
+    xoxGame = snap.exists() ? snap.data() : null;
+    if (!xoxModal.classList.contains('hidden')) renderXoxModal();
+  });
+  if (chessUnsub) chessUnsub();
+  chessUnsub = onSnapshot(gameDocRef(roomId, 'chess'), snap => {
+    chessGameState = snap.exists() ? snap.data() : null;
+    if (!chessModal.classList.contains('hidden')) renderChessModal();
+  });
 }
 
 function formatTime(ts) {
@@ -724,6 +923,234 @@ function resizeImageToDataUri(file, maxSize, quality) {
     };
     reader.readAsDataURL(file);
   });
+}
+
+// ---- Games: XOX + Satranç (contact mode) ----
+// Both read/write the exact same rooms/{roomId}/game/{ticTacToe|chess} docs
+// as the mobile app's ticTacToeService.ts / chessService.ts (contact mode
+// only — no room-code matchmaking here) — a PC user and a phone user can
+// play each other, same Firestore doc as single source of truth.
+function gameDocRef(roomId, kind) {
+  return doc(db, 'rooms', roomId, 'game', kind);
+}
+
+function closeAllGameModals() {
+  gamePickerModal.classList.add('hidden');
+  xoxModal.classList.add('hidden');
+  chessModal.classList.add('hidden');
+  chessSelected = null;
+}
+
+gameBtn.addEventListener('click', () => {
+  if (!activeContact) return;
+  gamePickerContactName.textContent = activeContact.name;
+  gamePickerModal.classList.remove('hidden');
+});
+gamePickerClose.addEventListener('click', closeAllGameModals);
+gamePickerModal.addEventListener('click', e => { if (e.target === gamePickerModal) closeAllGameModals(); });
+
+pickXoxBtn.addEventListener('click', () => {
+  gamePickerModal.classList.add('hidden');
+  xoxContactName.textContent = activeContact.name;
+  xoxModal.classList.remove('hidden');
+  renderXoxModal();
+});
+xoxClose.addEventListener('click', closeAllGameModals);
+xoxModal.addEventListener('click', e => { if (e.target === xoxModal) closeAllGameModals(); });
+
+pickChessBtn.addEventListener('click', () => {
+  gamePickerModal.classList.add('hidden');
+  chessContactName.textContent = activeContact.name;
+  chessSelected = null;
+  chessModal.classList.remove('hidden');
+  renderChessModal();
+});
+chessClose.addEventListener('click', closeAllGameModals);
+chessModal.addEventListener('click', e => { if (e.target === chessModal) closeAllGameModals(); });
+
+// ---- XOX ----
+const XOX_WIN_LINES = [[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
+function xoxWinLine(board, mark) {
+  return XOX_WIN_LINES.find(line => line.every(i => board[i] === mark)) || null;
+}
+
+async function startXoxGame() {
+  const roomId = roomIdFor(myUid, activeContactUid);
+  await setDoc(gameDocRef(roomId, 'ticTacToe'), {
+    board: Array(9).fill(null), playerX: myUid, playerO: activeContactUid,
+    turnUid: myUid, status: 'active', outcome: null, updatedAt: serverTimestamp(),
+  });
+}
+
+async function playXoxMove(index) {
+  const game = xoxGame;
+  if (!game || game.status !== 'active' || game.turnUid !== myUid || game.board[index]) return;
+  const myMark = game.playerX === myUid ? 'X' : 'O';
+  const nextBoard = game.board.slice();
+  nextBoard[index] = myMark;
+  const won = xoxWinLine(nextBoard, myMark);
+  const isDraw = !won && nextBoard.every(c => c !== null);
+  const opponentUid = myMark === 'X' ? game.playerO : game.playerX;
+  const roomId = roomIdFor(myUid, activeContactUid);
+  await setDoc(gameDocRef(roomId, 'ticTacToe'), {
+    board: nextBoard, playerX: game.playerX, playerO: game.playerO,
+    turnUid: won || isDraw ? game.turnUid : opponentUid,
+    status: won || isDraw ? 'finished' : 'active',
+    outcome: won ? (myMark === 'X' ? 'x' : 'o') : (isDraw ? 'draw' : null),
+    updatedAt: serverTimestamp(),
+  });
+}
+
+function renderXoxModal() {
+  const game = xoxGame;
+  const myMark = game && game.playerX === myUid ? 'X' : (game && game.playerO === myUid ? 'O' : null);
+  const isMyTurn = !!game && game.status === 'active' && game.turnUid === myUid;
+  const winLine = (game && game.status === 'finished' && game.outcome && game.outcome !== 'draw')
+    ? xoxWinLine(game.board, game.outcome === 'x' ? 'X' : 'O') : null;
+
+  if (!game || game.status === 'finished') {
+    xoxStatus.textContent = game
+      ? (game.outcome === 'draw' ? 'Berabere' : (((game.outcome === 'x' && myMark === 'X') || (game.outcome === 'o' && myMark === 'O')) ? 'Kazandın! 🎉' : `${activeContact.name} kazandı`))
+      : `${activeContact.name} ile yeni bir oyun başlat`;
+  } else {
+    xoxStatus.textContent = isMyTurn ? 'Sırası sende' : `Sırası ${activeContact.name}'da`;
+  }
+
+  xoxBoardEl.innerHTML = '';
+  for (let row = 0; row < 3; row++) {
+    const rowEl = document.createElement('div');
+    rowEl.className = 'xoxRow';
+    for (let col = 0; col < 3; col++) {
+      const i = row * 3 + col;
+      const cell = game ? game.board[i] : null;
+      const cellEl = document.createElement('div');
+      cellEl.className = 'xoxCell' + (cell === 'X' ? ' x' : cell === 'O' ? ' o' : '') + (winLine && winLine.includes(i) ? ' win' : '');
+      cellEl.textContent = cell || '';
+      cellEl.addEventListener('click', () => playXoxMove(i));
+      rowEl.appendChild(cellEl);
+    }
+    xoxBoardEl.appendChild(rowEl);
+  }
+
+  if (!game || game.status === 'finished') {
+    xoxStartBtn.textContent = game ? 'YENİDEN OYNA' : 'OYUNU BAŞLAT';
+    xoxStartBtn.classList.remove('hidden');
+    xoxStartBtn.onclick = startXoxGame;
+  } else {
+    xoxStartBtn.classList.add('hidden');
+  }
+}
+
+// ---- Chess ----
+const CHESS_FILES = ['a','b','c','d','e','f','g','h'];
+const CHESS_PIECE_GLYPHS = {
+  wk: '♔', wq: '♕', wr: '♖', wb: '♗', wn: '♘', wp: '♙',
+  bk: '♚', bq: '♛', br: '♜', bb: '♝', bn: '♞', bp: '♟',
+};
+
+async function startChessGame() {
+  const roomId = roomIdFor(myUid, activeContactUid);
+  await setDoc(gameDocRef(roomId, 'chess'), {
+    fen: new Chess().fen(), playerWhite: myUid, playerBlack: activeContactUid,
+    status: 'active', outcome: null, updatedAt: serverTimestamp(),
+  });
+}
+
+async function playChessMove(from, to) {
+  const game = chessGameState;
+  if (!game || game.status !== 'active') return;
+  const isWhite = game.playerWhite === myUid;
+  const chess = new Chess(game.fen);
+  if ((chess.turn() === 'w') !== isWhite) return;
+  try {
+    chess.move({ from, to, promotion: 'q' });
+  } catch {
+    return; // illegal move — ignore the click, same trust model as chessService.ts
+  }
+  let outcome = null;
+  if (chess.isCheckmate()) outcome = isWhite ? 'white' : 'black';
+  else if (chess.isDraw() || chess.isStalemate()) outcome = 'draw';
+  const roomId = roomIdFor(myUid, activeContactUid);
+  await setDoc(gameDocRef(roomId, 'chess'), {
+    fen: chess.fen(), status: chess.isGameOver() ? 'finished' : 'active', outcome, updatedAt: serverTimestamp(),
+  }, { merge: true });
+}
+
+function renderChessModal() {
+  const game = chessGameState;
+  const myColor = game ? (game.playerWhite === myUid ? 'w' : (game.playerBlack === myUid ? 'b' : null)) : null;
+  const fen = game ? game.fen : new Chess().fen();
+  const chess = new Chess(fen);
+  const isMyTurn = !!game && game.status === 'active' && !!myColor && chess.turn() === myColor;
+
+  if (!game || game.status === 'finished') {
+    chessStatus.textContent = game
+      ? (game.outcome === 'draw' ? 'Berabere' : (((game.outcome === 'white' && myColor === 'w') || (game.outcome === 'black' && myColor === 'b')) ? 'Kazandın! 🎉' : `${activeContact.name} kazandı`))
+      : `${activeContact.name} ile yeni bir oyun başlat`;
+  } else {
+    chessStatus.textContent = isMyTurn ? 'Sırası sende' : `Sırası ${activeContact.name}'da`;
+  }
+
+  const legalTargets = chessSelected && isMyTurn
+    ? new Set(chess.moves({ square: chessSelected, verbose: true }).map(m => m.to))
+    : new Set();
+
+  const ranks = myColor === 'b' ? [1,2,3,4,5,6,7,8] : [8,7,6,5,4,3,2,1];
+  const files = myColor === 'b' ? [...CHESS_FILES].reverse() : CHESS_FILES;
+
+  chessBoardEl.innerHTML = '';
+  ranks.forEach(rank => {
+    const rowEl = document.createElement('div');
+    rowEl.className = 'chessRowEl';
+    files.forEach(file => {
+      const square = `${file}${rank}`;
+      const piece = chess.get(square);
+      const isDark = (CHESS_FILES.indexOf(file) + rank) % 2 === 1;
+      const sqEl = document.createElement('div');
+      sqEl.className = 'chessSquare ' + (isDark ? 'dark' : 'light')
+        + (chessSelected === square ? ' selected' : '')
+        + (legalTargets.has(square) ? ' target' : '');
+      if (piece) {
+        const glyph = document.createElement('span');
+        glyph.className = 'piece';
+        glyph.textContent = CHESS_PIECE_GLYPHS[`${piece.color}${piece.type}`];
+        sqEl.appendChild(glyph);
+      }
+      sqEl.addEventListener('click', () => handleChessSquareClick(square));
+      rowEl.appendChild(sqEl);
+    });
+    chessBoardEl.appendChild(rowEl);
+  });
+
+  if (!game || game.status === 'finished') {
+    chessStartBtn.textContent = game ? 'YENİDEN OYNA' : 'OYUNU BAŞLAT';
+    chessStartBtn.classList.remove('hidden');
+    chessStartBtn.onclick = startChessGame;
+  } else {
+    chessStartBtn.classList.add('hidden');
+  }
+}
+
+function handleChessSquareClick(square) {
+  const game = chessGameState;
+  if (!game || game.status !== 'active') return;
+  const myColor = game.playerWhite === myUid ? 'w' : (game.playerBlack === myUid ? 'b' : null);
+  const chess = new Chess(game.fen);
+  const isMyTurn = !!myColor && chess.turn() === myColor;
+  if (!isMyTurn) return;
+
+  if (chessSelected) {
+    const legalTargets = new Set(chess.moves({ square: chessSelected, verbose: true }).map(m => m.to));
+    if (legalTargets.has(square)) {
+      const from = chessSelected;
+      chessSelected = null;
+      playChessMove(from, square);
+      return;
+    }
+  }
+  const piece = chess.get(square);
+  chessSelected = (piece && piece.color === myColor) ? square : null;
+  renderChessModal();
 }
 </script>
 </body>

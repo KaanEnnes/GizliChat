@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Exposes the app's cache dir (where UpdateService downloads the new APK via
+  react-native-fs' RNFS.CachesDirectoryPath) through a content:// URI, so the
+  system package installer can read it without needing legacy
+  WRITE/READ_EXTERNAL_STORAGE — see ApkInstallerModule.kt.
+-->
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <cache-path name="apk_updates" path="." />
+</paths>

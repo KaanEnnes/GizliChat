@@ -35,7 +35,7 @@ function StorageQuotaBanner({ usedBytes, variant = 'card' }: Props): React.JSX.E
         { backgroundColor: theme.surface, borderColor: theme.border },
       ]}>
       <Text style={[styles.label, { color: nearFull ? theme.warning : theme.textMuted }]} numberOfLines={1}>
-        geriye kalan video yükleme alanı: {usedMb}mb / {totalMb}mb
+        video/dosya yükleme alanı: {usedMb}mb / {totalMb}mb
       </Text>
       <View style={[styles.track, { backgroundColor: theme.border }]}>
         <View

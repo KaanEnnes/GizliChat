@@ -86,3 +86,31 @@ mekanizması (şu an Firestore `subscribeToLatestMessage` dinleyicileri)
 bir FCM arka plan mesaj handler'ıyla değiştirilebilir — toast UI'ı, ses
 (`soundService.playNotificationSound`) ve titreşim (`hapticsService.
 vibrateShort`) zaten hazır, aynen kullanılabilir.
+
+6) UYGULAMA İÇİ GÜNCELLEME YAYINLAMA (her yeni sürümde elle yapılır)
+-----------------------------------------------------------------------
+Sohbet ana ekranındaki "Yeni sürüm hazır" bandı (`UpdateBanner.tsx` +
+`updateService.ts`) Firestore'daki `app_config/android` dokümanına bakar.
+Yeni bir sürüm yayınlamak için:
+
+- `android/app/build.gradle` içindeki `versionCode`'u bir artır, istersen
+  `versionName`'i de güncelle (örn. "1.1"), sonra release APK'yı derle
+  (`cd android && ./gradlew assembleRelease`).
+- Derlenen dosyayı (`android/app/build/outputs/apk/release/app-release.apk`)
+  bu projenin kökündeki `public/` klasörüne kopyala, örn.
+  `public/app-release-1.1.apk` adıyla (her sürüm için farklı ad kullan ki
+  eski sürümü indirmiş biri yarım kalmış bir dosyayla karşılaşmasın).
+- `firebase deploy --only hosting` ile yayınla — bu proje zaten Blaze
+  planında (Cloud Functions kullanıyor), ama Hosting yine de tercih edildi
+  çünkü Storage'dan farklı olarak indirme URL'si için auth token gerektirmiyor.
+  Yayınlanan dosyanın adresi şöyle olur:
+  `https://<hosting-domainin>/app-release-1.1.apk`.
+- Firebase Console -> Firestore Database -> `app_config` koleksiyonu ->
+  `android` dokümanını aç (yoksa oluştur) ve şu alanları yaz:
+    - `versionCode` (number): build.gradle'a yazdığın yeni versionCode
+    - `versionName` (string): örn. "1.1"
+    - `apkUrl` (string): yukarıdaki Hosting adresi
+    - `notes` (string, opsiyonel): "Neler yeni" metni, bandın altında görünür
+- Bu dokümanı gördükten sonra, kendi versionCode'u bundan düşük olan her
+  cihazda banner otomatik belirir; "Güncelle" butonu APK'yı indirip sistem
+  paket yükleyicisini açar (`ApkInstallerModule.kt`).

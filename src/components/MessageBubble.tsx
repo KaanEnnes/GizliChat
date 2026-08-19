@@ -1,10 +1,54 @@
 import React, { useEffect, useState } from 'react';
-import { Image, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, Image, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import Video from 'react-native-video';
+import RNFS from 'react-native-fs';
+import ReactNativeBlobUtil from 'react-native-blob-util';
 import type { ChatMessage } from '../services/chatService';
 import AudioMessagePlayer from './AudioMessagePlayer';
 import { useTheme } from '../theme/ThemeContext';
 import { getCachedVideoUri } from '../services/videoCacheService';
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  }
+  if (bytes < 1024 * 1024) {
+    return `${(bytes / 1024).toFixed(1)} KB`;
+  }
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/**
+ * Saves a received file (mediaUrl is either an inline base64 data: URI or a
+ * Storage download URL) into the device's public Downloads collection so the
+ * user can open it from their file manager. Android 10+ (scoped storage)
+ * blocks plain File writes to a shared path like Downloads, so the file is
+ * first staged in the app's own cache dir, then handed to
+ * react-native-blob-util's MediaStore API to actually land it in Downloads —
+ * a raw RNFS.writeFile straight to a public Downloads path would silently
+ * fail (EACCES) on most real devices at this project's targetSdk (36).
+ */
+async function downloadFile(mediaUrl: string, fileName: string): Promise<void> {
+  const stagingPath = `${RNFS.CachesDirectoryPath}/${Date.now()}-${fileName}`;
+  if (mediaUrl.startsWith('data:')) {
+    const base64 = mediaUrl.slice(mediaUrl.indexOf(',') + 1);
+    await RNFS.writeFile(stagingPath, base64, 'base64');
+  } else {
+    await RNFS.downloadFile({ fromUrl: mediaUrl, toFile: stagingPath }).promise;
+  }
+
+  const dotIndex = fileName.lastIndexOf('.');
+  const extension = dotIndex >= 0 ? fileName.slice(dotIndex + 1) : '';
+  const mimeType = extension ? `application/${extension}` : 'application/octet-stream';
+
+  await ReactNativeBlobUtil.MediaCollection.copyToMediaStore(
+    { name: fileName, parentFolder: '', mimeType },
+    'Download',
+    stagingPath,
+  );
+  await RNFS.unlink(stagingPath).catch(() => undefined);
+  Alert.alert('Dosya indirildi', `"${fileName}" İndirilenler klasörüne kaydedildi.`);
+}
 
 /** Resolves a video message's remote URL to a locally-cached file path (see videoCacheService), downloading it at most once per device. */
 function useCachedVideoUri(remoteUrl: string | undefined): string | undefined {
@@ -76,6 +120,7 @@ function MessageBubble({
   const [viewerOpen, setViewerOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [revealed, setRevealed] = useState(false);
+  const [downloading, setDownloading] = useState(false);
   const bubbleColor = isMine ? theme.bubbleMine : theme.bubbleOther;
   const bubbleTextColor = isMine ? theme.bubbleMineText : theme.bubbleOtherText;
   const myReaction = message.reactions?.[myUid];
@@ -171,7 +216,7 @@ function MessageBubble({
     );
   }
 
-  const showHiddenOverlay = message.type === 'image' && message.hidden && !revealed;
+  const showHiddenOverlay = (message.type === 'image' || message.type === 'video') && message.hidden && !revealed;
 
   return (
     <View
@@ -191,14 +236,16 @@ function MessageBubble({
           { backgroundColor: bubbleColor },
           isMine ? styles.bubbleMine : styles.bubbleOther,
         ]}>
-        {message.type === 'image' && message.mediaUrl && showHiddenOverlay && (
+        {(message.type === 'image' || message.type === 'video') && message.mediaUrl && showHiddenOverlay && (
           <Pressable
             onPress={() => setRevealed(true)}
             style={[styles.hiddenMediaBox, { backgroundColor: theme.surfaceAlt }]}
             accessibilityRole="button"
-            accessibilityLabel="Gizli fotoğrafı göster">
+            accessibilityLabel={message.type === 'video' ? 'Gizli videoyu göster' : 'Gizli fotoğrafı göster'}>
             <Text style={styles.hiddenMediaIcon}>🙈</Text>
-            <Text style={[styles.hiddenMediaText, { color: theme.text }]}>Gizli Fotoğraf</Text>
+            <Text style={[styles.hiddenMediaText, { color: theme.text }]}>
+              {message.type === 'video' ? 'Gizli Video' : 'Gizli Fotoğraf'}
+            </Text>
             <Text style={[styles.hiddenMediaHint, { color: theme.textMuted }]}>Görmek için dokun</Text>
           </Pressable>
         )}
@@ -209,7 +256,7 @@ function MessageBubble({
           </Pressable>
         )}
 
-        {message.type === 'video' && cachedVideoUri && (
+        {message.type === 'video' && cachedVideoUri && !showHiddenOverlay && (
           <Pressable onPress={() => setViewerOpen(true)} style={styles.videoThumbWrap}>
             <Video
               source={{ uri: cachedVideoUri }}
@@ -221,6 +268,32 @@ function MessageBubble({
             />
             <View style={styles.playOverlay}>
               <Text style={styles.playOverlayIcon}>▶</Text>
+            </View>
+          </Pressable>
+        )}
+
+        {message.type === 'file' && message.mediaUrl && (
+          <Pressable
+            style={styles.fileRow}
+            disabled={downloading}
+            onPress={async () => {
+              setDownloading(true);
+              try {
+                await downloadFile(message.mediaUrl as string, message.fileName || 'dosya');
+              } catch (error) {
+                Alert.alert('Dosya indirilemedi', (error as Error).message);
+              } finally {
+                setDownloading(false);
+              }
+            }}>
+            <Text style={styles.fileIcon}>{downloading ? '⏳' : '📄'}</Text>
+            <View style={styles.fileTextWrap}>
+              <Text style={[styles.fileName, { color: bubbleTextColor }]} numberOfLines={1}>
+                {message.fileName || 'Dosya'}
+              </Text>
+              <Text style={[styles.fileSize, { color: bubbleTextColor }]}>
+                {message.fileSize ? formatFileSize(message.fileSize) : ''} · {downloading ? 'İndiriliyor…' : 'İndirmek için dokun'}
+              </Text>
             </View>
           </Pressable>
         )}
@@ -490,6 +563,29 @@ const styles = StyleSheet.create({
     width: 220,
     height: 220,
     borderRadius: 10,
+  },
+  fileRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    maxWidth: 220,
+    minWidth: 160,
+    paddingVertical: 2,
+  },
+  fileIcon: {
+    fontSize: 26,
+    marginRight: 10,
+  },
+  fileTextWrap: {
+    flex: 1,
+  },
+  fileName: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  fileSize: {
+    fontSize: 11,
+    opacity: 0.7,
+    marginTop: 2,
   },
   videoThumbWrap: {
     justifyContent: 'center',

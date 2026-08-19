@@ -15,9 +15,11 @@ import {
   View,
 } from 'react-native';
 import { launchCamera, launchImageLibrary } from 'react-native-image-picker';
+import { pick, isErrorWithCode, errorCodes } from '@react-native-documents/picker';
 import Sound from 'react-native-nitro-sound';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import MessageBubble from '../components/MessageBubble';
+import AttachMenuModal from '../components/AttachMenuModal';
 import RecordingWaveform from '../components/RecordingWaveform';
 import Avatar from '../components/Avatar';
 import StorageQuotaBanner from '../components/StorageQuotaBanner';
@@ -38,6 +40,7 @@ import {
   MAX_MESSAGE_LIMIT,
   MESSAGE_LIMIT_STEP,
   pinMessage,
+  sendFileMessage,
   sendMediaMessage,
   sendMessage,
   setMessageReaction,
@@ -85,6 +88,7 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [uploadingMedia, setUploadingMedia] = useState(false);
+  const [attachMenuVisible, setAttachMenuVisible] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingLevel, setRecordingLevel] = useState(0);
   const [callStarting, setCallStarting] = useState(false);
@@ -445,14 +449,51 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
     [roomId, myUid],
   );
 
+  const handlePickFile = useCallback(async () => {
+    let picked;
+    try {
+      [picked] = await pick({ type: '*/*' });
+    } catch (error) {
+      if (isErrorWithCode(error) && error.code === errorCodes.OPERATION_CANCELED) {
+        return;
+      }
+      setConnectionError(`Dosya seçilemedi: ${(error as Error).message}`);
+      return;
+    }
+
+    const fileName = picked.name ?? 'dosya';
+    const fileSize = picked.size ?? 0;
+    setUploadingMedia(true);
+    try {
+      // Küçük dosyalar fotoğraflar gibi doğrudan Firestore'a gömülüyor;
+      // büyük dosyalar videoyla aynı yoldan Storage'a yükleniyor. Her iki
+      // durumda da gönderilen boyut kadar 5GB'lık depolama barına ekleniyor
+      // (fotoğraf/ses gibi küçük medyalardan farklı olarak — kullanıcı
+      // dosya göndermenin barı doldurmasını istedi).
+      if (fileSize > 0 && fileSize <= MAX_INLINE_MEDIA_DATA_URI_LENGTH * 0.7) {
+        const dataUri = await localFileToDataUri(picked.uri);
+        if (dataUri.length > MAX_INLINE_MEDIA_DATA_URI_LENGTH) {
+          throw new Error('Dosya çok büyük.');
+        }
+        await sendFileMessage(roomId, myUid, dataUri, fileName, fileSize);
+      } else {
+        const extension = fileName.includes('.') ? fileName.split('.').pop()! : 'bin';
+        const { url } = await uploadRoomMedia(roomId, 'file', picked.uri, extension);
+        await sendFileMessage(roomId, myUid, url, fileName, fileSize);
+      }
+      if (fileSize > 0) {
+        addVideoBytesUsed(myUid, fileSize).catch(() => undefined);
+      }
+    } catch (error) {
+      setConnectionError(`Dosya gönderilemedi: ${(error as Error).message}`);
+    } finally {
+      setUploadingMedia(false);
+    }
+  }, [roomId, myUid]);
+
   const handleAttachPress = useCallback(() => {
-    Alert.alert('Medya Gönder', undefined, [
-      { text: 'Galeri', onPress: () => handlePickMedia('library') },
-      { text: 'Kamera', onPress: () => handlePickMedia('camera') },
-      { text: '🙈 Gizli Fotoğraf', onPress: () => handlePickMedia('library', true) },
-      { text: 'Vazgeç', style: 'cancel' },
-    ]);
-  }, [handlePickMedia]);
+    setAttachMenuVisible(true);
+  }, []);
 
   const handleStartRecording = useCallback(() => {
     const startPromise = (async () => {
@@ -696,6 +737,15 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
         myUid={myUid}
         contact={contact}
         game={chessGame}
+      />
+
+      <AttachMenuModal
+        visible={attachMenuVisible}
+        onClose={() => setAttachMenuVisible(false)}
+        onGallery={() => handlePickMedia('library')}
+        onCamera={() => handlePickMedia('camera')}
+        onHiddenMedia={() => handlePickMedia('library', true)}
+        onFile={() => handlePickFile()}
       />
 
       {pinnedMessagePreview && (

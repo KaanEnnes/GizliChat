@@ -23,7 +23,7 @@ import { auth, db } from './firebase';
 /** A contact is shown as "online" if their last heartbeat was within this window. */
 export const ONLINE_THRESHOLD_MS = 60_000;
 
-/** Soft, self-imposed cap on total video bytes a single account may upload — keeps Storage usage (and Blaze cost) predictable, not a hard Firebase limit. */
+/** Soft, self-imposed cap on total video+file bytes a single account may upload — keeps Storage usage (and Blaze cost) predictable, not a hard Firebase limit. */
 export const VIDEO_STORAGE_QUOTA_BYTES = 5120 * 1024 * 1024;
 
 export interface UserProfile {
@@ -182,7 +182,7 @@ export async function updateProfilePhoto(uid: string, dataUri: string | null): P
   await setDoc(doc(db, 'users', uid), { photoUrl: dataUri }, { merge: true });
 }
 
-/** Adds `bytes` to this account's running video-upload total (see VIDEO_STORAGE_QUOTA_BYTES) — called once per successful video upload. */
+/** Adds `bytes` to this account's running video/file-upload total (see VIDEO_STORAGE_QUOTA_BYTES) — called once per successful video upload or file message send. */
 export async function addVideoBytesUsed(uid: string, bytes: number): Promise<void> {
   await setDoc(doc(db, 'users', uid), { videoBytesUsed: increment(bytes) }, { merge: true });
 }

@@ -28,6 +28,7 @@ import { useTheme } from '../theme/ThemeContext';
 import { useNetworkStatus } from '../hooks/useNetworkStatus';
 import Avatar from '../components/Avatar';
 import StorageQuotaBanner from '../components/StorageQuotaBanner';
+import UpdateBanner from '../components/UpdateBanner';
 
 const WEEKDAYS_TR = ['Paz', 'Pzt', 'Sal', 'Çar', 'Per', 'Cum', 'Cmt'];
 // How often "online" status is re-evaluated against the wall clock — a
@@ -65,6 +66,8 @@ function formatPreview(message: ChatMessage | null | undefined, myUid: string): 
       return `${prefix}🎥 Video`;
     case 'audio':
       return `${prefix}🎤 Sesli mesaj`;
+    case 'file':
+      return `${prefix}📄 Dosya`;
     case 'call': {
       const kind = message.callVideo ? 'Görüntülü arama' : 'Sesli arama';
       if (message.callStatus === 'missed') {
@@ -414,6 +417,7 @@ function ContactsScreen({ account, onOpenRoom, onOpenGames, onLogout }: Props): 
         </View>
 
         <StorageQuotaBanner usedBytes={ownProfile.videoBytesUsed} variant="card" />
+        <UpdateBanner />
 
         {!isOnline && (
           <View style={[styles.offlineBanner, { backgroundColor: theme.warningSoft }]}>

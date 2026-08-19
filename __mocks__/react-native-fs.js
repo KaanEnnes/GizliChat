@@ -6,6 +6,8 @@ const RNFS = {
   mkdir: () => Promise.resolve(),
   exists: () => Promise.resolve(false),
   downloadFile: () => ({ promise: Promise.resolve({ statusCode: 200 }) }),
+  writeFile: () => Promise.resolve(),
+  unlink: () => Promise.resolve(),
 };
 
 module.exports = RNFS;

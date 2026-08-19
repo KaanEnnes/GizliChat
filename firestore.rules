@@ -63,7 +63,7 @@ service cloud.firestore {
           resource.data.senderId == request.auth.uid &&
           resource.data.type == 'text' &&
           resource.data.get('deleted', false) == false) ||
-        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['deleted', 'text', 'mediaUrl']) &&
+        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['deleted', 'text', 'mediaUrl', 'fileName', 'fileSize']) &&
           resource.data.senderId == request.auth.uid &&
           request.resource.data.deleted == true)
       );
@@ -102,6 +102,15 @@ service cloud.firestore {
         (resource.data.playerBlack == '' && request.resource.data.playerBlack == request.auth.uid)
       );
       allow delete: if false;
+    }
+
+    match /app_config/{configId} {
+      // Read-only from the app (UpdateService checks this for a newer APK on
+      // launch) — written manually via the Firebase Console after publishing
+      // a new release build, same pattern as this project's other manual
+      // Firebase Console steps (see YAPILACAKLAR.txt).
+      allow read: if isSignedIn();
+      allow write: if false;
     }
 
     match /highscores/{scoreId} {

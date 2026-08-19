@@ -3,7 +3,7 @@ import { app } from './firebase';
 
 const storage = getStorage(app);
 
-export type MediaKind = 'image' | 'video' | 'audio';
+export type MediaKind = 'image' | 'video' | 'audio' | 'file';
 
 /**
  * Uploads a local file (picked/recorded on-device, given as a `file://` uri)

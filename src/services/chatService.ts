@@ -16,7 +16,7 @@ import {
 } from 'firebase/firestore';
 import { db } from './firebase';
 
-export type MessageType = 'text' | 'image' | 'video' | 'audio' | 'call';
+export type MessageType = 'text' | 'image' | 'video' | 'audio' | 'file' | 'call';
 export type CallLogStatus = 'completed' | 'missed';
 
 export interface ChatMessage {
@@ -34,6 +34,10 @@ export interface ChatMessage {
    * both URL shapes transparently via the same `uri` prop.
    */
   mediaUrl?: string;
+  /** Present for 'file' messages: the original filename, shown in the bubble and used as the saved name on download. */
+  fileName?: string;
+  /** Present for 'file' messages: size in bytes, shown next to the filename. */
+  fileSize?: number;
   /** Present for audio messages: recording length in seconds, for the player UI. Also reused for 'call' messages (see below). */
   durationSeconds?: number;
   /** Present for 'call' messages: whether it was a video or voice call. */
@@ -124,6 +128,8 @@ function docToMessage(docSnap: {
     senderId: typeof data.senderId === 'string' ? data.senderId : '',
     createdAt,
     mediaUrl: typeof data.mediaUrl === 'string' ? data.mediaUrl : undefined,
+    fileName: typeof data.fileName === 'string' ? data.fileName : undefined,
+    fileSize: typeof data.fileSize === 'number' ? data.fileSize : undefined,
     durationSeconds: typeof data.durationSeconds === 'number' ? data.durationSeconds : undefined,
     callVideo: typeof data.callVideo === 'boolean' ? data.callVideo : undefined,
     callStatus:
@@ -238,7 +244,7 @@ export async function sendCallLogMessage(
 export async function sendMediaMessage(
   roomId: string,
   senderId: string,
-  type: Exclude<MessageType, 'text'>,
+  type: Exclude<MessageType, 'text' | 'file' | 'call'>,
   mediaUrl: string,
   durationSeconds?: number,
   hidden?: boolean,
@@ -251,6 +257,25 @@ export async function sendMediaMessage(
     mediaUrl,
     ...(durationSeconds !== undefined ? { durationSeconds } : {}),
     ...(hidden ? { hidden: true } : {}),
+  });
+}
+
+/** Sends an already-uploaded arbitrary file message (see mediaService.ts's uploadRoomMedia/localFileToDataUri for the upload step). */
+export async function sendFileMessage(
+  roomId: string,
+  senderId: string,
+  mediaUrl: string,
+  fileName: string,
+  fileSize: number,
+): Promise<void> {
+  await addDoc(collection(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION), {
+    type: 'file',
+    text: '',
+    senderId,
+    createdAt: serverTimestamp(),
+    mediaUrl,
+    fileName,
+    fileSize,
   });
 }
 
@@ -267,7 +292,13 @@ export async function editMessage(roomId: string, messageId: string, newText: st
 /** Soft-deletes a message: clears its content but keeps the doc (and its position in history) so the other side sees a "message deleted" placeholder — sender-only (enforced by firestore.rules). */
 export async function deleteMessage(roomId: string, messageId: string): Promise<void> {
   const messageRef = doc(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION, messageId);
-  await updateDoc(messageRef, { deleted: true, text: '', mediaUrl: deleteField() });
+  await updateDoc(messageRef, {
+    deleted: true,
+    text: '',
+    mediaUrl: deleteField(),
+    fileName: deleteField(),
+    fileSize: deleteField(),
+  });
 }
 
 // ---- Pinned message: one per room, stored on the room doc itself ----
