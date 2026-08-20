@@ -18,7 +18,7 @@ import { launchCamera, launchImageLibrary } from 'react-native-image-picker';
 import { pick, isErrorWithCode, errorCodes } from '@react-native-documents/picker';
 import Sound from 'react-native-nitro-sound';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import MessageBubble from '../components/MessageBubble';
+import MessageBubble, { replyPreviewLabel } from '../components/MessageBubble';
 import AttachMenuModal from '../components/AttachMenuModal';
 import RecordingWaveform from '../components/RecordingWaveform';
 import Avatar from '../components/Avatar';
@@ -103,6 +103,7 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
   const [pinnedMessageId, setPinnedMessageId] = useState<string | null>(null);
   const [pinnedMessagePreview, setPinnedMessagePreview] = useState<ChatMessage | null>(null);
   const [editingMessage, setEditingMessage] = useState<ChatMessage | null>(null);
+  const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
   const listRef = useRef<FlatList<ChatMessage>>(null);
   const recordingStartedAtRef = useRef<number | null>(null);
   const lastMessageIdRef = useRef<string | null>(null);
@@ -357,6 +358,15 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
     setDraft('');
   }, []);
 
+  const handleReplyRequest = useCallback((message: ChatMessage) => {
+    setEditingMessage(null);
+    setReplyingTo(message);
+  }, []);
+
+  const handleCancelReply = useCallback(() => {
+    setReplyingTo(null);
+  }, []);
+
   const handleSend = useCallback(() => {
     const trimmed = draft.trim();
     if (!trimmed || sendingRef.current) {
@@ -365,13 +375,24 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
     sendingRef.current = true;
     setSending(true);
     const editing = editingMessage;
-    const request = editing ? editMessage(roomId, editing.id, trimmed) : sendMessage(roomId, trimmed, myUid);
+    const replying = replyingTo;
+    const request = editing
+      ? editMessage(roomId, editing.id, trimmed)
+      : sendMessage(
+          roomId,
+          trimmed,
+          myUid,
+          replying
+            ? { messageId: replying.id, text: replying.text, senderId: replying.senderId, type: replying.type }
+            : undefined,
+        );
     request
       .then(() => {
         // Only cleared on success — on failure the draft stays in the input
         // so the user can just press send again instead of retyping it.
         setDraft('');
         setEditingMessage(null);
+        setReplyingTo(null);
       })
       .catch(error => {
         setConnectionError(editing ? `Mesaj düzenlenemedi: ${error.message}` : `Mesaj gönderilemedi: ${error.message}`);
@@ -380,7 +401,7 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
         sendingRef.current = false;
         setSending(false);
       });
-  }, [draft, roomId, myUid, editingMessage]);
+  }, [draft, roomId, myUid, editingMessage, replyingTo]);
 
   const handlePickMedia = useCallback(
     (source: 'library' | 'camera', hidden?: boolean) => {
@@ -606,6 +627,7 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
   }, [roomId]);
 
   const handleEditRequest = useCallback((message: ChatMessage) => {
+    setReplyingTo(null);
     setEditingMessage(message);
     setDraft(message.text);
   }, []);
@@ -809,6 +831,7 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
               onUnpin={handleUnpinMessage}
               onEdit={handleEditRequest}
               onDelete={handleDeleteMessage}
+              onReply={handleReplyRequest}
             />
           )}
           contentContainerStyle={styles.listContent}
@@ -855,6 +878,18 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
             Mesajı düzenliyorsun: {editingMessage.text}
           </Text>
           <Pressable onPress={handleCancelEdit} hitSlop={8} accessibilityRole="button" accessibilityLabel="Düzenlemeyi iptal et">
+            <Text style={[styles.editingBannerClose, { color: theme.textFaint }]}>✕</Text>
+          </Pressable>
+        </View>
+      )}
+
+      {replyingTo && (
+        <View style={[styles.editingBanner, { backgroundColor: theme.surfaceAlt, borderTopColor: theme.border }]}>
+          <Text style={[styles.editingBannerIcon, { color: theme.identity }]}>↩️</Text>
+          <Text style={[styles.editingBannerText, { color: theme.textMuted }]} numberOfLines={1}>
+            Yanıtlıyorsun: {replyingTo.type === 'text' ? replyingTo.text : replyPreviewLabel(replyingTo)}
+          </Text>
+          <Pressable onPress={handleCancelReply} hitSlop={8} accessibilityRole="button" accessibilityLabel="Yanıtlamayı iptal et">
             <Text style={[styles.editingBannerClose, { color: theme.textFaint }]}>✕</Text>
           </Pressable>
         </View>

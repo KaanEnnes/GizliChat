@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { Alert, Image, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { Alert, Animated, Image, Modal, PanResponder, Pressable, StyleSheet, Text, View } from 'react-native';
 import Video from 'react-native-video';
 import RNFS from 'react-native-fs';
 import ReactNativeBlobUtil from 'react-native-blob-util';
@@ -84,9 +84,33 @@ interface Props {
   onUnpin: () => void;
   onEdit: (message: ChatMessage) => void;
   onDelete: (message: ChatMessage) => void;
+  onReply: (message: ChatMessage) => void;
 }
 
 const QUICK_EMOJIS = ['❤️', '🤍', '😂', '😮', '😢', '🙏', '👍'];
+
+/** How far (px) a message must be dragged before releasing it triggers reply. */
+const SWIPE_REPLY_THRESHOLD = 56;
+/** Hard cap on how far the bubble visually follows the finger, past which it just resists. */
+const SWIPE_MAX_DRAG = 84;
+
+/** One-line preview shown inside a reply quote block for non-text message types, which have no `text`. */
+export function replyPreviewLabel(message: ChatMessage): string {
+  switch (message.type) {
+    case 'image':
+      return '📷 Fotoğraf';
+    case 'video':
+      return '🎥 Video';
+    case 'audio':
+      return '🎤 Sesli mesaj';
+    case 'file':
+      return `📄 ${message.fileName || 'Dosya'}`;
+    case 'call':
+      return message.callVideo ? '🎥 Görüntülü arama' : '📞 Sesli arama';
+    default:
+      return message.deleted ? 'Bu mesaj silindi' : message.text;
+  }
+}
 
 function formatTime(timestamp: number): string {
   const date = new Date(timestamp);
@@ -115,12 +139,15 @@ function MessageBubble({
   onUnpin,
   onEdit,
   onDelete,
+  onReply,
 }: Props): React.JSX.Element {
   const { theme } = useTheme();
   const [viewerOpen, setViewerOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [revealed, setRevealed] = useState(false);
   const [downloading, setDownloading] = useState(false);
+  const swipeX = useRef(new Animated.Value(0)).current;
+  const swipeTriggered = useRef(false);
   const bubbleColor = isMine ? theme.bubbleMine : theme.bubbleOther;
   const bubbleTextColor = isMine ? theme.bubbleMineText : theme.bubbleOtherText;
   const myReaction = message.reactions?.[myUid];
@@ -171,6 +198,44 @@ function MessageBubble({
     setPickerOpen(false);
     onDelete(message);
   };
+
+  const handleReply = () => {
+    setPickerOpen(false);
+    onReply(message);
+  };
+
+  // Swipe-left-or-right-to-reply, WhatsApp style: the bubble follows the
+  // finger (clamped) and crossing SWIPE_REPLY_THRESHOLD fires onReply once
+  // per gesture; releasing always springs the bubble back to rest.
+  const panResponder = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (_evt, gesture) =>
+        Math.abs(gesture.dx) > 10 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.5,
+      onPanResponderGrant: () => {
+        swipeTriggered.current = false;
+      },
+      onPanResponderMove: (_evt, gesture) => {
+        const clamped = Math.max(-SWIPE_MAX_DRAG, Math.min(SWIPE_MAX_DRAG, gesture.dx));
+        swipeX.setValue(clamped);
+        if (!swipeTriggered.current && Math.abs(gesture.dx) > SWIPE_REPLY_THRESHOLD) {
+          swipeTriggered.current = true;
+          onReply(message);
+        }
+      },
+      onPanResponderRelease: () => {
+        Animated.spring(swipeX, { toValue: 0, useNativeDriver: true, friction: 6 }).start();
+      },
+      onPanResponderTerminate: () => {
+        Animated.spring(swipeX, { toValue: 0, useNativeDriver: true, friction: 6 }).start();
+      },
+      // Android: PanResponder defaults to blocking nested native touchables
+      // (e.g. the audio play button, image/file Pressables) from becoming
+      // the responder while this view is present in the tree, even when no
+      // swipe is in progress — without this, only the most recently touched
+      // bubble's inner Pressable stays tappable.
+      onShouldBlockNativeResponder: () => false,
+    }),
+  ).current;
 
   // WhatsApp-style call log entry — centered, not a left/right chat bubble.
   if (message.type === 'call') {
@@ -228,14 +293,43 @@ function MessageBubble({
       {isPinned && (
         <Text style={[styles.pinnedTag, { color: theme.textFaint }]}>📌 Sabitlendi</Text>
       )}
-      <Pressable
-        onLongPress={handleLongPress}
-        delayLongPress={280}
-        style={[
-          styles.bubble,
-          { backgroundColor: bubbleColor },
-          isMine ? styles.bubbleMine : styles.bubbleOther,
-        ]}>
+      <View style={[styles.swipeWrap, isMine ? styles.swipeWrapMine : styles.swipeWrapOther]}>
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            styles.swipeReplyIcon,
+            isMine ? styles.swipeReplyIconRight : styles.swipeReplyIconLeft,
+            {
+              opacity: swipeX.interpolate({
+                inputRange: [-SWIPE_MAX_DRAG, -SWIPE_REPLY_THRESHOLD, 0, SWIPE_REPLY_THRESHOLD, SWIPE_MAX_DRAG],
+                outputRange: [1, 0, 0, 0, 1],
+              }),
+            },
+          ]}>
+          <Text style={styles.swipeReplyIconText}>↩️</Text>
+        </Animated.View>
+        <Animated.View
+          {...panResponder.panHandlers}
+          style={{ transform: [{ translateX: swipeX }] }}>
+          <Pressable
+            onLongPress={handleLongPress}
+            delayLongPress={280}
+            style={[
+              styles.bubble,
+              { backgroundColor: bubbleColor },
+              isMine ? styles.bubbleMine : styles.bubbleOther,
+            ]}>
+            {message.replyTo && (
+              <View
+                style={[
+                  styles.replyQuote,
+                  { borderLeftColor: theme.identity, backgroundColor: theme.overlay },
+                ]}>
+                <Text style={[styles.replyQuoteText, { color: bubbleTextColor }]} numberOfLines={1}>
+                  {replyPreviewLabel({ ...message.replyTo, id: '', createdAt: 0 } as ChatMessage)}
+                </Text>
+              </View>
+            )}
         {(message.type === 'image' || message.type === 'video') && message.mediaUrl && showHiddenOverlay && (
           <Pressable
             onPress={() => setRevealed(true)}
@@ -343,7 +437,9 @@ function MessageBubble({
             ))}
           </View>
         )}
-      </Pressable>
+          </Pressable>
+        </Animated.View>
+      </View>
 
       <Modal visible={pickerOpen} transparent animationType="fade" onRequestClose={() => setPickerOpen(false)}>
         <Pressable
@@ -366,6 +462,13 @@ function MessageBubble({
           </View>
 
           <View style={[styles.actionCard, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+            <Pressable
+              style={styles.actionRow}
+              onPress={handleReply}
+              accessibilityRole="button"
+              accessibilityLabel="Mesajı yanıtla">
+              <Text style={[styles.actionRowText, { color: theme.text }]}>↩️  Yanıtla</Text>
+            </Pressable>
             <Pressable
               style={styles.actionRow}
               onPress={handlePin}
@@ -438,6 +541,43 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     paddingHorizontal: 14,
     paddingVertical: 9,
+  },
+  swipeWrap: {
+    justifyContent: 'center',
+  },
+  swipeWrapMine: {
+    alignItems: 'flex-end',
+  },
+  swipeWrapOther: {
+    alignItems: 'flex-start',
+  },
+  swipeReplyIcon: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    justifyContent: 'center',
+    alignItems: 'center',
+    width: 32,
+  },
+  swipeReplyIconLeft: {
+    left: -4,
+  },
+  swipeReplyIconRight: {
+    right: -4,
+  },
+  swipeReplyIconText: {
+    fontSize: 18,
+  },
+  replyQuote: {
+    borderLeftWidth: 3,
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    marginBottom: 6,
+  },
+  replyQuoteText: {
+    fontSize: 12.5,
+    opacity: 0.85,
   },
   bubbleMine: {
     borderBottomRightRadius: 4,

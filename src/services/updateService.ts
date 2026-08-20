@@ -60,17 +60,36 @@ export async function downloadAndInstallUpdate(
     throw new Error('Güncelleme yükleyici bu cihazda kullanılamıyor.');
   }
   const destPath = `${RNFS.CachesDirectoryPath}/update-${info.versionCode}.apk`;
+  // Stale partial file from a previously interrupted download at this same
+  // versionCode would otherwise get silently handed to the installer as-is.
+  await RNFS.unlink(destPath).catch(() => undefined);
 
-  await RNFS.downloadFile({
+  let lastResult: { bytesWritten: number; contentLength: number } = { bytesWritten: 0, contentLength: 0 };
+  const { statusCode } = await RNFS.downloadFile({
     fromUrl: info.apkUrl,
     toFile: destPath,
     progress: result => {
+      lastResult = result;
       if (onProgress && result.contentLength > 0) {
         onProgress(result.bytesWritten / result.contentLength);
       }
     },
     progressDivider: 5,
   }).promise;
+
+  // RNFS resolves rather than rejects on a bad HTTP status or a short read,
+  // so an interrupted/incomplete download would otherwise be handed straight
+  // to the system installer, which then fails to parse it and shows Android's
+  // generic "App not installed" toast with no useful explanation.
+  if (statusCode !== 200) {
+    await RNFS.unlink(destPath).catch(() => undefined);
+    throw new Error(`Güncelleme indirilemedi (sunucu kodu ${statusCode}). Lütfen tekrar deneyin.`);
+  }
+  const fileStat = await RNFS.stat(destPath);
+  if (lastResult.contentLength > 0 && fileStat.size !== lastResult.contentLength) {
+    await RNFS.unlink(destPath).catch(() => undefined);
+    throw new Error('Güncelleme indirmesi eksik kaldı (bağlantı kesildi). Lütfen tekrar deneyin.');
+  }
 
   await ApkInstaller.install(destPath);
 }

@@ -58,6 +58,13 @@ export interface ChatMessage {
   deleted?: boolean;
   /** Present for image/video messages sent as "gizli" (hidden) — the bubble shows a reveal button instead of the media until tapped. */
   hidden?: boolean;
+  /** Set when this message was sent as a reply (swipe-to-reply) — a snapshot of the original message, not a live reference, so it still renders correctly if the original is later edited/deleted. */
+  replyTo?: {
+    messageId: string;
+    text: string;
+    senderId: string;
+    type: MessageType;
+  };
 }
 
 // Each 1-1 conversation gets its own room under rooms/{roomId}/messages.
@@ -146,6 +153,10 @@ function docToMessage(docSnap: {
     editedAt: data.editedAt instanceof Timestamp ? data.editedAt.toMillis() : undefined,
     deleted: data.deleted === true,
     hidden: data.hidden === true,
+    replyTo:
+      typeof data.replyTo === 'object' && data.replyTo !== null
+        ? (data.replyTo as ChatMessage['replyTo'])
+        : undefined,
   };
 }
 
@@ -198,7 +209,12 @@ export async function markMessageRead(roomId: string, messageId: string): Promis
   await updateDoc(messageRef, { readAt: serverTimestamp(), deliveredAt: serverTimestamp() });
 }
 
-export async function sendMessage(roomId: string, text: string, senderId: string): Promise<void> {
+export async function sendMessage(
+  roomId: string,
+  text: string,
+  senderId: string,
+  replyTo?: ChatMessage['replyTo'],
+): Promise<void> {
   const trimmed = text.trim();
   if (!trimmed) {
     return;
@@ -208,6 +224,7 @@ export async function sendMessage(roomId: string, text: string, senderId: string
     text: trimmed,
     senderId,
     createdAt: serverTimestamp(),
+    ...(replyTo ? { replyTo } : {}),
   });
 }
 
