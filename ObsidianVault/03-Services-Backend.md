@@ -97,14 +97,32 @@ Gerçek bir online/offline event sistemi değil, hafif bir "son ne zaman aktifti
 
 ```ts
 {
-  type: 'text' | 'image' | 'video' | 'audio';
+  type: 'text' | 'image' | 'video' | 'audio' | 'file' | 'call';
   text: string;            // sadece type: 'text' için doldurulur
   senderId: string;        // Firebase uid
   createdAt: Timestamp;
-  mediaUrl?: string;       // image/video/audio için Firebase Storage indirme URL'i
+  mediaUrl?: string;       // image/video/audio/file için Firebase Storage indirme URL'i
   durationSeconds?: number; // sadece audio için, oynatıcı UI'ında gösterilir
+  hidden?: boolean;        // image/video için — true ise MessageBubble bir örtü/blur gösterir,
+                            // alıcı dokununca sınırsız kez açılabilir ("gizli video/fotoğraf")
+  fileName?: string;       // sadece type: 'file' için — orijinal dosya adı
+  fileSize?: number;       // sadece type: 'file' için — bayt cinsinden boyut
+  replyTo?: {               // 2026-08-20'de eklendi — kaydırarak/uzun-basarak yanıtlama
+    messageId: string;
+    text: string;
+    senderId: string;
+    type: MessageType;
+  };
 }
 ```
+
+- `type: 'file'` (2026-08-20'de eklendi) — resim/video dışında herhangi bir dosya; `react-native-
+  documents/picker` ile seçilip `mediaService.uploadRoomMedia(roomId, 'file', ...)` ile Storage'a
+  yükleniyor. Alıcı tarafta `react-native-blob-util` ile cihazın İndirilenler klasörüne
+  kaydedilebiliyor.
+- `hidden` alanı sadece `image`/`video` mesajlarında anlamlı; UI tarafındaki "gizli video" özelliği
+  bu alana dayanıyor (uygulamanın genel "Gizli" temasıyla aynı isim ama farklı bir mekanizma —
+  şifreleme değil, sadece istemci tarafında bir reveal-overlay).
 
 - `roomId = getRoomId(uidA, uidB)` — iki uid sıralanıp `__` ile birleştiriliyor, hangi taraf
   başlatırsa başlatsın aynı id çıkıyor (`src/services/chatService.ts`).
@@ -131,15 +149,6 @@ Gerçek bir online/offline event sistemi değil, hafif bir "son ne zaman aktifti
 - `submitScore(name, score)` / `fetchTopScores()` (`src/services/leaderboardService.ts`, top 20,
   skora göre azalan sıralı).
 - Kullanıcı kimliğine bağlı değil, herkes herkesin skorunu görebilir; silme/moderasyon yok.
-
-## Mock admin servisi (Firebase'den bağımsız)
-
-`src/services/authService.ts` → `loginAdmin(username, password)`:
-- `adminConfig.ts`'deki sabit kodlanmış `admin`/`admin123` ile karşılaştırır.
-- `MOCK_AUTH_DELAY_MS` (600ms) ile sahte ağ gecikmesi simüle eder.
-- Yorumda: gerçek bir API çağrısıyla 1:1 değiştirilmek üzere tasarlanmış bir prototip.
-- **Bu, Firebase Auth'tan tamamen ayrı bir sistem** — chat/kişi sistemi için kullanılan anonim
-  Firebase kimliğiyle hiçbir ilişkisi yok, sadece "gizli özelliğin kapısı" olarak çalışıyor.
 
 ## Fotoğraf ve sesli mesajlar — Storage YOK, doğrudan Firestore (base64)
 
@@ -176,6 +185,40 @@ kontrolü `storage.rules`'ta: `firestore.rules`'daki `isRoomMember(roomId)` ile 
 (roomId'yi `__` ile ayırıp uid'lerden biriyle eşleştiriyor). Bu dosya da `firestore.rules` gibi
 sadece bir metin dosyası — Firebase Console'a elle deploy edilmedikçe hiçbir etkisi yok, bkz.
 [[05-Build-Deployment]].
+
+## `app_config/{configId}` — uygulama içi güncelleme yapılandırması (2026-08-20'de eklendi)
+
+```ts
+// doküman id: 'android'
+{
+  versionCode: number;   // android/app/build.gradle'daki versionCode ile karşılaştırılır
+  versionName: string;   // banner'da gösterilen "1.2.3" gibi metin
+  apkUrl: string;        // Firebase Hosting'e deploy edilmiş APK'nın herkese açık URL'i
+  notes?: string;        // "Neler yeni" metni, banner'ın altında gösterilir
+}
+```
+
+- `src/services/updateService.ts` uygulama açılışında bu dokümanı okuyup (`fetchLatestVersion()`)
+  cihazın kurulu `versionCode`'uyla (`react-native-device-info`) karşılaştırıyor; daha yeni bir sürüm
+  varsa `src/components/UpdateBanner.tsx` bir "Yeni sürüm hazır" bandı gösteriyor. "Güncelle"ye
+  basılınca APK `react-native-fs` ile indirilip (ilerleme çubuğu ile) `NativeModules.ApkInstaller`
+  (`android/app/src/main/java/com/mobile/ApkInstallerModule.kt`) ile sistem paket yükleyicisine
+  teslim ediliyor (`FileProvider`, `res/xml/file_paths.xml`).
+- **Firestore kuralı bilerek salt-okunur:** `firestore.rules`'ta `app_config/{configId}` için
+  `allow read: if isSignedIn(); allow write: if false;` — bu doküman **hiçbir zaman** istemciden ya da
+  Admin SDK/CLI'dan otomatik yazılmıyor, sadece Firebase Console'dan elle güncelleniyor (projenin
+  diğer "Console-only" adımlarıyla aynı bilinçli desen). Yayınlama akışı:
+  1. `android/app/build.gradle`'da `versionCode`/`versionName` artırılıp release APK derlenir
+     (`gradlew assembleRelease`).
+  2. Derlenen APK, proje kökündeki `public/` klasörüne `app-release-X.Y.Z.apk` adıyla kopyalanır
+     (her sürüm için farklı dosya adı) ve `firebase deploy --only hosting` ile
+     `https://kaanchatmercan.web.app/app-release-X.Y.Z.apk` adresine yayınlanır. `public/*.apk`
+     `.gitignore`'da — bu ikili dosyalar asla commit edilmez, sadece hosting'e deploy edilir.
+  3. Firebase Console → Firestore Database → `app_config` → `android` dokümanı elle
+     `versionCode`/`versionName`/`apkUrl`/`notes` ile güncellenir (bkz.
+     `GUNCELLEME-ELLE-ADIM.txt`/`YAPILACAKLAR.txt` madde 6). Bu adım atlanırsa yeni APK yayında olsa
+     bile eski cihazlarda banner ya hiç çıkmaz ya da yanlış sürüme işaret eder.
+  Detay/komutlar: [[05-Build-Deployment]].
 
 ## Sesli/görüntülü arama (Stream Video)
 

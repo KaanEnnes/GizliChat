@@ -1,5 +1,70 @@
 # Değişiklik Günlüğü
 
+## 2026-08-20 — Gizli video/genel dosya gönderme, uygulama içi güncelleme sistemi, mesaj yanıtlama
+
+Üç ardışık commit'i özetler (en eskiden en yeniye): `77054af` "feat: gizli video, genel dosya
+gönderme ve uygulama içi güncelleme sistemi", `73ee08f` "chore: sürümü 1.1 (versionCode 2) yap,
+güncelleme sistemini gerçek APK ile deploy et", `4b1eca9` "feat: mesaj sağa/sola kaydırarak
+yanıtlama ekle, güncelleme sistemini sağlamlaştır".
+
+**1) Gizli medya + genel dosya gönderme (`77054af`).** Fotoğraf/video mesajları artık `hidden: true`
+ile "gizli" işaretlenebiliyor — `MessageBubble.tsx` bunları bir blur/örtü overlay'i ile gösteriyor,
+alıcı dokununca açılıyor (sınırsız kez, kendi kendini yok etmiyor). Ayrıca resim/video dışında
+herhangi bir dosya seçilip gönderilebiliyor (`react-native-documents/picker`, yeni `MessageType:
+'file'`, `fileName`/`fileSize` alanları), alıcı tarafta `react-native-blob-util` ile cihazın
+İndirilenler klasörüne kaydedilebiliyor. Yeni `src/components/AttachMenuModal.tsx`, 📎 butonunun
+seçim menüsünü ayrı bir bileşene çıkardı.
+
+**2) Uygulama içi APK güncelleme sistemi (`77054af`, sağlamlaştırma `4b1eca9`).** Yeni
+`src/services/updateService.ts` + `src/components/UpdateBanner.tsx`: Firestore `app_config/android`
+dokümanından (`versionCode`/`versionName`/`apkUrl`/`notes`) daha yeni bir sürüm olup olmadığı kontrol
+ediliyor (`react-native-device-info`), varsa APK `react-native-fs` ile indirilip yeni bir custom
+native modül olan `ApkInstallerModule.kt`/`ApkInstallerPackage.kt`
+(`android/app/src/main/java/com/mobile/`) ile sistem paket yükleyicisine teslim ediliyor
+(`FileProvider`, `res/xml/file_paths.xml`, ilgili `AndroidManifest.xml` izinleri). `4b1eca9`
+indirmeyi sağlamlaştırdı: yarım kalmış eski dosyayı silme, HTTP durum kodu ve indirilen boyut
+doğrulaması eklendi (öncesinde bozuk bir indirme sessizce yükleyiciye veriliyor, Android'in genel
+"Uygulama yüklenmedi" hatasına yol açıyordu). Firestore kuralı bilerek `app_config/{configId}` için
+`allow write: if false` — bu doküman sadece Firebase Console'dan elle güncelleniyor (proje geneli
+"Console-only" deseniyle tutarlı). `73ee08f` sürümü `versionCode 2`/`versionName "1.1"` yapıp gerçek
+bir APK'yı `public/app-release-1.1.apk` olarak `firebase deploy --only hosting` ile yayınladı ve
+uçtan uca (emülatörde) test etti — proje o zamandan beri `versionCode 6`/`versionName "1.2.3"`'e
+kadar ilerledi (aradaki sürümler bu Changelog'a ayrı ayrı işlenmedi, bkz. aşağıdaki not). Detay:
+[[03-Services-Backend]] → "app_config/{configId}", [[05-Build-Deployment]] → "Uygulama içi güncelleme
+(APK) yayınlama".
+
+**3) Kaydırarak/uzun-basarak mesaj yanıtlama (`4b1eca9`).** `src/components/MessageBubble.tsx`: bir
+mesaj balonu sağa/sola sürüklenip eşiği geçince ya da uzun-basma menüsünden "Yanıtla" seçilince
+`onReply(message)` tetikleniyor. `src/screens/ChatRoomScreen.tsx` bunu `replyingTo` state'inde tutup
+gönderim kutusunun üstünde bir önizleme gösteriyor (iptal edilebilir); gönderilen mesaj
+`chatService.ts`'teki yeni `ChatMessage.replyTo` alanına orijinal mesajın bir anlık görüntüsünü
+(`messageId`/`text`/`senderId`/`type`) yazıyor — canlı referans değil, orijinal mesaj sonradan
+değişse/silinse bile alıntı doğru kalıyor.
+
+**Bilinen eksikler / bu oturuma dahil olmayanlar:**
+- Bu üç commit arasında (ve `77054af`'ten önce) proje geneline satranç (kişiye karşı + oda kodlu
+  online), XOX, PC istemcisi (`pc-client/`), depolama kotası banner'ı, profil fotoğrafı, sohbet arka
+  planı ve mesaj düzenleme (`editingMessage`) gibi başka özellikler de eklenmiş durumda — bunlar bu
+  Changelog'a hiç işlenmemiş (son kayıt öncesinde 2026-08-14'te duruyordu). Bu oturum sadece
+  yukarıdaki üç commit'i ve kullanıcının belirttiği spesifik boşlukları (klasör yapısı, sürüm
+  numarası, push notification durumu) kapsadı; 01/02/03 notlarındaki chess/XOX/pc-client/profil
+  fotoğrafı/depolama kotası/mesaj düzenleme gibi alanlar hâlâ belgelenmemiş, bir sonraki oturumda ele
+  alınmalı.
+- Push bildirimleri artık `@notifee/react-native` + `@react-native-firebase/messaging` ile kısmen
+  gerçek arka plan push'a taşınmış durumda (`src/services/fcmService.ts`, `functions/`) — eski
+  "sadece uygulama açıkken" notu artık tam doğru değil, bkz. [[01-Architecture]] güncellenen bölüm.
+
+**Etkilenen dosyalar (özet):** `src/components/MessageBubble.tsx`, `src/components/
+AttachMenuModal.tsx` (yeni), `src/components/UpdateBanner.tsx` (yeni), `src/services/
+updateService.ts` (yeni), `src/services/chatService.ts`, `src/services/mediaService.ts`,
+`src/screens/ChatRoomScreen.tsx`, `src/screens/ContactsScreen.tsx`, `android/app/src/main/java/
+com/mobile/ApkInstallerModule.kt` (yeni), `ApkInstallerPackage.kt` (yeni), `android/app/src/main/
+AndroidManifest.xml`, `android/app/src/main/res/xml/file_paths.xml` (yeni), `firestore.rules`,
+`firebase.json`, `package.json`, `__mocks__/@react-native-documents/picker.js` (yeni),
+`__mocks__/react-native-blob-util.js` (yeni), `__mocks__/react-native-fs.js` (yeni),
+`__mocks__/react-native-device-info.js` (yeni), `.gitignore` (`/public/*.apk` eklendi),
+`YAPILACAKLAR.txt`, `GUNCELLEME-ELLE-ADIM.txt` (yeni).
+
 ## 2026-08-14 — Arama/mesajlaşma sağlamlaştırma + tam görsel yeniden tasarım + ana sayfa/oyun/erişilebilirlik geçişi
 
 Tek oturumda birbirini izleyen üç ayrı istek üzerine yapıldı: (1) önce tüm proje "kritik/orta"

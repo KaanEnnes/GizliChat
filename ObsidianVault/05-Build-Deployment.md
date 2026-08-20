@@ -181,5 +181,32 @@ yüklenemedi" gibi hatalar görülür). Kuralların içeriği için [[03-Service
 
 ## Sürüm bilgisi
 
-- `versionCode 1`, `versionName "1.0"` (`android/app/build.gradle`). Yeni bir sürüm çıkarırken bu
-  değerleri artırmayı unutma, aksi halde telefonda "eski sürüm" olarak görülüp güncellenmeyebilir.
+- Güncel değer için doğrudan `android/app/build.gradle`'a bak (sık değişir) — 2026-08-20 itibarıyla
+  `versionCode 6`, `versionName "1.2.3"`. Yeni bir sürüm çıkarırken bu değerleri artırmayı unutma,
+  aksi halde telefonda "eski sürüm" olarak görülüp güncellenmeyebilir.
+- **Not:** Bu repoda artık bir `firebase.json` var (firestore/storage rules, `functions/`, ve
+  `public/` klasörünü Hosting kaynağı olarak tanımlıyor) — yukarıdaki "Firebase CLI kurulumu yok"
+  notları büyük ölçüde `firestore.rules`/`storage.rules`'ın **elle Console'dan** deploy edilmesiyle
+  ilgiliydi; `firebase deploy --only hosting` (APK yayınlama) ve `firebase deploy --only functions`
+  (push bildirimleri) artık bu `firebase.json` üzerinden çalışıyor — CLI kurulup `firebase login`
+  yapıldıktan sonra proje kökünden doğrudan çalıştırılabilir, ayrıca bir `firebase init` gerekmez.
+
+## Uygulama içi güncelleme (APK) yayınlama — her yeni sürümde elle yapılan son adım
+
+Kod tarafı (`updateService.ts`, `UpdateBanner.tsx`, `ApkInstallerModule.kt`) tamamen otomatik, ama
+Firestore `app_config/android` dokümanı **bilerek** sadece Firebase Console'dan elle güncellenebiliyor
+(`firestore.rules`: `allow write: if false`). Sürüm çıkarma akışı:
+
+1. `android/app/build.gradle`'da `versionCode`'u artır, `versionName`'i güncelle.
+2. `cd android && ./gradlew assembleRelease --no-daemon` ile release APK'yı derle.
+3. Çıkan `android/app/build/outputs/apk/release/app-release.apk` dosyasını proje kökündeki
+   `public/` klasörüne `app-release-X.Y.Z.apk` adıyla kopyala (her sürüm için ayrı ad — eski dosyayı
+   indirmiş biri yarım kalmış bir dosyayla karşılaşmasın). **Bu `.apk` dosyaları `.gitignore`'da
+   (`/public/*.apk`), asla commit edilmez.**
+4. `firebase deploy --only hosting` ile yayınla → `https://kaanchatmercan.web.app/app-release-X.Y.Z.apk`.
+5. Firebase Console → Firestore Database → `app_config` → `android` dokümanını aç, `versionCode`/
+   `versionName`/`apkUrl`/`notes` alanlarını elle güncelle, kaydet.
+
+Adım 5 atlanmadan önce eski cihazlar ya banner'ı hiç görmez ya da yanlış sürüme/URL'e işaret eder —
+bkz. `GUNCELLEME-ELLE-ADIM.txt` (bu deseni ilk kez karşılaşan bir oturum için örnek/hatırlatma
+notu) ve `YAPILACAKLAR.txt` madde 6. Detay: [[03-Services-Backend]] → "app_config/{configId}".

@@ -14,8 +14,10 @@ Bağlam için önce [[00-START-HERE]] dosyasına bak.
 | `metro.config.js` | Standart Metro config + özel bir resolver hack'i: `@firebase/firestore` importlarını doğrudan `node_modules/@firebase/firestore/dist/index.rn.js`'e yönlendiriyor (Metro'nun Firestore RN build'iyle ilgili package-exports çözümleme bug'ını aşmak için). |
 | `tsconfig.json` | `@react-native/typescript-config`'i extend eder, Jest tiplerini ekler. |
 | `run-app.bat` | Windows yardımcı script: ADB/Android SDK bulur, cihaz bağlantısını kontrol eder, Metro'yu yeni terminalde başlatır, `adb reverse` ile port 8081, `gradlew installDebug` çalıştırır, `com.mobile/.MainActivity`'yi cihazda başlatır. Konsol çıktısı Türkçe. |
-| `Mobile/` | Kökte başıboş bir klasör, içinde neredeyse boş bir `.git` reposu var — eski bir scaffold/clone artığı, hiçbir kod tarafından referans verilmiyor. Silinmesi güvenli ama şu ana kadar dokunulmadı. |
 | `android/`, `ios/` | Native platform projeleri, aşağıda ayrıca ele alınıyor. |
+
+> Not: Proje kökü artık **düz (flat)** bir yapı — eski iç içe `GizliChat/GizliChat/` klasörü ve
+> kökteki başıboş `Mobile/` scaffold artığı kaldırıldı, ikisi de artık yok.
 
 ## src/ klasörü
 
@@ -229,13 +231,36 @@ Bağlam için önce [[00-START-HERE]] dosyasına bak.
   `App.tsx` tamamen değiştirildiği için kullanılmıyor.
 
 **Yok (dikkat):** navigasyon kütüphanesi, state management kütüphanesi, şifreleme kütüphanesi,
-push notification, crash reporting.
+crash reporting.
+
+**Push notification — artık kısmen entegre (eskiden hiç yoktu):** `@notifee/react-native` ve
+`@react-native-firebase/messaging` sadece kurulu duran boş bağımlılıklar değil, gerçekten kullanılıyor:
+`src/services/fcmService.ts` FCM token'ını alıp `users/{uid}.fcmToken`'a yazıyor, bir notifee kanalı
+kuruyor (`game_notifications_v2`) ve hem foreground (`onMessage`) hem arka plan/kapalı
+(`setBackgroundMessageHandler`, `index.js`'te kayıtlı) mesajlar için "Mini Oyunlar" kılıklı sahte bir
+bildirim gösteriyor (`displayFakeGameNotification`) — disguise bozulmasın diye bildirime dokununca
+sohbete deep-link yapmıyor, sadece uygulamayı normal açıyor. Sunucu tarafı (gerçek push'u tetikleyen
+Cloud Function) `functions/` altında; `users/{uid}.notificationsEnabled` alanına bakıyor
+(`fcmService.syncNotificationsEnabledToServer`, Ayarlar'daki aç/kapa ile senkron). Bu, proje artık
+Blaze planında olduğu için mümkün oldu — bkz. `YAPILACAKLAR.txt`'in eski "opsiyonel" push bölümü,
+büyük ölçüde tamamlanmış durumda.
+
+**Uygulama içi güncelleme sistemi (yeni):** `src/services/updateService.ts` +
+`src/components/UpdateBanner.tsx`, Firestore `app_config/android` dokümanından
+(`versionCode`/`versionName`/`apkUrl`/`notes`) daha yeni bir sürüm olup olmadığını kontrol eder
+(`react-native-device-info` ile cihazın kurulu `versionCode`'unu okuyup karşılaştırır), varsa APK'yı
+`react-native-fs` ile indirip `NativeModules.ApkInstaller` (custom native modül, bkz. aşağıda) ile
+sistem paket yükleyicisine teslim eder. Detay: [[03-Services-Backend]], [[05-Build-Deployment]].
 
 ## android/ ve ios/
 
-- Android `applicationId`/`namespace`: `com.mobile` (`android/app/build.gradle`). `versionCode 1`,
-  `versionName "1.0"`. Custom native modül yok, sadece standart RN Kotlin scaffold
-  (`MainActivity.kt`, `MainApplication.kt`).
+- Android `applicationId`/`namespace`: `com.mobile` (`android/app/build.gradle`). `versionCode 6`,
+  `versionName "1.2.3"` (sık güncellenir, güncel değer için doğrudan `build.gradle`'a bak). Standart
+  RN Kotlin scaffold'un yanında artık bir **custom native modül** var: `ApkInstallerModule.kt` +
+  `ApkInstallerPackage.kt` (`android/app/src/main/java/com/mobile/`) — `updateService.ts`'in indirdiği
+  APK dosyasını `FileProvider` (`res/xml/file_paths.xml`) üzerinden sistem paket yükleyicisine
+  (`ACTION_INSTALL_PACKAGE` intent'i) veren tek metotlu (`install(path)`) bir modül,
+  `MainApplication.kt`'a `ApkInstallerPackage` olarak kayıtlı.
 - iOS bundle id hâlâ RN CLI varsayılanı (`org.reactjs.native.example.$(PRODUCT_NAME...)`),
   release için özelleştirilmemiş. Custom native modül yok, standart Swift `AppDelegate.swift`.
 - `compileSdkVersion`/`targetSdkVersion`: 36, `minSdkVersion`: 24, `buildToolsVersion`: 36.0.0,

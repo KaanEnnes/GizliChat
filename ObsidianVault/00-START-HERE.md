@@ -54,12 +54,11 @@ değiştirilmemiş), "GizliChat" sadece klasör adı ve üst seviye yorum/başl�
 
 ## Hızlı gerçekler (sık kullanılan bilgiler)
 
-- Uygulama kök klasörü: `GizliChat/GizliChat/` (proje adı ve klasör adı aynı, dikkat: iç içe).
+- Uygulama kök klasörü: proje düz (flat) bir yapı, doğrudan `C:\Users\mrkaa\projects\GizliChat`
+  altında (eski iç içe `GizliChat/GizliChat/` yapısı ve kökteki başıboş `Mobile/` klasörü artık yok).
 - Paket adı (npm): `Mobile`. Android `applicationId`: `com.mobile`. iOS bundle id hâlâ RN CLI
   varsayılanı (`org.reactjs.native.example.$(PRODUCT_NAME...)`), özelleştirilmemiş.
 - React Native `0.86.2`, React `19.2.3`, Node `>= 22.11.0` gerekiyor.
 - Navigasyon kütüphanesi yok — el yapımı `useState` tabanlı ekran anahtarlama
   (`src/navigation/AppNavigator.tsx`).
 - State yönetim kütüphanesi yok (Redux/Zustand vb. yok), her şey lokal `useState`.
-- `Mobile/` adında proje kökünde başıboş, boş bir klasör var (eski bir scaffold artığı, kodun
-  parçası değil, silinebilir ama dokunulmadı).

@@ -132,9 +132,17 @@ olarak kalıyor, son aramalar/favoriler/çevrimiçi durumu gibi hiçbir sohbet i
 - `subscribeToMessages(roomId, ...)` (Firestore canlı dinleyici), `FlatList` + `MessageBubble` ile
   mesaj listesi, yeni mesajda otomatik aşağı kaydırma.
 - Metin gönderimi `sendMessage(roomId, text, myUid)` ile.
-- **Fotoğraf/video gönderme:** 📎 butonu bir seçim gösterir (Galeri / Kamera →
+- **Fotoğraf/video gönderme:** 📎 butonu (`AttachMenuModal`) bir seçim gösterir (Galeri / Kamera →
   `react-native-image-picker`); seçilen dosya `mediaService.uploadRoomMedia()` ile Storage'a
   yüklenir, sonra `sendMediaMessage(roomId, myUid, 'image'|'video', mediaUrl)` ile gönderilir.
+  **Gizli medya:** gönderirken "gizli" işaretlenen fotoğraf/video `hidden: true` ile gönderilir;
+  `MessageBubble` bunu bir blur/örtü overlay'i ile gösterir ("Gizli Fotoğraf"/"Gizli Video" etiketi +
+  göster butonu), alıcı dokununca açılır — sınırsız kez tekrar görüntülenebilir (tek seferlik/
+  kendi kendini yok eden bir mekanizma değil).
+- **Genel dosya gönderme:** 📎 menüsünden resim/video dışında herhangi bir dosya da seçilip
+  gönderilebiliyor (`react-native-documents/picker`, `MessageType: 'file'`); alıcı tarafta dosya adı
+  ve boyutu gösteriliyor, dokununca cihazın İndirilenler klasörüne kaydedilebiliyor
+  (`react-native-blob-util`).
 - **Sesli mesaj:** 🎤 butonu basılı tutulduğu sürece kayıt yapar (`react-native-audio-recorder-player`
   singleton'ı), bırakınca kayıt durur, Storage'a yüklenir, süresi (saniye) ile birlikte
   `sendMediaMessage(..., 'audio', mediaUrl, durationSeconds)` ile gönderilir.
@@ -144,6 +152,16 @@ olarak kalıyor, son aramalar/favoriler/çevrimiçi durumu gibi hiçbir sohbet i
   aşağıdaki "Sesli/görüntülü arama" bölümü).
 - **Çevrimdışı uyarısı:** `useNetworkStatus()` (`@react-native-community/netinfo`) `false` dönerse
   üstte "📡 İnternet bağlantısı yok" banner'ı gösterilir (aynısı `ContactsScreen`'de de var).
+- **Kaydırarak/uzun-basarak yanıtlama (reply, 2026-08-20'de eklendi):** Bir mesaj balonunu sağa ya da
+  sola sürükleyip `SWIPE_REPLY_THRESHOLD`'u geçince (WhatsApp tarzı, balon parmağı takip eder,
+  bırakınca yaylanarak geri döner) ya da uzun-basma menüsünden "Yanıtla"ya dokununca
+  `onReply(message)` tetiklenir (`MessageBubble.tsx`). `ChatRoomScreen` bunu `replyingTo` state'inde
+  tutar, gönderim kutusunun üstünde "Yanıtlıyorsun: ..." önizlemesi gösterir (`replyPreviewLabel()` —
+  metin olmayan tipler için tek satırlık bir özet üretir), iptal edilebilir. Gönderilen mesaj
+  `chatService.ts`'teki `ChatMessage.replyTo` alanına orijinal mesajın bir **anlık görüntüsünü**
+  (`messageId`, `text`, `senderId`, `type`) yazar — canlı bir referans değil, bu yüzden orijinal mesaj
+  sonradan değişse/silinse bile yanıt balonundaki alıntı doğru render edilmeye devam eder.
+  `MessageBubble` bu alıntıyı balonun üstünde küçük bir `replyQuote` kutusu olarak gösterir.
 - Geri ok → `onBack()` ile `CONTACTS`'a döner.
 
 ## NotificationCenter — uygulama-içi "oyun bildirimi"
@@ -230,5 +248,8 @@ olarak kalıyor, son aramalar/favoriler/çevrimiçi durumu gibi hiçbir sohbet i
   kullanıcı adıyla yeni hesap açmak zorunda kalır. Bkz [[04-Security-Notes]].
 - Oyunun "gizli tetikleyici" mantığı (dişliye 10 dokunuş, 3.5 sn) istemci tarafında (JS bundle
   içinde) — reverse-engineering ile kolayca bulunabilir. Bkz [[04-Security-Notes]].
-- Fotoğraf/video/sesli mesaj ve sesli/görüntülü arama artık var (yukarı bkz.). **Henüz yok:** grup
-  sohbeti/araması (her şey hâlâ 1-1), medyayı cihaza indirme/galeriye kaydetme.
+- Fotoğraf/video/sesli mesaj, genel dosya gönderme, gizli medya (aç/kapa), mesaj yanıtlama
+  (kaydırma/uzun-basma) ve sesli/görüntülü arama artık var (yukarı bkz.). **Henüz yok:** grup
+  sohbeti/araması (her şey hâlâ 1-1).
+- Uygulama içi APK güncelleme banner'ı da var artık (`UpdateBanner.tsx`, `updateService.ts`) —
+  detay [[03-Services-Backend]] ve [[05-Build-Deployment]].
