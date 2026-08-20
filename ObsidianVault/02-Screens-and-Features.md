@@ -9,7 +9,7 @@ Kütüphanesiz, `src/navigation/AppNavigator.tsx` içinde elle yazılmış durum
 ```
 HOME (GameHubScreen — oyun seçme menüsü)
   ├─ bir oyun kartına dokun → o oyun tam ekran (Blok Çılgınlığı / 2048 / Yılan / Renk Hafızası /
-  │    Köstebek Vurma) → "‹ Menü" ile GameHubScreen'e döner
+  │    Köstebek Vurma / XOX / Satranç) → "‹ Menü" ile GameHubScreen'e döner
   └─ dişli ikonuna 3.5 sn içinde 10 dokunuş → ACCOUNT (AccountScreen — gerçek kullanıcı adı/şifre girişi)
        ├─ zaten kayıtlı bir oturum varsa → form atlanır, otomatik → CONTACTS
        ├─ giriş/kayıt başarılı → CONTACTS (ContactsScreen — kişi listesi)
@@ -35,9 +35,15 @@ yok.
 
 - Uygulamanın gerçek "ön kapısı" — `HOME` durumunda render edilen ekran artık bu, doğrudan Blok
   Çılgınlığı değil. Giriş animasyonlu (`Animated.stagger`, sırayla beliren kartlar) bir 2 sütunlu
-  ızgarada 5 oyun kartı: Blok Çılgınlığı 🧩, 2048 🔢, Yılan 🐍, Renk Hafızası 🎵, Köstebek Vurma 🔨.
+  ızgarada artık 7 oyun kartı: Blok Çılgınlığı 🧩, 2048 🔢, Yılan 🐍, Renk Hafızası 🎵, Köstebek Vurma
+  🔨, **XOX** ❌ ve **Satranç** ♟️ (son ikisi 2026-08-16/17'de eklendi).
 - Bir karta dokununca `playTapSound()` çalar ve o oyun tam ekran render edilir (`{ onBack }` prop'u
-  ile — her oyun kendi "‹ Menü" linkiyle buraya geri döner).
+  ile — her oyun kendi "‹ Menü" linkiyle buraya geri döner). XOX ve Satranç kartları burada
+  **bilgisayara karşı** modu açar (`TicTacToeGame.tsx`, `ChessRoomScreen.tsx`) — sohbetteki bir
+  kişiye karşı canlı oynamak ayrı bir giriş noktası, bkz. aşağıda "ChatRoomScreen".
+- Skor tablosu artık **oyun bazlı**: her kartın kendi en-yüksek-skoru (rozet) ve `LeaderboardModal`'ı
+  `game` anahtarına göre ayrı bir sıralama gösteriyor. XOX/Satranç bu sıralamadan hariç — kazan/
+  kaybet/berabere odaklı, sayısal bir skorları yok.
 - **Gizli tetikleyici burada yaşıyor:** köşedeki `⚙` ikonuna `REQUIRED_TAPS` (10) kez `TAP_RESET_MS`
   (3.5 sn) içinde dokununca `onAdminTriggerReached()` çağrılır — eskiden bu mekanizma Blok
   Çılgınlığı'nın kendi menü ekranındaydı (yani sadece o oyunun menüsündeyken erişilebilirdi); artık
@@ -63,7 +69,7 @@ yok.
 - Artık `GameHubScreen` tarafından render ediliyor (`{ onBack }` prop'u ile) — gizli tetikleyici ve
   Ayarlar dişlisi burada değil, bkz. yukarıdaki "GameHubScreen" bölümü.
 
-## Diğer mini oyunlar (2048, Yılan, Renk Hafızası, Köstebek Vurma)
+## Diğer mini oyunlar (2048, Yılan, Renk Hafızası, Köstebek Vurma, XOX, Satranç)
 
 Hepsi `GameHubScreen`'den `{ onBack }` prop'uyla açılan, kendi `AsyncStorage` en-yüksek-skor
 anahtarına sahip, bağımsız ekranlar. Ortak desen: `useTheme()` ile tema-duyarlı, ses efektleri
@@ -84,6 +90,20 @@ anahtarına sahip, bağımsız ekranlar. Ortak desen: `useTheme()` ile tema-duya
 - **Köstebek Vurma** (`src/screens/WhackAMoleGame.tsx`) — 3x3 delik, 30 saniyelik tur. Tek seferde
   bir köstebek aktif, süre boyunca görünme süresi kısalıyor (zorlaşıyor). Kaçırılan köstebek
   (zaman aşımı) `playMissSound()` çalar ama puan kaybettirmiyor.
+- **XOX — bilgisayara karşı** (`src/screens/TicTacToeGame.tsx`, 2026-08-16'da eklendi) — Klasik 3x3
+  tek oyunculu XOX, GameHub'dan açılır. Sohbetteki bir kişiye karşı **canlı** XOX (`ChatRoomScreen`
+  → `OnlineTicTacToeModal`) tamamen ayrı bir mod, aynı skor rozetine dahil değil.
+- **Satranç — bilgisayara karşı / oda kodlu online** (`src/screens/ChessRoomScreen.tsx`,
+  2026-08-17'de eklendi, 2026-08-17/18'de tam ekran yeniden tasarlandı) — GameHub'dan açılınca üç
+  seçenek sunan bir menü: (1) **Oda kur** — 5 karakterli rastgele bir kod üretir (`createChessRoom()`),
+  kodu paylaşıp ikinci oyuncunun katılmasını bekler (`status: 'waiting'`); (2) **Kodla katıl** —
+  girilen kodu `joinChessRoom()` ile arar, doluysa/yoksa/kendi odansa hata gösterir; (3) **Bilgisayara
+  karşı oyna** — kolay/orta/zor zorluk seçilir (`chessBotService.ts`), orta/zor **Stockfish Online
+  API**'sini kullanıyor (internet gerektirir), kolay tamamen cihazda çalışan basit bir minimax.
+  Oynanan her hamlenin kalitesi (`classifyMove`) değerlendirilip kullanıcıya gösteriliyor. Oda kodlu
+  mod, kişi listesinden bağımsız — kodu bilen **herkes** (anonim girişle bile) katılabilir, bkz.
+  [[03-Services-Backend]]/[[04-Security-Notes]]. Sohbetteki bir kişiye karşı **canlı** satranç
+  (`ChatRoomScreen` → `ChessContactModal`) ayrı, üçüncü bir mod.
 
 ## AccountScreen — gerçek hesap girişi/kaydı
 
@@ -120,6 +140,14 @@ Diğer davranışlar değişmedi: `subscribeToContacts()` ile canlı dinleme, "+
 (`findUserByUsername()` + tek yönlü `addContact()`), bir kişiye dokununca `onOpenRoom(contact)` ile
 `CHAT_ROOM`'a geçiş, "Çıkış" → gerçekten `logoutAccount()`.
 
+**2026-08-16'da eklendi — profil fotoğrafı ve depolama kotası:** Üstteki `@kullaniciadi`'nın yanında
+artık kendi profil fotoğrafını değiştirebiliyorsun (galeriden seçip `updateProfilePhoto()` ile
+`users/{uid}.photoUrl`'e base64 olarak yazılıyor, Storage'sız — fotoğraf mesajlarıyla aynı yöntem);
+her kişi satırında da o kişinin (varsa) profil fotoğrafı `Avatar.tsx` ile gösteriliyor
+(`subscribeToUserProfile()` ile canlı). Dashboard'un altında kalıcı bir `StorageQuotaBanner`
+(`variant="card"`) hesabın video/dosya yükleme kullanımını (`videoBytesUsed` / 5120 MB) gösteriyor —
+bu bir sert limit değil, sadece bilgilendirici bir gösterge.
+
 **Önemli — kılık değiştirme (disguise) ile ilişkisi:** Bu gösterge paneli özellikleri bilinçli
 olarak **sadece** bu ekrana eklendi, `GameHubScreen`'e (herkesin gördüğü ön kapı) DEĞİL — kullanıcıya
 bu ayrım açıkça soruldu ve onaylandı. `GameHubScreen` hâlâ zararsız bir "mini oyunlar" menüsü
@@ -152,6 +180,24 @@ olarak kalıyor, son aramalar/favoriler/çevrimiçi durumu gibi hiçbir sohbet i
   aşağıdaki "Sesli/görüntülü arama" bölümü).
 - **Çevrimdışı uyarısı:** `useNetworkStatus()` (`@react-native-community/netinfo`) `false` dönerse
   üstte "📡 İnternet bağlantısı yok" banner'ı gösterilir (aynısı `ContactsScreen`'de de var).
+- **Depolama kotası:** header'ın altında `StorageQuotaBanner` (`variant="strip"`), video/genel dosya
+  yükledikçe artan kullanım göstergesi (bkz. `ContactsScreen` bölümü, aynı mekanizma).
+- **Sohbet arka planı (2026-08-16'da eklendi):** Ayarlar menüsünden galeriden bir arka plan resmi
+  seçilebiliyor; **sadece bu cihazda**, oda başına saklanıyor (`chatBackgroundService.ts`,
+  `AsyncStorage`) — karşı tarafa senkronize edilmiyor, tema tercihiyle aynı ruhta yerel bir görsel
+  tercih. "Arka planı kaldır" ile temizlenebiliyor.
+- **Mesajı sabitleme/düzenleme/silme (uzun-basma menüsü, 2026-08-18'de eklendi):** Bir mesaja uzun
+  basınca açılan aksiyon kartında Yanıtla'nın (aşağı bkz.) yanında: **Sabitle/Sabiti Kaldır**
+  (odanın `rooms/{roomId}` dokümanına tek bir sabitlenmiş-mesaj işaretçisi yazar — aynı anda odada tek
+  bir sabit mesaj olabilir), sadece kendi gönderdiğin **metin** mesajları için **Düzenle** (`editMessage()`
+  — mesaj kutusuna eski metin dolar, "Kaydet" ile üzerine yazar, karşı tarafta "(düzenlendi)" ibaresi
+  görünür) ve **Sil** (`deleteMessage()` — mesaj tamamen silinmiyor, içeriği temizlenip `deleted: true`
+  işaretleniyor; karşı taraf "Bu mesaj silindi" placeholder'ı görür, "geri alma" yok).
+- **Sohbetteki kişiye karşı canlı XOX/Satranç (2026-08-16/17'de eklendi):** Header'daki ilgili
+  butonlar `OnlineTicTacToeModal`/`ChessContactModal`'ı açar — bu kişiyle **gerçek zamanlı** bir oyun
+  (Firestore `rooms/{roomId}/game/ticTacToe|chess` tek dokümanı iki cihaz tarafından da okunup
+  yazılıyor), `GameHubScreen`'deki bilgisayara karşı modlardan tamamen ayrı, bkz. yukarıda "Diğer mini
+  oyunlar".
 - **Kaydırarak/uzun-basarak yanıtlama (reply, 2026-08-20'de eklendi):** Bir mesaj balonunu sağa ya da
   sola sürükleyip `SWIPE_REPLY_THRESHOLD`'u geçince (WhatsApp tarzı, balon parmağı takip eder,
   bırakınca yaylanarak geri döner) ya da uzun-basma menüsünden "Yanıtla"ya dokununca
@@ -225,6 +271,9 @@ olarak kalıyor, son aramalar/favoriler/çevrimiçi durumu gibi hiçbir sohbet i
   sohbete **iki** kopya kayıt düşüyordu; artık `sendCallLogMessage` çağrı id'sinden türetilen sabit
   bir doküman id'siyle `setDoc(..., {merge:true})` kullanıyor, iki taraf da aynı dokümana yazınca
   tek kayıt kalıyor (bkz. [[Changelog]] 2026-08-14).
+- **Ses çıkış cihazı seçici (2026-08-17'de eklendi):** Arama sırasında bir buton, hoparlör/kulaklık/
+  Bluetooth arasında canlı cihaz listesiyle geçiş yapmayı sağlıyor (`audioOutputService.ts`), tercih
+  `AsyncStorage`'da kalıcı ve Ayarlar'dan da değiştirilebiliyor.
 - **Elle yapılması gereken adım:** Stream Dashboard'da bir "Video & Audio" app oluşturup API
   key/secret'ı `src/config/streamConfig.ts`'e girmek gerekiyor, yoksa arama butonları sessizce
   başarısız olur. Detay: [[05-Build-Deployment]].
@@ -253,3 +302,8 @@ olarak kalıyor, son aramalar/favoriler/çevrimiçi durumu gibi hiçbir sohbet i
   sohbeti/araması (her şey hâlâ 1-1).
 - Uygulama içi APK güncelleme banner'ı da var artık (`UpdateBanner.tsx`, `updateService.ts`) —
   detay [[03-Services-Backend]] ve [[05-Build-Deployment]].
+- Mobil dışında bir de **PC istemcisi** var (`pc-client/index.html`, 2026-08-16'da eklendi) — aynı
+  Firebase hesabıyla giriş yapılan, tek dosyalık bir masaüstü sohbet sayfası (metin/fotoğraf/video,
+  kişiye karşı canlı XOX/satranç, depolama kotası, masaüstü bildirimleri; arama/sesli mesaj/yanıtlama/
+  düzenleme/silme/sabitleme/gizli medya yok). Bir React Native ekranı değil, ayrıntısı için
+  [[01-Architecture]] → "PC istemcisi".

@@ -18,10 +18,38 @@ security-through-obscurity yaklaşımı:
 
 ## Bilinen zayıflıklar (prototip olarak işaretli, production için değil)
 
-- Firestore Security Rules bu repoda değil — gerçek erişim kontrolü tamamen Firebase konsolündeki
-  ayarlara bağlı, buradan doğrulanamıyor. Eğer kurallar gevşekse (`allow read, write: if true` gibi),
-  `rooms`/`users`/`highscores` koleksiyonları Firebase config'ini (public, gizli değil) bilen herkes
-  tarafından okunabilir/yazılabilir olabilir.
+- **Düzeltme:** `firestore.rules` artık gerçekten bu repoda var ve `firebase.json` üzerinden deploy
+  edilebiliyor (bkz. [[03-Services-Backend]]) — bu notun eski hâli "Firestore Security Rules bu
+  repoda değil" diyordu, artık doğru değil. Asıl kalan risk: kurallar deploy edilmemişse (elle bir
+  adım, bkz. [[05-Build-Deployment]]) ya da yanlışlıkla gevşetilirse (`allow read, write: if true`
+  gibi), `rooms`/`users`/`highscores`/`chessRooms`/`app_config` koleksiyonları Firebase config'ini
+  (public, gizli değil) bilen herkes tarafından okunabilir/yazılabilir olabilir.
+- **Oyun dokümanları client-trusted, sunucu tarafında hamle doğrulaması yok.** `rooms/{roomId}/game/
+  {ticTacToe|chess}` ve `chessRooms/{code}` (2026-08-16/17'de eklendi) için `firestore.rules` sadece
+  "oda üyesi misin / giriş yapmış mısın" kontrolü yapıyor, gönderilen hamlenin gerçekten legal olup
+  olmadığını ya da sıranın gerçekten o oyuncuda olup olmadığını **doğrulamıyor** — bu, `chess.js`'in
+  istemci tarafında yaptığı legality kontrolünü (ki sadece resmi mobil/PC istemcisi bunu çalıştırır)
+  atlayan, Firestore'a doğrudan yazan özel bir istemcinin herhangi bir FEN/board durumunu dayatabileceği
+  anlamına geliyor. Mesajlar/skor tablosuyla aynı "iki taraf zaten birbirine güveniyor" kabulü — bkz.
+  [[03-Services-Backend]].
+- **Oda kodlu satranç (`chessRooms/{code}`) kişi listesinden bağımsız, anonim erişime açık.** 5
+  karakterlik kod alan uzayı (`33^5` ≈ 39 milyon) tahmin edilmesi zor ama **rate limiting yok** —
+  Firestore kuralları izin verdiği sürece biri art arda rastgele kod deneyerek bekleyen (`status:
+  'waiting'`) odaları bulabilir. Pratik etkisi düşük (kişi listesi/sohbet geçmişine erişim sağlamıyor,
+  sadece o anki satranç oyununa katılabiliyor), ama proje genelindeki "her şey kişi listesine bağlı"
+  varsayımının bilinçli bir istisnası.
+- **Satranç bot API'sine pozisyon (FEN) gönderiliyor.** `chessBotService.ts`, orta/zor zorlukta
+  `https://stockfish.online` (3. parti, ücretsiz) API'sine mevcut tahta pozisyonunu düz metin
+  gönderiyor. FEN kimlik bilgisi taşımıyor (sadece taş dizilimi), ama yine de proje dışına giden bir
+  ağ isteği — Stream arama token'ları gibi "backend yok, bir kısayol" kategorisinde, ama burada
+  gönderilen veri hassas değil.
+- **PC istemcisi (`pc-client/index.html`, 2026-08-16'da eklendi) mobil ile aynı risk yüzeyini
+  masaüstüne taşıyor.** Aynı Firebase config'i (public), aynı kullanıcı adı→sahte e-posta auth
+  şemasını dosyanın içinde düz metin olarak tutuyor — bu dosyayı okuyan biri de mobil `firebaseConfig.ts`
+  kadarını görebiliyor (zaten "gizli değil, sadece rules'a bağlı" prensibiyle tutarlı, yeni bir açık
+  değil ama ikinci bir kopya). Kimlik doğrulama işlemi tarayıcıda `file://` origin'inden yapılıyor;
+  bu dosyayı elde eden herkes kendi tarayıcısında açıp aynı config ile bağlanabilir (zaten mobil
+  APK'daki config de aynı şekilde herkese açık, bkz. aşağıda genel prensip).
 - Mesajlarda uçtan uca şifreleme yok; Firestore verisine erişimi olan biri (konsol üzerinden veya
   kuralları zayıfsa istemciden) tüm sohbet geçmişini düz metin görebilir.
 - **Kullanıcı adları tahmin edilebilir/numaralandırılabilir.** `findUserByUsername()` sorgusunda hız

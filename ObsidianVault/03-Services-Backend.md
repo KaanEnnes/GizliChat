@@ -19,10 +19,14 @@ servisi kullanılıyor, hiçbir custom backend/API sunucusu yok:
   etkinleştirilmesi gerekiyor** — bu repodan yapılamaz, elle bir adım (bkz. [[05-Build-Deployment]]).
   Anonim giriş muhtemelen daha önceden zaten etkindi (chat sistemi ilk hâliyle ona dayanıyordu).
 
-- **Firestore** — `users`, `users/{uid}/contacts`, `rooms/{roomId}/messages`, `highscores`
-  koleksiyonları.
-- **Storage** — `rooms/{roomId}/media/{image|video|audio}/` altında sohbet medyası
+- **Firestore** — `users`, `users/{uid}/contacts`, `rooms/{roomId}` (+ `messages`, `game`
+  altkoleksiyonları), `chessRooms`, `highscores`, `app_config` koleksiyonları.
+- **Storage** — `rooms/{roomId}/media/{image|video|audio|file}/` altında sohbet medyası
   (`src/services/mediaService.ts`). Erişim kontrolü `storage.rules`'ta (bkz. aşağıda).
+- **Fonksiyonlar dışı bir "istemci":** `pc-client/index.html` (2026-08-16'da eklendi), aynı
+  `kaanchatmercan` Firebase projesine mobil uygulamayla **birebir aynı yöntemle** (aynı config, aynı
+  kullanıcı adı→sahte e-posta auth şeması) bağlanan, build'siz tek bir HTML dosyası — ayrı bir backend
+  değil, sadece ikinci bir istemci. Detay: [[01-Architecture]] → "PC istemcisi".
 
 ## Auth akışı
 
@@ -51,14 +55,27 @@ kullanıcılar için leaderboard'un çalışmasını sağlayan tek amaç bu.
 
 ```ts
 {
-  username: string;       // orijinal büyük/küçük harfle, ekranda gösterilen
-  usernameLower: string;  // küçük harfli, findUserByUsername() sorgusunun eşleştirdiği alan
+  username: string;         // orijinal büyük/küçük harfle, ekranda gösterilen
+  usernameLower: string;    // küçük harfli, findUserByUsername() sorgusunun eşleştirdiği alan
   createdAt: number;
+  photoUrl?: string;        // 2026-08-16'da eklendi — profil fotoğrafı, base64 data URI (Storage'sız)
+  videoBytesUsed?: number;  // 2026-08-16'da eklendi — video/dosya yükleme kotası sayacı (bkz. aşağıda)
+  lastActiveAt?: Timestamp; // 2026-08-14'te eklendi — presence/çevrimiçi göstergesi (bkz. aşağıda)
+  fcmToken?: string;        // push bildirimleri için cihaz token'ı (src/services/fcmService.ts)
+  notificationsEnabled?: boolean; // Ayarlar'daki bildirim aç/kapa tercihinin sunucu tarafı kopyası —
+                                    // functions/'taki Cloud Function push gönderirken buna bakıyor
 }
 ```
 
-- Doküman `registerAccount()` sırasında bir kere yazılıyor, sonrasında değiştirilmiyor (isim
-  değiştirme UI'ı yok).
+- Doküman `registerAccount()` sırasında bir kere yazılıyor; isim değiştirme UI'ı hâlâ yok ama yukarıdaki
+  ek alanlar (`photoUrl`, `videoBytesUsed`, `lastActiveAt`, `fcmToken`, `notificationsEnabled`) sonradan
+  `{merge: true}` ile parça parça yazılıyor.
+- 2026-08-16'da eklendi: `updateProfilePhoto(uid, dataUriOrNull)` — `photoUrl`'i yazar/temizler.
+  `subscribeToUserProfile(uid, cb)` — `photoUrl`/`videoBytesUsed`'i canlı dinler (`Avatar.tsx`,
+  `StorageQuotaBanner`). `addVideoBytesUsed(uid, bytes)` — `increment()` ile `videoBytesUsed`'i
+  artırır, video ya da genel dosya mesajı her gönderildiğinde çağrılır. `VIDEO_STORAGE_QUOTA_BYTES`
+  (5120 × 1024 × 1024, 5 GB) sabiti sadece UI'da bir oran/uyarı için kullanılıyor — **sunucu
+  tarafında uygulanan bir sert limit değil**, `firestore.rules` yükleme miktarını kısıtlamıyor.
 - `findUserByUsername(username)` — `where('usernameLower', '==', ...)` sorgusu, kişi eklerken
   kullanılıyor. Kullanıcı adının **benzersizliği Firebase Auth tarafından garanti ediliyor** (aynı
   sahte e-posta ile ikinci kayıt `auth/email-already-in-use` hatası alır) — eski rastgele kod
@@ -92,6 +109,62 @@ Gerçek bir online/offline event sistemi değil, hafif bir "son ne zaman aktifti
   20 saniyede bir "şu an kaç" diye yeniden değerlendiren bir zamanlayıcı tutuyor.
 - Firestore kuralı değişikliği gerekmedi — `users/{userId}` için zaten "sahibi güncelleyebilir,
   herkes (giriş yapmış) okuyabilir" kuralı var.
+
+### `rooms/{roomId}` — oda dokümanı (2026-08-18'de eklendi, sabitlenmiş mesaj işaretçisi)
+
+```ts
+{
+  pinnedMessageId?: string; // pinMessage()/unpinMessage() — odada aynı anda en fazla bir sabit mesaj
+}
+```
+
+- `chatService.pinMessage(roomId, messageId)` / `unpinMessage(roomId)` — `ChatRoomScreen`'deki uzun
+  basma menüsünün "Sabitle"/"Sabiti Kaldır" seçeneği. Öncesinde bu doküman sadece `messages`
+  altkoleksiyonunun ebeveyni olarak var olurdu (kendi alanı yoktu); artık gerçek bir içerik taşıyor.
+  Erişim kuralı mesajlarla aynı: `isRoomMember(roomId)`.
+
+### `rooms/{roomId}/game/{ticTacToe|chess}` — sohbetteki kişiye karşı canlı oyun durumu (2026-08-16/17)
+
+```ts
+// doküman id: 'ticTacToe' ya da 'chess', odada aynı anda tek bir aktif oyun
+// XOX:
+{ board: (Mark|null)[9]; playerX: string; playerO: string; turnUid: string; status: 'active'|'finished'; outcome: 'x'|'o'|'draw'|null; updatedAt: Timestamp }
+// Satranç:
+{ fen: string; playerWhite: string; playerBlack: string; status: 'waiting'|'active'|'finished'; outcome: 'white'|'black'|'draw'|null; updatedAt: Timestamp }
+```
+
+- `src/services/ticTacToeService.ts` / `src/services/chessService.ts` (contact mode). İki cihaz da
+  aynı dokümanı `onSnapshot` ile dinleyip aynı dokümana yazıyor — mesajlarla aynı "paylaşılan doküman,
+  istemciler arasında hakemsiz" modeli: bir hamlenin gerçekten legal/sırası kendinde mi olduğu
+  **istemci tarafında** kontrol ediliyor (`ticTacToeService.playMove`, `chess.js`'in `Chess.move()`'u),
+  `firestore.rules` bunu **doğrulamıyor** — bkz. aşağıda "Firestore Security Rules" ve
+  [[04-Security-Notes]].
+- `src/components/OnlineTicTacToeModal.tsx` / `ChessContactModal.tsx` bu dokümanları `ChatRoomScreen`
+  içinden açılan modal'lar olarak render ediyor.
+
+### `chessRooms/{code}` — oda kodlu, kişi listesinden bağımsız satranç (2026-08-17'de eklendi)
+
+```ts
+{
+  fen: string;
+  playerWhite: string;  // odayı kuran
+  playerBlack: string;  // ikinci oyuncu katılana kadar boş string
+  status: 'waiting' | 'active' | 'finished';
+  outcome: 'white' | 'black' | 'draw' | null;
+  updatedAt: Timestamp;
+}
+```
+
+- Doküman id'si 5 karakterlik, kolay okunur bir kod (`CODE_CHARS` — 0/O/1/I karıştırılmasın diye
+  hariç). `createChessRoom()` (rastgele kod üretip çakışma ihtimaline karşı 3 deneme yapar),
+  `joinChessRoom()` (iki kişinin aynı anda `playerBlack` doldurmasını önlemek için `runTransaction`
+  kullanır), `restartChessRoom()`, `playRoomChessMove()` (`src/services/chessService.ts`, "room-code
+  mode").
+- **Kişi listesinden tamamen bağımsız** — kodu bilen **herkes** katılabilir, hatta gizli sohbete hiç
+  girmemiş (sadece anonim auth'lu) biri bile: `firestore.rules`'ta `chessRooms` okuma/oluşturma/
+  güncelleme `isSignedIn()` yeterli (anonim dahil), `isRoomMember`/kişi listesi kontrolü **yok**. Bu,
+  projedeki genel "gizli sohbet kişi listesine bağlı" modelinin bilinçli bir istisnası — bkz.
+  [[04-Security-Notes]].
 
 ### `rooms/{roomId}/messages/{messageId}` — 1-1 sohbet mesajları
 
@@ -142,12 +215,15 @@ Gerçek bir online/offline event sistemi değil, hafif bir "son ne zaman aktifti
 {
   name: string;    // playerNameStorage'da (AsyncStorage) saklanan, oyunda bir kere sorulan isim
   score: number;
+  game: string;    // 2026-08-17'de eklendi — GameHubScreen'in GameKey'i, hangi oyunun skoru olduğunu ayırt eder
   createdAt: Timestamp;
 }
 ```
 
-- `submitScore(name, score)` / `fetchTopScores()` (`src/services/leaderboardService.ts`, top 20,
-  skora göre azalan sıralı).
+- `submitScore(name, score, game)` / `fetchTopScores(game)` (`src/services/leaderboardService.ts`,
+  top 20, skora göre azalan, `game` alanına göre filtreli sorgu). Öncesinde tek bir karma tablo vardı
+  (2026-08-17'de oyun bazlı hâle getirildi, bkz. [[Changelog]]) — XOX/Satranç bu tabloya hiç skor
+  yazmıyor (kazan/kaybet/berabere odaklı, sayısal skorları yok).
 - Kullanıcı kimliğine bağlı değil, herkes herkesin skorunu görebilir; silme/moderasyon yok.
 
 ## Fotoğraf ve sesli mesajlar — Storage YOK, doğrudan Firestore (base64)
@@ -241,24 +317,47 @@ Firebase'den tamamen ayrı, üçüncü parti bir servis: [Stream Video](https://
   Audio" app oluşturup API Key + Secret'ı `src/config/streamConfig.ts`'e girmek gerekiyor. Detay:
   [[05-Build-Deployment]].
 
-## Firestore Security Rules — repoda VAR ama Firebase'e elle deploy edilmeli
+## Firestore Security Rules — repoda VAR, `firebase.json` üzerinden deploy edilebiliyor
 
 `firestore.rules` (proje kökünde) bu uygulamanın gerçek erişim kontrol kurallarını tanımlıyor. Bu
-dosya sadece bir metin dosyası — **Firebase Console'a veya Firebase CLI'a elle yapıştırılıp/deploy
-edilmedikçe hiçbir etkisi olmaz**, kod bu dosyayı otomatik olarak Firebase'e göndermiyor (repoda
-`firebase.json`/CLI kurulumu yok). Deploy adımları için [[05-Build-Deployment]] → "Firestore
+dosya sadece bir metin dosyası — **Firebase CLI ile `firebase deploy` çalıştırılmadıkça ya da elle
+Console'a yapıştırılmadıkça hiçbir etkisi olmaz**, kod bu dosyayı otomatik olarak Firebase'e
+göndermiyor. **Not:** proje artık bir `firebase.json` içeriyor (firestore/storage rules, `functions/`,
+`public/`'i Hosting kaynağı olarak tanımlıyor) — `firebase deploy --only firestore:rules` (CLI kurulup
+`firebase login` yapıldıktan sonra) doğrudan çalışır, ayrıca `firebase init` gerekmez; Console'dan elle
+yapıştırma da hâlâ geçerli bir alternatif. Deploy adımları için [[05-Build-Deployment]] → "Firestore
 kurallarını deploy etme" bölümüne bak.
 
 Kuralların özeti:
 - `users/{uid}`: Herkes (giriş yapmış = anonim dahil) okuyabilir — çünkü kişi eklerken kullanıcı
   adıyla arama (`findUserByUsername`) buna ihtiyaç duyuyor. Sadece profilin sahibi kendi profilini
-  oluşturabilir/güncelleyebilir.
+  oluşturabilir/güncelleyebilir (bu, 2026-08-16'da eklenen `photoUrl`/`videoBytesUsed` gibi alanlar
+  için de geçerli — hepsi aynı "sahibi güncelleyebilir" kuralının kapsamında, ayrı bir kural gerekmedi).
 - `users/{uid}/contacts/**`: Tamamen özel, sadece sahibi okuyabilir/yazabilir.
+- `rooms/{roomId}`: Oda dokümanı (sabitlenmiş mesaj işaretçisi) — sadece `isRoomMember(roomId)`
+  okuyabilir/yazabilir.
 - `rooms/{roomId}/messages/**`: Sadece `roomId`'nin içindeki iki uid'den biri olan kullanıcı
   okuyabilir/yazabilir (`roomId = uidA__uidB`, kurallar bunu `split('__')` ile doğruluyor). Mesajlar
-  sadece eklenebilir, düzenlenemez/silinemez.
+  temelde eklenebilir/güncellenemez, ama 2026-08-18/20'de eklenen **dört dar carve-out** var (her biri
+  `affectedKeys().hasOnly([...])` ile sadece o alanlara izin veriyor): (1) emoji tepkisi — bir üye
+  sadece kendi `reactions.{uid}` anahtarını yazabilir; (2) iletildi/okundu tikleri — sadece **karşı**
+  üye (gönderenin kendisi değil) `deliveredAt`/`readAt`'i damgalayabilir; (3) düzenleme — sadece
+  gönderen, sadece `type: 'text'`, sadece henüz silinmemiş bir mesajın `text`+`editedAt`'ini
+  yazabilir; (4) silme — sadece gönderen, `deleted`'i `true`'ya çevirip aynı anda
+  `text`/`mediaUrl`/`fileName`/`fileSize`'ı temizleyebilir. Mesajlar hâlâ **silinemez** (Firestore
+  doküman olarak), sadece bu carve-out'larla "soft" güncellenebilir; `allow delete: if false` aynen
+  duruyor.
+- `rooms/{roomId}/game/{gameId}` (XOX/satranç, kişiye karşı): Sadece oda üyeleri okuyup yazabilir,
+  ama **hamlenin gerçekten legal/sırası kendinde mi olduğu kural tarafından doğrulanmıyor** — bilinçli
+  bir gevşek model, bkz. [[04-Security-Notes]].
+- `chessRooms/{code}` (oda kodlu satranç): `isSignedIn()` (anonim dahil) yeterli okumak için; oluşturma
+  sadece kendini `playerWhite` yapan bir doküman kurabiliyor; güncelleme kurucu ya da boş
+  `playerBlack`'i dolduran ikinci oyuncu — iki kişinin aynı anda katılmasını önleyen asıl mekanizma
+  kuralda değil, `chessService.joinChessRoom()`'daki `runTransaction`'da.
 - `highscores/{id}`: Herkese açık okuma, giriş yapmış herkes bir skor ekleyebilir (isim/skor tip
-  kontrolü var), ama hiçbir skor sonradan değiştirilemez/silinemez.
+  kontrolü var, artık `game` alanı da yazılıyor), ama hiçbir skor sonradan değiştirilemez/silinemez.
+- `app_config/{configId}`: Herkes (giriş yapmış) okuyabilir, **hiç kimse yazamaz** (`allow write: if
+  false`) — sadece Console'dan elle güncelleniyor, bkz. yukarıda "app_config/{configId}".
 
 **Bilinçli olarak kapatılmayan bir açık:** `users` koleksiyonunun geniş okuma izni, giriş yapmış
 herhangi birinin tüm kullanıcı profillerini (isim + kod) teker teker sorgulayarak listeleyebilmesi

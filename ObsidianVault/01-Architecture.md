@@ -45,14 +45,42 @@ Bağlam için önce [[00-START-HERE]] dosyasına bak.
 - `src/components/SettingsModal.tsx` — Tema, ses efekti, bildirim, titreşim aç/kapa switch'leri +
   basit bir sürüm bilgisi satırı. `GameHubScreen`'deki gizli dişli ikonuna gecikmeli tek dokunuşla
   açılır (10'lu seri gizli admin jestini bozmadan).
-- `src/components/LeaderboardModal.tsx` (2026-08-14'te eklendi) — Paylaşılan/global skor tablosu
-  modalı (`leaderboardService.fetchTopScores()`), `HomeScreen`'in kendi içine gömülü kopyasından
-  ayrı, tek bir bileşene çıkarıldı — hem `HomeScreen` hem `GameHubScreen` aynısını kullanıyor.
+- `src/components/LeaderboardModal.tsx` (2026-08-14'te eklendi, 2026-08-17'de **oyun bazlı** hâle
+  getirildi) — Paylaşılan/global skor tablosu modalı (`leaderboardService.fetchTopScores(game)`),
+  `HomeScreen`'in kendi içine gömülü kopyasından ayrı, tek bir bileşene çıkarıldı. Artık tek bir karma
+  tablo değil, her oyunun (`GameHubScreen`'in `GameKey`'i) kendi ayrı sıralaması var — `highscores`
+  dokümanlarına eklenen `game` alanına göre filtreleniyor (bkz. [[03-Services-Backend]]).
+- `src/components/Avatar.tsx` (2026-08-16'da eklendi) — Kişiler/sohbet başlığında kullanılan dairesel
+  avatar: `photoUrl` varsa fotoğraf, yoksa isim baş harfinden bir renkli placeholder; `online` prop'u
+  verilirse köşede yeşil bir "çevrimiçi" noktası çiziyor.
+- `src/components/StorageQuotaBanner.tsx` (2026-08-16'da eklendi) — Hesabın video/dosya yükleme
+  kotasını (`userService.VIDEO_STORAGE_QUOTA_BYTES`, 5120 MB) kalıcı bir bar olarak gösterir; `variant`
+  prop'u `ContactsScreen` (`'card'`) ile `ChatRoomScreen` (`'strip'`, header altına yapışık ince şerit)
+  arasında farklı bir görünüm sağlıyor. %85'i geçince renk uyarıya dönüyor.
+- `src/components/CallIcons.tsx` (2026-08-16'da eklendi) — Arama/video/geri gibi ikonlar artık emoji
+  yerine `react-native-svg` ile çizilen ince çizgi ikonlar (`CallScreen`, header butonları).
+- `src/components/AttachMenuModal.tsx`, `src/components/UpdateBanner.tsx` — bkz. [[Changelog]]
+  2026-08-20 kaydı (gizli medya/genel dosya gönderme, uygulama içi güncelleme).
+- `src/components/OnlineTicTacToeModal.tsx` (2026-08-16'da eklendi) — Sohbetteki kişiye karşı **canlı**
+  XOX: `rooms/{roomId}/game/ticTacToe` tek bir Firestore dokümanını iki cihaz da aynı anda okuyup
+  yazıyor (mesajlarla aynı "paylaşılan doküman, istemciler arasında hakemsiz" modeli, bkz.
+  `ticTacToeService.ts`). `ChatRoomScreen`'den açılıyor, `GameHubScreen`'deki bilgisayara karşı XOX'tan
+  (`TicTacToeGame.tsx`) tamamen ayrı bir mod.
+- `src/components/ChessContactModal.tsx` (2026-08-17'de eklendi) — Aynı desende, sohbetteki kişiye
+  karşı canlı satranç (`rooms/{roomId}/game/chess`, `chessService.ts`'in "contact mode"u). Satranç
+  tahtası render'ı `ChessBoard.tsx`'ten paylaşılıyor.
+- `src/components/ChessBoard.tsx` (2026-08-17'de eklendi, 2026-08-17/18'de yeniden tasarlandı) —
+  `chess.js`'in FEN string'ini 8x8 bir tahtaya çizen, dokunarak taş seçme/hamle yapma bileşeni;
+  `ChessContactModal` ve `ChessRoomScreen` arasında paylaşılıyor. Ekran boyutuna göre kendini
+  ölçeklendiriyor (`size` prop'u), koordinat etiketleri ve gölge var.
 
 ### src/config
 - `src/config/firebaseConfig.ts` — Sabit kodlanmış Firebase Web SDK config objesi
   (`projectId: 'kaanchatmercan'` vb.). Yorum: bu değerler tek başına "gizli" değil, gerçek erişim
-  kontrolü Firestore Security Rules ile sağlanmalı (bu repoda Security Rules dosyası yok).
+  kontrolü Firestore Security Rules ile sağlanmalı. **Not:** proje kökünde artık gerçekten bir
+  `firestore.rules` dosyası var ve deploy ediliyor (bkz. [[03-Services-Backend]],
+  [[05-Build-Deployment]]) — bu satırdaki eski "bu repoda Security Rules dosyası yok" notu artık
+  doğru değildi, düzeltildi.
 - `src/config/streamConfig.ts` — Stream Video (arama) API key/secret. Placeholder değerlerle gelir,
   Stream Dashboard'da bir app oluşturulup elle doldurulmalı (bkz. [[05-Build-Deployment]]).
   "Client-side düz metin secret" deseni — bkz. [[04-Security-Notes]].
@@ -78,11 +106,14 @@ Bağlam için önce [[00-START-HERE]] dosyasına bak.
   `CHAT_ROOM` → `CONTACTS`.
 
 ### src/screens
-- `src/screens/GameHubScreen.tsx` — Uygulamanın görünen ana ekranı (disguise'ın "ön kapısı"): 5
-  oyunu (Blok Çılgınlığı, 2048, Yılan, Renk Hafızası, Köstebek Vurma) gösteren, giriş animasyonlu
-  bir kart ızgarası. Gizli 10-dokunuş admin tetikleyicisi + tek-dokunuşla-Ayarlar mekanizması
-  burada yaşıyor (eskiden `HomeScreen`'in kendi menü ekranındaydı, artık hangi oyun en son
-  oynandığından bağımsız). Bir karta dokununca o oyunu `{ onBack }` prop'uyla tam ekran render eder.
+- `src/screens/GameHubScreen.tsx` — Uygulamanın görünen ana ekranı (disguise'ın "ön kapısı"): artık 7
+  oyunu (Blok Çılgınlığı, 2048, Yılan, Renk Hafızası, Köstebek Vurma, **XOX**, **Satranç** — son ikisi
+  2026-08-16/17'de eklendi) gösteren, giriş animasyonlu bir kart ızgarası. Gizli 10-dokunuş admin
+  tetikleyicisi + tek-dokunuşla-Ayarlar mekanizması burada yaşıyor (eskiden `HomeScreen`'in kendi
+  menü ekranındaydı, artık hangi oyun en son oynandığından bağımsız). Bir karta dokununca o oyunu
+  `{ onBack }` prop'uyla tam ekran render eder. Skor tablosu artık **oyun bazlı** — XOX/Satranç bu
+  listeden hariç tutuluyor (`SCORE_LEADERBOARD_GAMES`), çünkü ikisi kazanma/kaybetmeye dayalı, bir
+  sayısal skoru yok.
 - `src/screens/HomeScreen.tsx` — Tamamen component içinde yazılmış bir **Block-Blast tarzı bulmaca
   oyunu** ("BLOK ÇILGINLIĞI"): 8x8 tahta, 3 zorluk seviyesinde ağırlıklı rastgele parça üretimi,
   `PanResponder`/`Animated` ile sürükle-bırak, satır temizleme, skor, modül içinde tutulan (kalıcı
@@ -98,6 +129,16 @@ Bağlam için önce [[00-START-HERE]] dosyasına bak.
   `Animated.Value` üzerinden senkron kaymasıyla akıcı hareket.
 - `src/screens/ColorMemoryGame.tsx` — Simon tarzı 4 pedli büyüyen dizi hafıza oyunu.
 - `src/screens/WhackAMoleGame.tsx` — 3x3 delik, 30 saniyelik köstebek-vurma turu.
+- `src/screens/TicTacToeGame.tsx` (2026-08-16'da eklendi) — `GameHubScreen`'den açılan, **bilgisayara
+  karşı** tek oyunculu XOX (kişiye karşı canlı moddan tamamen ayrı, bkz. yukarıda
+  `OnlineTicTacToeModal.tsx`).
+- `src/screens/ChessRoomScreen.tsx` (2026-08-17'de eklendi, 2026-08-17/18'de genişletildi) —
+  `GameHubScreen`'den açılan satranç ekranı, `Stage` durum makinesiyle dört mod arasında geçiş yapar:
+  `menu` (oda kur / kodla katıl / bilgisayara karşı oyna seçimi), `joining` (5 karakterlik oda kodu
+  girme, `chessService.joinChessRoom()`), `in_room` (oda kodlu online oyun, `subscribeToChessRoom()`
+  ile canlı `chessRooms/{code}` dokümanını izler), `bot_difficulty`/`vs_bot` (bilgisayara karşı, bkz.
+  `chessBotService.ts`). Tahta ekranın gerçek boyutunu (yükseklik dahil) dolduracak şekilde
+  ölçekleniyor (`ChessBoard.tsx`).
 - `src/screens/AccountScreen.tsx` — Gerçek Firebase Auth (email/şifre) tabanlı giriş/kayıt ekranı.
   Mount olunca `getRestoredAccountUser()` ile cihazda zaten kalıcı gerçek bir oturum olup olmadığı
   sessizce kontrol edilir; varsa form hiç gösterilmeden doğrudan `onAuthenticated()` çağrılır. Yoksa
@@ -110,21 +151,37 @@ Bağlam için önce [[00-START-HERE]] dosyasına bak.
   `findUserByUsername()` ile aranır, bulunursa `addContact()` ile kişi listesine eklenir (tek
   yönlü — karşı taraf da seni eklemek için senin kullanıcı adını girmeli). Bir kişiye dokununca
   `onOpenRoom(contact)` çağrılır. "Çıkış" artık gerçekten `logoutAccount()` çağırıp Firebase
-  oturumunu kapatıyor (eski anonim tasarımda sadece navigasyon değişiyordu).
+  oturumunu kapatıyor (eski anonim tasarımda sadece navigasyon değişiyordu). 2026-08-16'da eklendi:
+  kendi profil fotoğrafını değiştirme (`updateProfilePhoto()`, `Avatar.tsx`'te gösterilir) ve
+  `StorageQuotaBanner` (`variant="card"`, video/dosya yükleme kotası).
 - `src/screens/ChatRoomScreen.tsx` — Gerçek 1-1 sohbet ekranı (eski `AdminChatScreen`'in oda-farkında
   hâli). `getRoomId(myUid, contact.uid)` ile deterministik bir oda id'si hesaplar,
   `subscribeToMessages(roomId, ...)` ile o odaya özel mesajları dinler, `FlatList` + `MessageBubble`
   ile render eder, gönderim `sendMessage(roomId, text, myUid)` ile. Geri oku ile `onBack()` çağrılır
-  (`CONTACTS`'a döner). Header'da 📞/🎥 butonları `callService.startVoiceCall()`/`startVideoCall()`'ı
-  tetikler. 📎 ataç butonu galeri/kamera'dan fotoğraf/video seçtirir (`react-native-image-picker`),
-  🎤 butonu basılı tutulduğu sürece ses kaydeder (`react-native-audio-recorder-player`); her ikisi de
-  `mediaService.uploadRoomMedia()` ile Storage'a yüklenip `sendMediaMessage()` ile gönderilir.
+  (`CONTACTS`'a döner). Header'da (artık `CallIcons.tsx` ile çizgi ikonlar, eskiden emoji) 📞/🎥
+  butonları `callService.startVoiceCall()`/`startVideoCall()`'ı tetikler; ayrıca kişiyle canlı XOX
+  (`OnlineTicTacToeModal`) ve satranç (`ChessContactModal`) açan butonlar var. 📎 ataç butonu
+  (`AttachMenuModal`) galeri/kamera'dan fotoğraf/video seçtirir (`react-native-image-picker`, gizli
+  medya olarak da işaretlenebilir) veya genel bir dosya seçtirir (`react-native-documents/picker`),
+  🎤 butonu basılı tutulduğu sürece ses kaydeder (`react-native-audio-recorder-player`); hepsi
+  `mediaService.uploadRoomMedia()` ile Storage'a yüklenip ilgili `sendMediaMessage()` ile gönderilir;
+  video/dosya yüklemeleri `addVideoBytesUsed()` ile kota sayacına ekleniyor (`StorageQuotaBanner`,
+  `variant="strip"`, header altında). 2026-08-16'da eklendi: oda başına, sadece bu cihazda saklanan
+  bir sohbet arka plan resmi (`chatBackgroundService.ts`, `AsyncStorage`). 2026-08-18'de eklendi:
+  bir mesaja uzun basınca açılan aksiyon menüsü — **Yanıtla** (bkz. [[02-Screens-and-Features]]),
+  **Sabitle/Sabiti Kaldır** (oda dokümanına tek bir "pinned message" işaretçisi yazan
+  `pinMessage()`/`unpinMessage()`), sadece kendi **metin** mesajları için **Düzenle**
+  (`editMessage()`, `editedAt` damgası ekler) ve **Sil** (`deleteMessage()`, mesajı tamamen silmek
+  yerine içeriğini temizleyip `deleted: true` işaretleyen bir "soft delete" — karşı taraf "Bu mesaj
+  silindi" placeholder'ı görür).
 - `src/screens/CallScreen.tsx` — Bir `Call` nesnesini `StreamCall` ile sarar, `CallingState`'e göre
   `RingingCallContent` (çalıyor/arıyor ekranı) ile `CallContent` (aktif görüşme: kamera/mikrofon
   kontrolleri) arasında geçiş yapar. `onLeave` artık parametresiz değil — çağrı bitince bir
   `CallSummary` (`otherUserId`, `isVideo`, `isCreatedByMe`, `wasJoined`, `durationSeconds`) verir,
   `CallProvider` bunu sohbete çağrı-geçmişi kaydı düşmek için kullanır. Sesli/görüntülü arama her
   zaman `'speaker'` (hoparlör) rotası kullanıyor — bkz. [[Changelog]] "hoparlör düzeltmesi".
+  2026-08-17'de eklendi: arama sırasında ses çıkış cihazını (hoparlör/kulaklık/Bluetooth) değiştirmek
+  için bir buton + alt menü (`audioOutputService.ts`, canlı cihaz listesi, Ayarlar'da kalıcı tercih).
 
 ### src/services
 - `src/services/firebase.ts` — Firebase başlatma modülü. `initializeApp(FIREBASE_CONFIG)`,
@@ -149,7 +206,13 @@ Bağlam için önce [[00-START-HERE]] dosyasına bak.
   Bu hesap kimliği artık **cihaza değil kullanıcı adı+şifreye bağlı** — aynı hesapla başka bir
   telefonda/kurulumda giriş yapılınca aynı `uid`, aynı kişi listesi ve sohbetler geri geliyor.
   **Şifre kurtarma yok** (gerçek e-posta olmadığı için Firebase'in "şifremi unuttum" e-postası
-  gönderilemiyor) — bkz. [[04-Security-Notes]].
+  gönderilemiyor) — bkz. [[04-Security-Notes]]. 2026-08-16'da eklendi: `updateProfilePhoto(uid,
+  dataUri)` (profil fotoğrafını `users/{uid}.photoUrl`'e base64 data URI olarak yazar, `mediaService`
+  gibi Storage'sız), `subscribeToUserProfile(uid, cb)` (canlı profil dinleyici, `photoUrl`/
+  `videoBytesUsed` döner), `VIDEO_STORAGE_QUOTA_BYTES` (5120 × 1024 × 1024 — 5 GB, sabit/self-imposed
+  bir sınır) ve `addVideoBytesUsed(uid, bytes)` (`increment()` ile `users/{uid}.videoBytesUsed`'i
+  artırır — video ya da genel dosya mesajı gönderilince çağrılır, **uygulanan bir sert limit değil**,
+  sadece bilgilendirici bir sayaç/banner).
 - `src/services/contactService.ts` — Kişi listesi katmanı. `users/{myUid}/contacts/{contactUid}`:
   `{ name, addedAt }`. `addContact()` (tek yönlü ekleme) ve `subscribeToContacts()` (canlı, isme göre
   sıralı liste) export eder. `Contact` tipi burada tanımlı, `ChatRoomScreen`/`AppNavigator` tarafından
@@ -158,14 +221,24 @@ Bağlam için önce [[00-START-HERE]] dosyasına bak.
   (eskiden tek sabit `'messages'` koleksiyonuydu — o eski tasarım/veri artık kullanılmıyor, bkz.
   [[Changelog]]). `getRoomId(uidA, uidB)` iki uid'i sıralayıp birleştirerek deterministik bir oda id'si
   üretir (kim kimi açarsa açsın aynı id). Mesajlar `rooms/{roomId}/messages` altında (limit 300,
-  `createdAt asc`). `MessageType` artık `'text'|'image'|'video'|'audio'|'call'`; `sendCallLogMessage()`
-  bir çağrının bitişini (`callVideo`/`callStatus: 'completed'|'missed'`/`durationSeconds`) sohbete
-  yazar. `subscribeToLatestMessage(roomId, ...)` — `subscribeToMessages`'ın hafif kardeşi, tek belge
-  (`orderBy desc, limit 1`), `NotificationCenter`'ın N oda dinlemesi için (300'lük tam geçmişi N kere
-  çekmek yerine).
+  `createdAt asc`). `MessageType` artık `'text'|'image'|'video'|'audio'|'file'|'call'`;
+  `sendCallLogMessage()` bir çağrının bitişini (`callVideo`/`callStatus: 'completed'|'missed'`/
+  `durationSeconds`) sohbete yazar. `subscribeToLatestMessage(roomId, ...)` — `subscribeToMessages`'ın
+  hafif kardeşi, tek belge (`orderBy desc, limit 1`), `NotificationCenter`'ın N oda dinlemesi için
+  (300'lük tam geçmişi N kere çekmek yerine). 2026-08-18'de eklendi: `editMessage(roomId, messageId,
+  newText)` (sadece gönderen, sadece `text` tipi, `editedAt` damgalar), `deleteMessage(roomId,
+  messageId)` (soft-delete: `deleted: true` + içerik alanlarını temizler, doküman/sıra korunur),
+  `pinMessage()`/`unpinMessage()` (`rooms/{roomId}` doküman seviyesinde tek bir sabitlenmiş-mesaj
+  işaretçisi — oda başına aynı anda sadece bir sabit mesaj olabilir). 2026-08-20'de eklendi: `replyTo`
+  alanı (bkz. [[02-Screens-and-Features]] "kaydırarak/uzun-basarak yanıtlama"), `fileName`/`fileSize`
+  (`type: 'file'` için) ve `hidden` (`image`/`video` için "gizli medya" bayrağı). Tüm bu kısmi
+  güncellemeler `firestore.rules`'ta dar, alan-bazlı `allow update` carve-out'larıyla korunuyor (bkz.
+  [[03-Services-Backend]]).
 - `src/services/leaderboardService.ts` — Herkese açık, paylaşılan skor tablosu. Sabit koleksiyon
-  `'highscores'`: `{ name, score, createdAt }`. `submitScore(name, score)` ve
-  `fetchTopScores()` (top 20, skora göre azalan) export eder. Kullanıcı kimliğine/uid'e bağlı değil —
+  `'highscores'`: `{ name, score, game, createdAt }`. `submitScore(name, score, game)` ve
+  `fetchTopScores(game)` (top 20, skora göre azalan, `game` alanına göre filtreli) export eder.
+  2026-08-17'de **oyun bazlı** hâle getirildi (öncesinde tek karma tablo vardı, bkz. [[Changelog]]) —
+  her `GameHubScreen` oyununun kendi ayrı sıralaması var. Kullanıcı kimliğine/uid'e bağlı değil —
   herkes herkesin skorunu görür, silme/düzenleme yok.
 - `src/services/playerNameStorage.ts` — Oyuncunun leaderboard'da görünecek adını AsyncStorage'da
   saklar (`gizlichat_player_name` anahtarı). `getSavedPlayerName()`/`savePlayerName()`. Bu, chat
@@ -181,17 +254,42 @@ Bağlam için önce [[00-START-HERE]] dosyasına bak.
   desen (modül seviyesinde cache'lenmiş bayrak + AsyncStorage kalıcılık): sırasıyla `NotificationCenter`
   toast'larının ve oyun-bitti/bildirim titreşimlerinin (`Vibration`, ekstra bağımlılık yok) Ayarlar'dan
   aç/kapa edilmesini sağlar.
-- `src/services/mediaService.ts` — `uploadRoomMedia(roomId, kind, localUri, extension)`: bir
-  `file://` uri'sini Firebase Storage'a `rooms/{roomId}/media/{kind}/` altına yükler, indirme
-  URL'ini döner. Sadece video mesajları için kullanılıyor — fotoğraflar artık Storage'a hiç
-  uğramıyor, bkz. [[03-Services-Backend]]. Erişim kontrolü `storage.rules`'ta (aynı oda-üyeliği
-  modeli).
 - `src/services/callService.ts` — Stream Video entegrasyonu: `getOrCreateStreamClient(uid,
   username)` (aynı uid için her çağrıda aynı client instance'ını döner), `startVoiceCall()`/
   `startVideoCall()` (`client.call('default', callId).getOrCreate({ ring: true, ... })`, `callId`
   iki uid'in sıralanıp `-` ile birleşmesi — `chatService.getRoomId()`'e benzer ama farklı ayraç).
   Token üretimi (`generateStreamToken`) `crypto-js` ile cihazda HS256 JWT imzalıyor — bkz.
   [[04-Security-Notes]] "Stream arama token'ları".
+- `src/services/audioOutputService.ts` (2026-08-17'de eklendi) — Arama sırasındaki ses çıkış cihazı
+  tercihini (hoparlör/kulaklık/Bluetooth) canlı cihaz listesiyle sunar, seçim `AsyncStorage`'da kalıcı.
+- `src/services/ticTacToeService.ts` (2026-08-16'da eklendi) — Sohbetteki kişiye karşı canlı XOX'un
+  Firestore katmanı: `rooms/{roomId}/game/ticTacToe` (sabit doküman id, aynı anda odada tek bir aktif
+  oyun). `startGame()` (başlatan her zaman X), `playMove()` (sırası kendindeyse ve hücre boşsa hamleyi
+  uygular, kazanma/berabere kontrolü client-side), `subscribeToGame()`. Mesajlarla aynı "paylaşılan
+  doküman, istemciler arasında hakemsiz" güven modeli — bkz. [[04-Security-Notes]].
+- `src/services/chessService.ts` (2026-08-17'de eklendi) — `chess.js` ile satranç kural motoru + iki
+  ayrı Firestore modu: **contact mode** (`rooms/{roomId}/game/chess`, `ticTacToeService`'in birebir
+  aynısı deseni, sadece sohbetteki kişiyle) ve **room-code mode** (`chessRooms/{code}`, 5 karakterlik
+  rastgele bir kodla **kişi listesi dışından herkesin** katılabildiği, anonim auth'la bile erişilebilen
+  ayrı bir oyun — `createChessRoom()`/`joinChessRoom()` (yarış durumunu önlemek için `runTransaction`
+  ile), `restartChessRoom()`). Hamleler `chess.js`'in `Chess.move()`'u ile legal mi diye kontrol
+  edilip FEN string'i güncelleniyor; illegal bir hamle sessizce yok sayılıyor.
+- `src/services/chessBotService.ts` (2026-08-18'de eklendi) — Bilgisayara karşı satranç: kolay
+  zorlukta basit bir yerel minimax (derinlik 1), orta/zor zorlukta **Stockfish Online API**'ye
+  (`https://stockfish.online/api/s/v2.php`, 3. parti, ücretsiz, kimlik doğrulama gerektirmiyor) FEN
+  pozisyonu gönderip en iyi hamleyi istiyor (9 sn timeout, API başarısız olursa yerel minimax'e geri
+  dönüyor). Ayrıca oynanan hamlenin kalitesini (`classifyMove`) sınıflandırıp UI'da gösteriyor.
+  **Gizlilik notu:** bu API çağrısı FEN (yalnızca tahta pozisyonu, kimlik bilgisi taşımıyor) gönderiyor
+  — bkz. [[04-Security-Notes]].
+- `src/services/chatBackgroundService.ts` (2026-08-16'da eklendi) — Oda başına, **sadece bu cihazda**
+  saklanan (iki taraf arasında senkronize edilmeyen, tema tercihiyle aynı ruh) bir sohbet arka plan
+  resmi: `getChatBackground(roomId)`/`setChatBackground(roomId, dataUriOrNull)`, `AsyncStorage`.
+- `src/services/mediaService.ts` — `uploadRoomMedia(roomId, kind, localUri, extension)`: bir
+  `file://` uri'sini Firebase Storage'a `rooms/{roomId}/media/{kind}/` altına yükler, indirme URL'i
+  ve yüklenen boyutu (`sizeBytes`, 2026-08-16'da `StorageQuotaBanner`/`addVideoBytesUsed` için eklendi)
+  döner. Video ve genel dosya (`type: 'file'`) mesajları için kullanılıyor — fotoğraflar hâlâ Storage'a
+  hiç uğramıyor, bkz. [[03-Services-Backend]]. Erişim kontrolü `storage.rules`'ta (aynı oda-üyeliği
+  modeli).
 
 ## Bağımlılıklar (package.json)
 
@@ -217,6 +315,14 @@ Bağlam için önce [[00-START-HERE]] dosyasına bak.
   'react-native-nitro-sound'`, `new` ile çağrılmaz).
 - `crypto-js` — sadece Stream arama token'ları için HMAC-SHA256 imzalama (`callService.ts`). Saf JS,
   native modül değil.
+- `chess.js` (2026-08-17'de eklendi) — Satranç kural motoru (legal hamle kontrolü, FEN parse/serialize,
+  şah/mat/berabere tespiti), `src/services/chessService.ts`'te kullanılıyor. Saf JS, native modül değil
+  — `pc-client/index.html` de aynı paketi (`chess.js@1.4.0`) `esm.sh` CDN'inden import edip aynı
+  hamle mantığını tekrarlıyor (bkz. aşağıda "PC istemcisi").
+- `react-native-fs`, `react-native-blob-util`, `react-native-device-info`,
+  `@react-native-documents/picker` (2026-08-20'de eklendi) — sırasıyla: güncelleme APK'sını indirme
+  (`updateService.ts`), genel dosya mesajlarını cihaza kaydetme, cihazın kurulu `versionCode`'unu
+  okuma, ve genel dosya seçme. Hepsi için `__mocks__/` altında Jest mock'u var.
 - `@stream-io/video-react-native-sdk`, `@stream-io/react-native-webrtc`, `react-native-svg` —
   sesli/görüntülü arama (Stream Video SDK ve zorunlu peer bağımlılıkları). Native WebRTC modülü
   içerir, APK rebuild'i gerektirir.
@@ -263,5 +369,46 @@ sistem paket yükleyicisine teslim eder. Detay: [[03-Services-Backend]], [[05-Bu
   `MainApplication.kt`'a `ApkInstallerPackage` olarak kayıtlı.
 - iOS bundle id hâlâ RN CLI varsayılanı (`org.reactjs.native.example.$(PRODUCT_NAME...)`),
   release için özelleştirilmemiş. Custom native modül yok, standart Swift `AppDelegate.swift`.
+
+## PC istemcisi (`pc-client/`, 2026-08-16'da eklendi)
+
+`pc-client/index.html` — **tek dosyalık**, build adımı olmayan bir masaüstü sohbet istemcisi. React
+Native/Metro/Node ile hiçbir ilişkisi yok; bu proje ağacında sadece Firestore veri modelini paylaştığı
+için duruyor. Kullanım: dosyaya çift tıklayıp doğrudan tarayıcıda `file://` protokolüyle açmak
+(paketlenmiş bir uygulama değil, internete de yayınlanmıyor — hosting'e/`public/`e dahil değil).
+
+- **Mimari:** Firebase JS SDK'sını doğrudan `https://www.gstatic.com/firebasejs/12.17.1/...` CDN'inden
+  ES module olarak import ediyor (`firebase-app`/`firebase-auth`/`firebase-firestore`/
+  `firebase-storage`), `src/config/firebaseConfig.ts` ile **aynı** `kaanchatmercan` proje config'ini
+  elle kopyalanmış olarak içinde tutuyor (tek dosya, build/paylaşılan config sistemi yok — mobil
+  taraf `firebaseConfig.ts`'i değiştirirse burası da elle güncellenmeli). Ayrı bir backend/API sunucusu
+  **yok** — mobil uygulamanın kullandığı aynı Firestore koleksiyonlarına (`users`, `rooms/{roomId}/
+  messages`, `rooms/{roomId}/game/*`, `chessRooms/{code}`) doğrudan istemciden okuyup yazıyor, aynı
+  `firestore.rules`/`storage.rules` kuralları geçerli.
+- **Kimlik doğrulama:** Mobil ile birebir aynı desen — `usernameToEmail()` kullanıcı adını sahte bir
+  e-postaya çeviriyor, `signInWithEmailAndPassword`/`createUserWithEmailAndPassword` ile giriş/kayıt.
+  Yani **aynı hesapla** hem telefonda hem PC'de aynı anda oturum açılabiliyor, aynı kişi listesi/
+  sohbetler görünüyor (backend zaten cihazdan bağımsız kimlik üzerine kurulu, bkz.
+  [[03-Services-Backend]]).
+- **`file://` kaynaklı auth persistence sorunu (2026-08-16, `4c73d04`'te düzeltildi):** Firebase Auth'un
+  varsayılan IndexedDB tabanlı kalıcılığı `file://` origin'inde Chrome'da "Database is closing/hidden"
+  hatasıyla girişi tamamen bozuyordu — çözüm `browserLocalPersistence` yerine elle `localStorage`
+  tabanlı bir persistence kullanmak oldu (dosyanın içindeki yorumda detaylı açıklanıyor).
+- **Desteklenen özellikler:** Metin/fotoğraf/video mesajlaşma (fotoğraf base64/Firestore, video
+  Storage'a yükleme — mobille aynı model), kişi listesi (canlı `onSnapshot`), sohbetteki kişiye karşı
+  canlı **XOX** ve **satranç** (aynı `rooms/{roomId}/game/{ticTacToe|chess}` dokümanlarını okuyup
+  yazıyor — yani bir PC kullanıcısıyla bir telefon kullanıcısı aynı XOX/satranç oyununu karşılıklı
+  oynayabilir), depolama kotası göstergesi (`renderQuota`, mobildeki `StorageQuotaBanner` ile aynı
+  `videoBytesUsed`/5120 MB mantığı), açık/koyu tema (mobil `ThemeContext.tsx`'in renk paletiyle elle
+  senkronize tutulan CSS custom property'leri), gerçek içerikli **masaüstü bildirimleri** (tarayıcının
+  yerleşik `Notification` API'si — mobildeki "Mini Oyunlar" kılıklı sahte bildirimden farklı olarak PC
+  istemcisi disguise kaygısı taşımıyor, doğrudan kişi adı/mesaj metnini gösteriyor).
+- **Desteklenmeyenler:** Sesli/görüntülü arama (Stream Video entegrasyonu yok), sesli mesaj, mesaj
+  yanıtlama/düzenleme/silme/sabitleme/emoji tepkisi/okundu-tikleri (bunlar sadece mobil tarafta var),
+  gizli medya/genel dosya gönderme, uygulama içi güncelleme sistemi (zaten bir "uygulama" değil, tek
+  bir HTML dosyası).
+- **Güvenlik notu:** Bu dosya `src/config/firebaseConfig.ts` ile aynı (public olsa da) Firebase
+  config'ini içinde taşıyor; mobil tarafındaki tüm "gerçek erişim kontrolü Firestore Security
+  Rules'a bağlı" uyarıları burada da birebir geçerli — bkz. [[04-Security-Notes]].
 - `compileSdkVersion`/`targetSdkVersion`: 36, `minSdkVersion`: 24, `buildToolsVersion`: 36.0.0,
   `ndkVersion`: 27.1.12297006 (bkz. `android/build.gradle`).

@@ -41,15 +41,17 @@ gönderim kutusunun üstünde bir önizleme gösteriyor (iptal edilebilir); gön
 (`messageId`/`text`/`senderId`/`type`) yazıyor — canlı referans değil, orijinal mesaj sonradan
 değişse/silinse bile alıntı doğru kalıyor.
 
-**Bilinen eksikler / bu oturuma dahil olmayanlar:**
-- Bu üç commit arasında (ve `77054af`'ten önce) proje geneline satranç (kişiye karşı + oda kodlu
-  online), XOX, PC istemcisi (`pc-client/`), depolama kotası banner'ı, profil fotoğrafı, sohbet arka
-  planı ve mesaj düzenleme (`editingMessage`) gibi başka özellikler de eklenmiş durumda — bunlar bu
-  Changelog'a hiç işlenmemiş (son kayıt öncesinde 2026-08-14'te duruyordu). Bu oturum sadece
-  yukarıdaki üç commit'i ve kullanıcının belirttiği spesifik boşlukları (klasör yapısı, sürüm
-  numarası, push notification durumu) kapsadı; 01/02/03 notlarındaki chess/XOX/pc-client/profil
-  fotoğrafı/depolama kotası/mesaj düzenleme gibi alanlar hâlâ belgelenmemiş, bir sonraki oturumda ele
-  alınmalı.
+**Bilinen eksikler / bu oturuma dahil olmayanlar (güncelleme: aşağıdaki üç madde daha sonraki bir
+oturumda 2026-08-16/17/18 tarihli ayrı Changelog kayıtlarıyla ve ilgili not dosyalarıyla tamamlandı —
+bkz. aşağıdaki "2026-08-18"/"2026-08-17"/"2026-08-16" kayıtları):**
+- ~~Satranç (kişiye karşı + oda kodlu online), XOX, PC istemcisi (`pc-client/`), depolama kotası
+  banner'ı, profil fotoğrafı, sohbet arka planı ve mesaj düzenleme/silme/sabitleme
+  (`editingMessage`)~~ artık belgelendi.
+- Emoji tepkisi, okundu/ulaştı tikleri, mesaj sayfalaması ve uygulama adı/ikonu (`c9ccd3a`, bu üç
+  commit'ten de öncesine ait, 2026-08-14 kaydından da önce) **hâlâ bu Changelog'a ve 01/02/03
+  notlarına işlenmedi** — bir sonraki oturumda ele alınmalı (`firestore.rules`'taki `reactions`/
+  `deliveredAt`/`readAt` carve-out'ları zaten bu özelliğin var olduğuna işaret ediyor, bkz.
+  [[03-Services-Backend]]).
 - Push bildirimleri artık `@notifee/react-native` + `@react-native-firebase/messaging` ile kısmen
   gerçek arka plan push'a taşınmış durumda (`src/services/fcmService.ts`, `functions/`) — eski
   "sadece uygulama açıkken" notu artık tam doğru değil, bkz. [[01-Architecture]] güncellenen bölüm.
@@ -64,6 +66,119 @@ AndroidManifest.xml`, `android/app/src/main/res/xml/file_paths.xml` (yeni), `fir
 `__mocks__/react-native-blob-util.js` (yeni), `__mocks__/react-native-fs.js` (yeni),
 `__mocks__/react-native-device-info.js` (yeni), `.gitignore` (`/public/*.apk` eklendi),
 `YAPILACAKLAR.txt`, `GUNCELLEME-ELLE-ADIM.txt` (yeni).
+
+## 2026-08-18 — Mesaj sabitleme/düzenleme/silme, satranç bot modu + oda-kodlu satranç genişletmesi
+
+Tek commit: `0afbb79` ("18.08.2026 00:22"). Geçmişe dönük olarak, 2026-08-20 oturumunda önceki bir
+diff taraması sırasında bulunup bu Changelog'a işlenmedi — bu kayıt onu tamamlıyor.
+
+**1) Mesaj aksiyon menüsü genişledi (`chatService.ts`, `MessageBubble.tsx`, `ChatRoomScreen.tsx`).**
+Bir mesaja uzun basınca artık Yanıtla'nın yanında üç yeni seçenek var: **Sabitle/Sabiti Kaldır**
+(`pinMessage()`/`unpinMessage()` — `rooms/{roomId}` doküman seviyesinde tek bir sabitlenmiş-mesaj
+işaretçisi, oda başına aynı anda en fazla bir tane), sadece kendi **metin** mesajların için
+**Düzenle** (`editMessage()` — `text`+`editedAt`'i günceller, karşı tarafta "düzenlendi ·" ibaresi
+görünür) ve **Sil** (`deleteMessage()` — mesajı tamamen silmek yerine `deleted: true` işaretleyip
+içeriğini temizleyen bir soft-delete; karşı taraf "Bu mesaj silindi" placeholder'ı görür).
+`firestore.rules`'a bu üç işlem için dar, alan-bazlı `allow update` carve-out'ları eklendi (sadece
+gönderen, sadece izin verilen alanlar) — mesajlar hâlâ gerçek anlamda silinemiyor
+(`allow delete: if false` duruyor).
+
+**2) Satranç bilgisayara karşı (bot) modu eklendi (`chessBotService.ts`, yeni).** Kolay zorluk
+tamamen cihazda çalışan basit bir minimax (derinlik 1); orta/zor zorluk **Stockfish Online API**'sine
+(`stockfish.online`, 3. parti, ücretsiz, kimlik doğrulama gerektirmiyor) FEN pozisyonu gönderip en iyi
+hamleyi alıyor (9 sn timeout, hata olursa yerel minimax'e düşüyor). Oynanan hamlenin kalitesi
+(`classifyMove`) de hesaplanıp UI'da gösteriliyor.
+
+**3) `ChessRoomScreen.tsx` ve `ChessBoard.tsx` genişletildi.** Ekran artık dört durum arasında geçiş
+yapan bir `Stage` durum makinesi (`menu`/`joining`/`in_room`/`bot_difficulty`/`vs_bot`) — oda kur/kodla
+katıl akışının yanına bilgisayara karşı oynama eklendi. Tahta render'ı yeniden düzenlendi.
+
+**Etkilenen dosyalar:** `firestore.rules`, `src/components/ChessBoard.tsx`, `src/components/
+MessageBubble.tsx`, `src/screens/ChatRoomScreen.tsx`, `src/screens/ChessRoomScreen.tsx`,
+`src/services/chatService.ts`, `src/services/chessBotService.ts` (yeni).
+
+## 2026-08-17 — Satranç eklendi (kişiye karşı + oda kodlu online), oyun bazlı skor tablosu, arama ses çıkışı seçici
+
+İki commit: `fda0582` ("feat: satranç (kişiye karşı + oda kodlu online), oyun bazlı skor tablosu,
+Mini Oyunlar kaydırma düzeltmesi") ve `422919c` ("feat: satranç tahtasını tam ekran/yeniden tasarla,
+arama için ses çıkışı seçici ekle"). Geriye dönük olarak eklendi, bkz. yukarıdaki not.
+
+**1) Satranç.** Yeni `chess.js` bağımlılığı, `src/services/chessService.ts`: iki mod — **contact
+mode** (`rooms/{roomId}/game/chess`, sohbetteki kişiyle, `ChessContactModal.tsx`) ve **room-code mode**
+(`chessRooms/{code}`, 5 karakterlik rastgele bir kodla kişi listesinden bağımsız herkesin katılabildiği
+online oyun, `ChessRoomScreen.tsx`). Hamleler `chess.js`'in `Chess.move()`'u ile legal mi diye
+istemci tarafında kontrol ediliyor. `firestore.rules`'a `rooms/{roomId}/game/{gameId}` ve
+`chessRooms/{code}` için yeni kurallar eklendi (ikincisi anonim auth'a bile açık).
+
+**2) Skor tablosu oyun bazlı hâle getirildi.** `leaderboardService.ts`: `highscores` dokümanlarına
+`game` alanı eklendi, `submitScore`/`fetchTopScores` artık bu alana göre filtreleniyor — öncesinde
+tek karma bir tablo vardı, artık her `GameHubScreen` oyununun kendi ayrı sıralaması var.
+`GameHubScreen.tsx`'e Satranç kartı + her oyun için ayrı en-yüksek-skor rozeti eklendi; XOX/Satranç
+bu sıralamadan hariç tutuluyor (sayısal skorları yok).
+
+**3) Arama ses çıkış cihazı seçici.** Yeni `src/services/audioOutputService.ts`: `CallScreen.tsx`'e
+arama sırasında hoparlör/kulaklık/Bluetooth arasında geçiş yapan bir buton + alt menü, `SettingsModal`'a
+da kalıcı bir "Arama ses çıkışı" tercihi eklendi.
+
+**4) `ChessBoard.tsx`/`ChessRoomScreen.tsx` tam ekran yeniden tasarımı.** Tahta artık ekran
+yüksekliğini de kullanarak gerçek boyutunu dolduruyor, koordinat etiketleri ve gölge eklendi.
+
+**Etkilenen dosyalar:** `firebase.json`, `firestore.indexes.json`, `firestore.rules`, `package.json`,
+`src/components/ChessBoard.tsx` (yeni), `src/components/ChessContactModal.tsx` (yeni), `src/components/
+LeaderboardModal.tsx`, `src/components/SettingsModal.tsx`, `src/screens/CallScreen.tsx`,
+`src/screens/ChatRoomScreen.tsx`, `src/screens/ChessRoomScreen.tsx` (yeni), `src/screens/
+ColorMemoryGame.tsx`, `src/screens/Game2048.tsx`, `src/screens/GameHubScreen.tsx`, `src/screens/
+HomeScreen.tsx`, `src/screens/SnakeGame.tsx`, `src/screens/WhackAMoleGame.tsx`, `src/services/
+audioOutputService.ts` (yeni), `src/services/chessService.ts` (yeni), `src/services/
+leaderboardService.ts`.
+
+## 2026-08-16 — Depolama kotası, profil fotoğrafı, sohbet arka planı, PC istemcisi, sohbetten canlı XOX
+
+Üç commit: `78ff4c2` ("feat: depolama kotası banner'ı, profil fotoğrafı, sohbet arka planı, PC
+istemcisi ve hata düzeltmeleri"), `4c73d04` ("fix(pc-client): file:// oturum açma hatası ve açık/koyu
+tema geçişi ekle"), `2e90dc1` + `47c4527` (XOX). Geriye dönük olarak eklendi, bkz. yukarıdaki not.
+
+**1) Depolama kotası göstergesi.** Yeni `src/components/StorageQuotaBanner.tsx`: hesabın video/genel
+dosya yükleme toplamını (`userService.VIDEO_STORAGE_QUOTA_BYTES` = 5120 MB) kalıcı bir barla gösterir
+— `ContactsScreen`'de kart, `ChatRoomScreen`'de header altına yapışık ince şerit olarak. `userService.ts`'e
+`videoBytesUsed` (Firestore, `increment()`), `addVideoBytesUsed()`, `updateProfilePhoto()`,
+`subscribeToUserProfile()` eklendi. **Bu bir sert limit değil**, sadece bilgilendirici bir sayaç —
+`firestore.rules`/`storage.rules` yükleme miktarını kısıtlamıyor.
+
+**2) Profil fotoğrafı.** Yeni `src/components/Avatar.tsx`: hesap ve kişiler için profil fotoğrafı
+(base64 data URI, Storage'sız — fotoğraf mesajlarıyla aynı yöntem), `ContactsScreen`'den değiştirilir,
+canlı senkronize (`subscribeToUserProfile`).
+
+**3) Sohbet arka plan resmi.** Yeni `src/services/chatBackgroundService.ts`: oda başına, **sadece bu
+cihazda** (`AsyncStorage`, iki taraf arasında senkronize edilmiyor) saklanan bir arka plan resmi.
+
+**4) İkon yenileme.** Yeni `src/components/CallIcons.tsx`: arama/video/geri gibi ikonlar emoji yerine
+`react-native-svg` ile çizilen ince çizgi ikonlara çevrildi.
+
+**5) `pc-client/index.html` (yeni) — tek dosyalık PC istemcisi.** Build adımı olmayan, `file://`
+protokolüyle doğrudan tarayıcıda açılan bir masaüstü sohbet sayfası. Firebase JS SDK'sını CDN'den
+import ediyor, mobil ile **aynı** Firebase config'i ve **aynı** kullanıcı adı→sahte e-posta auth
+şemasını kullanıyor — yani aynı hesapla hem telefonda hem PC'de aynı anda oturum açılabiliyor.
+Metin/fotoğraf/video mesajlaşma, kişi listesi, depolama kotası göstergesi, açık/koyu tema, gerçek
+içerikli masaüstü bildirimleri (tarayıcı `Notification` API'si) destekleniyor; arama/sesli mesaj yok.
+`4c73d04`'te (12 dk sonra) bir takip düzeltmesi geldi: Firebase Auth'un varsayılan IndexedDB tabanlı
+kalıcılığı `file://` origin'inde Chrome'da "Database is closing/hidden" hatasıyla girişi bozuyordu —
+`localStorage` tabanlı elle bir persistence'a geçilerek düzeltildi; aynı commit'te açık/koyu tema
+geçişi de eklendi. Detay: [[01-Architecture]] → "PC istemcisi".
+
+**6) Sohbetten kişiye karşı canlı XOX (`2e90dc1` + `47c4527`).** Yeni `src/services/
+ticTacToeService.ts` + `src/components/OnlineTicTacToeModal.tsx`: `rooms/{roomId}/game/ticTacToe` tek
+bir Firestore dokümanı üzerinden iki cihaz gerçek zamanlı senkronize oluyor (mesajlarla aynı
+"paylaşılan doküman, hakemsiz" modeli). `GameHubScreen`'deki bilgisayara karşı XOX'tan (aynı oturumda
+`TicTacToeGame.tsx`'e taşındı) tamamen ayrı bir mod. `2e90dc1` ayrıca yılanın titreme hatasını düzeltti
+ve oyun ekranlarını tam ekran yaptı.
+
+**Etkilenen dosyalar (özet):** `__mocks__/react-native-fs.js` (yeni), `firestore.rules`, `pc-client/
+index.html` (yeni), `src/components/Avatar.tsx` (yeni), `src/components/CallIcons.tsx` (yeni),
+`src/components/OnlineTicTacToeModal.tsx` (yeni), `src/components/StorageQuotaBanner.tsx` (yeni),
+`src/screens/ChatRoomScreen.tsx`, `src/screens/ContactsScreen.tsx`, `src/services/
+chatBackgroundService.ts` (yeni), `src/services/fcmService.ts`, `src/services/mediaService.ts`,
+`src/services/ticTacToeService.ts` (yeni), `src/services/userService.ts`.
 
 ## 2026-08-14 — Arama/mesajlaşma sağlamlaştırma + tam görsel yeniden tasarım + ana sayfa/oyun/erişilebilirlik geçişi
 
