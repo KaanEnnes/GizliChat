@@ -1,0 +1,7 @@
+{
+  "hosting": {
+    "site": "gizlichat-android-updates",
+    "public": "public",
+    "ignore": ["firebase.json"]
+  }
+}

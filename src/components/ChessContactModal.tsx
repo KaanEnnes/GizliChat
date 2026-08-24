@@ -78,9 +78,18 @@ function ChessContactModal({ visible, onClose, roomId, myUid, contact, game }: P
         <View style={[styles.card, { backgroundColor: theme.surface, borderColor: theme.border }]}>
           <View style={styles.header}>
             <Text style={[styles.title, { color: theme.text }]}>Satranç — {contact.name}</Text>
-            <Pressable onPress={onClose} hitSlop={8} accessibilityRole="button" accessibilityLabel="Kapat">
-              <Text style={[styles.closeIcon, { color: theme.textMuted }]}>✕</Text>
-            </Pressable>
+            <View style={styles.headerActions}>
+              <Pressable
+                onPress={handleStart}
+                hitSlop={8}
+                accessibilityRole="button"
+                accessibilityLabel="Oyunu sıfırla — her iki taraf da sıfırlayabilir">
+                <Text style={[styles.closeIcon, { color: theme.textMuted }]}>🔄</Text>
+              </Pressable>
+              <Pressable onPress={onClose} hitSlop={8} accessibilityRole="button" accessibilityLabel="Kapat">
+                <Text style={[styles.closeIcon, { color: theme.textMuted }]}>✕</Text>
+              </Pressable>
+            </View>
           </View>
 
           <Text style={[styles.status, { color: theme.textMuted }]}>{statusText}</Text>
@@ -135,6 +144,11 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 16,
     fontWeight: '800',
+  },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
   },
   closeIcon: {
     fontSize: 16,
