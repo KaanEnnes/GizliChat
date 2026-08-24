@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import type { ChatMessage } from '../services/chatService';
 import { useTheme } from '../theme/ThemeContext';
+import LinkPreviewCard from './LinkPreviewCard';
+import { extractSpotifyUrl } from '../utils/linkPreview';
 
 function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -123,6 +125,7 @@ function MessageBubble({ message, isMine, myUid, isPinned, onToggleReaction, onP
         {message.type === 'text' && (() => {
           const isLong = message.text.length > TEXT_TRUNCATE_LENGTH;
           const displayText = isLong && !textExpanded ? `${message.text.slice(0, TEXT_TRUNCATE_LENGTH)}…` : message.text;
+          const spotifyUrl = extractSpotifyUrl(message.text);
           return (
             <div style={{ fontSize: 15.5, lineHeight: 1.4, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
               {displayText}
@@ -135,6 +138,7 @@ function MessageBubble({ message, isMine, myUid, isPinned, onToggleReaction, onP
                   {textExpanded ? 'Daha az göster' : 'Daha fazlası'}
                 </button>
               )}
+              {spotifyUrl && <LinkPreviewCard url={spotifyUrl} />}
             </div>
           );
         })()}

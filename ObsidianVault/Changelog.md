@@ -1,5 +1,48 @@
 # Değişiklik Günlüğü
 
+## 2026-08-25 — Web-client'a şifresiz kurtarma kodu ile giriş
+
+Şifresini unutan bir kullanıcının hesabına, gerçek şifresini **hiç değiştirmeden/görmeden**
+erişebilmesi için admin destekli bir kurtarma akışı eklendi (sadece web-client tarafında,
+mobil dokunulmadı):
+
+- `scripts/generateLoginToken.js` — proje kökünde yeni bir admin script. `firebase-admin`
+  ile (servis hesabı anahtarı gerektirir, `serviceAccountKey.json` artık `.gitignore`'da)
+  `usernameLower`'dan `uid`'i bulup `admin.auth().createCustomToken(uid)` ile ~1 saat geçerli
+  tek seferlik bir giriş jetonu üretir. Kullanıcının Firebase Auth şifresine dokunmaz.
+- `web-client/src/services/userService.ts` → yeni `loginWithRecoveryToken(token)`,
+  `signInWithCustomToken` ile jetonu kullanıp normal `loginAccount` gibi bir `Account` döner.
+- `web-client/src/screens/AuthScreen.tsx` → yeni "Şifreni mi unuttun? Kurtarma kodu ile gir"
+  bağlantısı, formu kullanıcı adı/şifre yerine tek bir "Kurtarma kodu" alanına çeviren bir
+  `isRecoveryMode` durumu ekliyor.
+- Bilinçli sınırlama: bu akış sadece admin script'ini çalıştırabilen birinin (yani proje
+  sahibinin) elle jeton üretip kullanıcıya iletmesiyle çalışır — self-servis bir "şifremi
+  unuttum" e-postası değil (bkz. [[04-Security-Notes]] "Şifre kurtarma mekanizması yok" notu,
+  o kısıtlama hâlâ geçerli, bu sadece admin'in elle devreye soktuğu bir yan kapı).
+
+## 2026-08-24 — Spotify linkleri için önizleme banner'ı (web + mobil)
+
+Metin mesajı içinde bir Spotify linki (`open.spotify.com/track|album|playlist|episode|show|artist/...`,
+`intl-xx/` önekli varyantlar dahil) geçiyorsa, mesaj balonunun altında kapak resmi + parça/içerik
+başlığı + "Spotify" rozeti gösteren tıklanabilir bir banner kartı beliriyor (tıklanınca linki
+tarayıcıda/Spotify uygulamasında açıyor). Veri, Spotify'ın herkese açık, auth gerektirmeyen ve
+CORS'a izin veren oEmbed endpoint'inden (`https://open.spotify.com/oembed?url=...`) çekiliyor;
+sonuçlar URL başına bellek-içi `Map` cache'inde tutuluyor (yeniden render'da tekrar fetch yok).
+Lookup başarısız olursa veya link Spotify değilse banner hiç render edilmiyor, mesaj metni
+etkilenmiyor.
+
+- Ortak mantık (regex + fetch + cache) her iki tarafta ayrı ayrı: `src/utils/linkPreview.ts`
+  (RN) ve `web-client/src/utils/linkPreview.ts` (web) — kod paylaşımı yok, iki client birbirinden
+  bağımsız paketler.
+- Kart bileşeni: RN `src/components/LinkPreviewCard.tsx` (`Pressable`+`Image`+`Text`), web
+  `web-client/src/components/LinkPreviewCard.tsx` (`<a>` + `web-client/src/index.css`'teki
+  `.msg-link-preview*` sınıfları).
+- Her iki `MessageBubble.tsx`'te `message.type === 'text'` dalına entegre: mesaj metninden
+  `extractSpotifyUrl` ile ilk Spotify linki çıkarılıp varsa `<LinkPreviewCard url={...} />`
+  mesaj metninin altına ekleniyor.
+- Şu an yalnızca Spotify destekleniyor (ekran görüntüsünde istenen örnek buydu); genel bir
+  Open Graph link-preview sistemi değil.
+
 ## 2026-08-24 — Çok uzun metin mesajlarında "Daha fazlası" butonu (web + mobil) + karşıdan gelen mesajlarda scroll düzeltmesi
 
 **Uzun mesaj kısaltma:** Hem `web-client/src/components/MessageBubble.tsx` hem RN

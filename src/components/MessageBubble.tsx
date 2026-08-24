@@ -7,6 +7,8 @@ import type { ChatMessage } from '../services/chatService';
 import AudioMessagePlayer from './AudioMessagePlayer';
 import { useTheme } from '../theme/ThemeContext';
 import { getCachedVideoUri } from '../services/videoCacheService';
+import LinkPreviewCard from './LinkPreviewCard';
+import { extractSpotifyUrl } from '../utils/linkPreview';
 
 function formatFileSize(bytes: number): string {
   if (bytes < 1024) {
@@ -434,6 +436,7 @@ function MessageBubble({
         {message.type === 'text' && (() => {
           const isLong = message.text.length > TEXT_TRUNCATE_LENGTH;
           const displayText = isLong && !textExpanded ? `${message.text.slice(0, TEXT_TRUNCATE_LENGTH)}…` : message.text;
+          const spotifyUrl = extractSpotifyUrl(message.text);
           return (
             <>
               <Text style={[styles.messageText, { color: bubbleTextColor }]}>
@@ -450,6 +453,7 @@ function MessageBubble({
                   </Text>
                 </Pressable>
               )}
+              {spotifyUrl && <LinkPreviewCard url={spotifyUrl} />}
             </>
           );
         })()}
