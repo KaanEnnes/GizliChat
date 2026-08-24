@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Alert, Animated, Image, Modal, PanResponder, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, Animated, Clipboard, Image, Linking, Modal, PanResponder, Pressable, StyleSheet, Text, View } from 'react-native';
 import Video from 'react-native-video';
 import RNFS from 'react-native-fs';
 import ReactNativeBlobUtil from 'react-native-blob-util';
@@ -83,6 +83,7 @@ interface Props {
   onPin: (message: ChatMessage) => void;
   onUnpin: () => void;
   onEdit: (message: ChatMessage) => void;
+  /** Deletion system stays wired end-to-end — just not exposed as a button in the long-press menu right now. */
   onDelete: (message: ChatMessage) => void;
   onReply: (message: ChatMessage) => void;
 }
@@ -117,6 +118,34 @@ function formatTime(timestamp: number): string {
   const hours = date.getHours().toString().padStart(2, '0');
   const minutes = date.getMinutes().toString().padStart(2, '0');
   return `${hours}:${minutes}`;
+}
+
+// A capturing group in the split pattern makes String.prototype.split
+// interleave the matches themselves into the result at every odd index
+// (["before", "match", "between", "match", "after"]) — so a part is a URL
+// exactly when its index is odd, no separate stateful regex test needed.
+const URL_SPLIT_REGEX = /(https?:\/\/[^\s]+|www\.[^\s]+)/gi;
+
+/** Splits a text message's content around URLs, rendering each URL segment as a tappable link (opens in the device's default browser) while leaving plain text untouched. */
+function renderTextWithLinks(text: string, color: string): React.ReactNode {
+  const parts = text.split(URL_SPLIT_REGEX);
+  if (parts.length === 1) {
+    return text;
+  }
+  return parts.map((part, index) => {
+    if (index % 2 === 0) {
+      return part;
+    }
+    const url = part.startsWith('www.') ? `https://${part}` : part;
+    return (
+      <Text
+        key={index}
+        style={{ color, textDecorationLine: 'underline' }}
+        onPress={() => Linking.openURL(url).catch(() => undefined)}>
+        {part}
+      </Text>
+    );
+  });
 }
 
 function formatCallDuration(totalSeconds: number): string {
@@ -194,9 +223,9 @@ function MessageBubble({
     onEdit(message);
   };
 
-  const handleDelete = () => {
+  const handleCopy = () => {
     setPickerOpen(false);
-    onDelete(message);
+    Clipboard.setString(message.text);
   };
 
   const handleReply = () => {
@@ -400,7 +429,11 @@ function MessageBubble({
           />
         )}
 
-        {message.type === 'text' && <Text style={[styles.messageText, { color: bubbleTextColor }]}>{message.text}</Text>}
+        {message.type === 'text' && (
+          <Text style={[styles.messageText, { color: bubbleTextColor }]}>
+            {renderTextWithLinks(message.text, bubbleTextColor)}
+          </Text>
+        )}
 
         <View style={styles.metaRow}>
           {!!message.editedAt && (
@@ -478,6 +511,15 @@ function MessageBubble({
                 {isPinned ? '📌  Sabiti Kaldır' : '📌  Sabitle'}
               </Text>
             </Pressable>
+            {message.type === 'text' && (
+              <Pressable
+                style={styles.actionRow}
+                onPress={handleCopy}
+                accessibilityRole="button"
+                accessibilityLabel="Mesajı kopyala">
+                <Text style={[styles.actionRowText, { color: theme.text }]}>📋  Kopyala</Text>
+              </Pressable>
+            )}
             {isMine && message.type === 'text' && (
               <Pressable
                 style={styles.actionRow}
@@ -485,15 +527,6 @@ function MessageBubble({
                 accessibilityRole="button"
                 accessibilityLabel="Mesajı düzenle">
                 <Text style={[styles.actionRowText, { color: theme.text }]}>✏️  Düzenle</Text>
-              </Pressable>
-            )}
-            {isMine && (
-              <Pressable
-                style={styles.actionRow}
-                onPress={handleDelete}
-                accessibilityRole="button"
-                accessibilityLabel="Mesajı sil">
-                <Text style={[styles.actionRowText, { color: theme.danger }]}>🗑️  Sil</Text>
               </Pressable>
             )}
           </View>

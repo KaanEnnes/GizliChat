@@ -20,6 +20,7 @@ import Sound from 'react-native-nitro-sound';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import MessageBubble, { replyPreviewLabel } from '../components/MessageBubble';
 import AttachMenuModal from '../components/AttachMenuModal';
+import GifPickerModal from '../components/GifPickerModal';
 import RecordingWaveform from '../components/RecordingWaveform';
 import Avatar from '../components/Avatar';
 import StorageQuotaBanner from '../components/StorageQuotaBanner';
@@ -86,9 +87,9 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
   const [reachedStart, setReachedStart] = useState(false);
   const [draft, setDraft] = useState('');
   const [connectionError, setConnectionError] = useState<string | null>(null);
-  const [sending, setSending] = useState(false);
   const [uploadingMedia, setUploadingMedia] = useState(false);
   const [attachMenuVisible, setAttachMenuVisible] = useState(false);
+  const [gifPickerVisible, setGifPickerVisible] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingLevel, setRecordingLevel] = useState(0);
   const [callStarting, setCallStarting] = useState(false);
@@ -119,9 +120,6 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
   // during which every intervening snapshot would otherwise re-trigger
   // duplicate markMessageRead calls for the same message.
   const markedReadIdsRef = useRef<Set<string>>(new Set());
-  // Synchronous (non-state) guard against a double-tap firing handleSend
-  // twice before the `sending` state's re-render lands.
-  const sendingRef = useRef(false);
   // Resolves once a just-started recording has actually finished starting
   // (native startRecorder() is async). On a quick tap, onPressOut can fire
   // before that promise settles — without waiting for it here, stopRecording
@@ -369,13 +367,26 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
 
   const handleSend = useCallback(() => {
     const trimmed = draft.trim();
-    if (!trimmed || sendingRef.current) {
+    if (!trimmed) {
       return;
     }
-    sendingRef.current = true;
-    setSending(true);
     const editing = editingMessage;
     const replying = replyingTo;
+    // Cleared immediately (optimistic) instead of waiting for the network
+    // request to resolve — on a slow connection the old "only clear on
+    // success" behavior made the input visibly sit there holding the typed
+    // text, which read as the send button doing nothing. A failed send still
+    // surfaces via connectionError below; retyping is cheap enough that
+    // losing the draft on the rare failure isn't worth the perceived lag.
+    setDraft('');
+    setEditingMessage(null);
+    setReplyingTo(null);
+    // Fired without waiting on any previous send — each message is its own
+    // independent Firestore write, so there's no correctness reason to
+    // serialize them. Previously a `sendingRef`/`sending` guard blocked the
+    // send button until the prior request resolved, which meant typing and
+    // sending a second message quickly (before the first one's network
+    // round-trip finished) silently did nothing until it caught up.
     const request = editing
       ? editMessage(roomId, editing.id, trimmed)
       : sendMessage(
@@ -386,21 +397,9 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
             ? { messageId: replying.id, text: replying.text, senderId: replying.senderId, type: replying.type }
             : undefined,
         );
-    request
-      .then(() => {
-        // Only cleared on success — on failure the draft stays in the input
-        // so the user can just press send again instead of retyping it.
-        setDraft('');
-        setEditingMessage(null);
-        setReplyingTo(null);
-      })
-      .catch(error => {
-        setConnectionError(editing ? `Mesaj düzenlenemedi: ${error.message}` : `Mesaj gönderilemedi: ${error.message}`);
-      })
-      .finally(() => {
-        sendingRef.current = false;
-        setSending(false);
-      });
+    request.catch(error => {
+      setConnectionError(editing ? `Mesaj düzenlenemedi: ${error.message}` : `Mesaj gönderilemedi: ${error.message}`);
+    });
   }, [draft, roomId, myUid, editingMessage, replyingTo]);
 
   const handlePickMedia = useCallback(
@@ -632,6 +631,9 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
     setDraft(message.text);
   }, []);
 
+  // Kept wired even though MessageBubble no longer exposes a "Sil" button —
+  // the deletion system itself stays intact (not ripped out), just not
+  // user-reachable from the UI for now.
   const handleDeleteMessage = useCallback(
     (message: ChatMessage) => {
       Alert.alert('Mesajı sil', 'Bu mesaj herkes için silinecek.', [
@@ -665,7 +667,7 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
     }
   }, [pinnedMessagePreview, messages]);
 
-  const canSend = draft.trim().length > 0 && !sending;
+  const canSend = draft.trim().length > 0;
 
   return (
     <KeyboardAvoidingView
@@ -768,6 +770,17 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
         onCamera={() => handlePickMedia('camera')}
         onHiddenMedia={() => handlePickMedia('library', true)}
         onFile={() => handlePickFile()}
+        onGif={() => setGifPickerVisible(true)}
+      />
+
+      <GifPickerModal
+        visible={gifPickerVisible}
+        onClose={() => setGifPickerVisible(false)}
+        onSelect={gif => {
+          sendMediaMessage(roomId, myUid, 'image', gif.fullUrl).catch(error =>
+            setConnectionError(`GIF gönderilemedi: ${(error as Error).message}`),
+          );
+        }}
       />
 
       {pinnedMessagePreview && (
@@ -922,37 +935,40 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
           multiline
           onSubmitEditing={Platform.OS === 'ios' ? handleSend : undefined}
         />
-        {canSend ? (
-          <Pressable
-            style={[styles.sendButton, { backgroundColor: theme.accent }]}
-            onPress={handleSend}
-            disabled={sending}
-            accessibilityRole="button"
-            accessibilityLabel="Gönder">
-            {sending ? (
-              <ActivityIndicator color={theme.accentText} size="small" />
-            ) : (
-              <Text style={[styles.sendButtonText, { color: theme.accentText }]}>
-                {editingMessage ? 'Kaydet' : 'Gönder'}
-              </Text>
-            )}
-          </Pressable>
-        ) : (
-          <Pressable
-            style={[
-              styles.micButton,
-              { backgroundColor: theme.inputBackground, borderColor: theme.border },
-              isRecording && { backgroundColor: theme.danger, borderColor: theme.danger },
-            ]}
-            hitSlop={6}
-            onPressIn={handleStartRecording}
-            onPressOut={handleStopRecording}
-            disabled={uploadingMedia}
-            accessibilityRole="button"
-            accessibilityLabel="Basılı tutarak sesli mesaj kaydet">
+        {/*
+          A single Pressable that switches appearance/behavior based on
+          `canSend`, instead of two separate Pressable trees swapped via a
+          ternary. Mounting/unmounting a brand-new native view on every
+          keystroke transition (empty <-> non-empty draft) costs an extra
+          native-bridge round trip, which read as the send button not
+          appearing "instantly" after typing — updating one already-mounted
+          view's style/text is immediate.
+        */}
+        <Pressable
+          style={[
+            canSend ? styles.sendButton : styles.micButton,
+            canSend
+              ? { backgroundColor: theme.accent }
+              : [
+                  { backgroundColor: theme.inputBackground, borderColor: theme.border },
+                  isRecording && { backgroundColor: theme.danger, borderColor: theme.danger },
+                ],
+          ]}
+          hitSlop={canSend ? undefined : 6}
+          onPress={canSend ? handleSend : undefined}
+          onPressIn={canSend ? undefined : handleStartRecording}
+          onPressOut={canSend ? undefined : handleStopRecording}
+          disabled={canSend ? false : uploadingMedia}
+          accessibilityRole="button"
+          accessibilityLabel={canSend ? 'Gönder' : 'Basılı tutarak sesli mesaj kaydet'}>
+          {canSend ? (
+            <Text style={[styles.sendButtonText, { color: theme.accentText }]}>
+              {editingMessage ? 'Kaydet' : 'Gönder'}
+            </Text>
+          ) : (
             <Text style={styles.micIcon}>🎤</Text>
-          </Pressable>
-        )}
+          )}
+        </Pressable>
       </View>
     </KeyboardAvoidingView>
   );

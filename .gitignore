@@ -6,6 +6,11 @@
 # actual .apk binaries are pushed straight via `firebase deploy --only
 # hosting`, never committed (see YAPILACAKLAR.txt's update-publishing steps).
 /public/*.apk
+/apk-release-deploy/public/*.apk
+/apk-release-deploy/.firebase/
+
+# Local gradle build logs, not project content.
+android/build_log*.txt
 
 # Firebase CLI's local hosting deploy cache (per-machine, regenerated on
 # every `firebase deploy`) — not project content.
