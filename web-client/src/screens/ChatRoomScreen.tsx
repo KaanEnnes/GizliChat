@@ -52,9 +52,11 @@ function ChatRoomScreen({ account, contact, onBack }: Props): React.JSX.Element 
   const [gamesOpen, setGamesOpen] = useState(false);
   const [gifPickerOpen, setGifPickerOpen] = useState(false);
   const [contactPhotoUrl, setContactPhotoUrl] = useState<string | undefined>(undefined);
+  const [showJumpToBottom, setShowJumpToBottom] = useState(false);
   const listRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const seenReadRef = useRef<Set<string>>(new Set());
+  const nearBottomRef = useRef(true);
 
   useEffect(() => {
     return subscribeToUserProfile(contact.uid, profile => setContactPhotoUrl(profile.photoUrl));
@@ -99,16 +101,42 @@ function ChatRoomScreen({ account, contact, onBack }: Props): React.JSX.Element 
     fetchMessageById(roomId, pinnedMessageId).then(setPinnedMessage);
   }, [pinnedMessageId, messages, roomId]);
 
+  const lastMessageId = messages.length ? messages[messages.length - 1].id : null;
+
   useEffect(() => {
-    listRef.current?.scrollTo({ top: listRef.current.scrollHeight });
-  }, [messages.length]);
+    if (nearBottomRef.current) {
+      listRef.current?.scrollTo({ top: listRef.current.scrollHeight });
+      setShowJumpToBottom(false);
+    } else {
+      setShowJumpToBottom(true);
+    }
+    // messages is a new array on every snapshot, but the query is capped at messageLimit,
+    // so length alone doesn't change once the cap is hit — key off the last message instead.
+  }, [lastMessageId]);
+
+  useEffect(() => {
+    nearBottomRef.current = true;
+    setShowJumpToBottom(false);
+  }, [roomId]);
 
   const handleScroll = useCallback(() => {
     const el = listRef.current;
-    if (el && el.scrollTop < 60 && messageLimit < 300) {
+    if (!el) return;
+    if (el.scrollTop < 60 && messageLimit < 300) {
       setMessageLimit(prev => Math.min(300, prev + MESSAGE_LIMIT_STEP));
     }
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    nearBottomRef.current = nearBottom;
+    setShowJumpToBottom(!nearBottom);
   }, [messageLimit]);
+
+  const handleJumpToBottom = useCallback(() => {
+    const el = listRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+    nearBottomRef.current = true;
+    setShowJumpToBottom(false);
+  }, []);
 
   const buildReplySnapshot = (message: ChatMessage): ChatMessage['replyTo'] => ({
     messageId: message.id,
@@ -275,6 +303,18 @@ function ChatRoomScreen({ account, contact, onBack }: Props): React.JSX.Element 
           />
         ))}
       </div>
+
+      {showJumpToBottom && (
+        <button
+          type="button"
+          className="chat-jump-to-bottom"
+          style={{ background: theme.surface, borderColor: theme.border, color: theme.text }}
+          onClick={handleJumpToBottom}
+          title="En alta git"
+        >
+          ↓
+        </button>
+      )}
 
       {uploading && <div className="chat-upload-status" style={{ color: theme.textMuted }}>{uploading}</div>}
 

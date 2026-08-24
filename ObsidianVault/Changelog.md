@@ -1,5 +1,50 @@
 # Değişiklik Günlüğü
 
+## 2026-08-24 — web-client: otomatik aşağı kaydırmanın gerçek kök nedeni bulundu ve deploy edildi
+
+İlk scroll düzeltmesi (`nearBottomRef` + `useEffect(..., [messages.length])`) canlıda hâlâ
+çalışmıyordu. Kök neden: `chatService.ts`'deki `subscribeToMessages`, Firestore sorgusunu
+`orderBy('createdAt','desc').limit(messageLimit)` ile sınırlıyor (`INITIAL_MESSAGE_LIMIT = 30`).
+Bir odada 30'dan fazla mesaj varsa yeni mesaj geldiğinde en eski mesaj listeden düşüyor ve dizi
+uzunluğu hep 30'da sabit kalıyor — yani `messages.length` hiçbir zaman değişmiyor ve
+`ChatRoomScreen.tsx`'teki auto-scroll `useEffect`'i **hiç tetiklenmiyordu**. Düzeltme:
+`useEffect` bağımlılığı `messages.length` yerine `lastMessageId` (`messages[messages.length -
+1]?.id`) oldu — bu, mesaj dizisi cap'e ulaşmış olsa bile en yeni mesaj değiştiğinde her zaman
+değişir. `npm run build` + `firebase deploy --only hosting` ile `kaanchatmercan` (canlı site,
+https://kaanchatmercan.web.app) üzerine deploy edildi.
+
+## 2026-08-24 — origin/master birleştirildi (`4a51177`), yeni web-client'ta da scroll düzeltmesi
+
+`origin/master`'a bir saat içinde push edilen `4a51177` ("Add web client, GIF sending, mobile UX
+fixes...") mevcut dala (`feat/push-notifications-video-cache`) merge edildi. Bu commit ile
+`web-client/` adında tamamen yeni, React + Vite tabanlı bir web istemcisi eklenmiş (eski tek-dosya
+`pc-client/index.html`'in yanına, onu değiştirmeden) — kişi listesi, sohbet, satranç, XOX, GIF
+gönderme, oyun hub'ı (2048, yılan, Whack-a-Mole vb.) gibi ekranların hepsi kendi React
+component/service dosyalarına sahip.
+
+Yeni `web-client/src/screens/ChatRoomScreen.tsx` içinde de `pc-client`'takiyle aynı otomatik
+aşağı kaydırma sorunu vardı: `useEffect(() => { listRef.current?.scrollTo(...) }, [messages.length])`
+her yeni mesajda koşulsuz en alta kaydırıyordu. Aynı mantıkla düzeltildi: `nearBottomRef` ile
+kullanıcının alta yakın olup olmadığı `handleScroll`'da sürekli güncelleniyor; yakınsa yeni mesajda
+otomatik en alta iniliyor, değilse `showJumpToBottom` state'i true olup sağ altta bir
+`.chat-jump-to-bottom` (↓) butonu beliriyor (tıklanınca `scrollTo({ behavior: 'smooth' })` ile en
+alta gidiyor). Oda değişince (`roomId` değişimi) `nearBottomRef` ve buton sıfırlanıyor. Stil
+`web-client/src/index.css`'e eklendi (`.chat-room` artık `position: relative`).
+
+## 2026-08-24 — pc-client: sohbet otomatik aşağı kaydırma düzeltmesi
+
+`pc-client/index.html`'de sohbet mesaj listesi (`#messages`) her yeni Firestore snapshot'ında
+`innerHTML = ''` ile tamamen yeniden çiziliyordu ve ardından her seferinde `scrollTop =
+scrollHeight` ile koşulsuz en alta kaydırılıyordu — kullanıcı yukarı kaydırıp eski mesajlara
+bakarken yeni mesaj gelince istemsizce en alta atılıyordu. Artık `openRoom()` içindeki
+`onSnapshot` callback'i, yeniden çizmeden önce kullanıcının alta yakın olup olmadığını
+(`scrollHeight - scrollTop - clientHeight < 80`) kontrol ediyor: yakınsa yeniden en alta
+kaydırılıyor (yeni mesaj otomatik görünür), değilse kullanıcının göreli kaydırma konumu korunuyor
+ve sağ altta yeni bir `#scrollToBottomBtn` (↓) butonu beliriyor — tıklanınca en alta atlıyor.
+`#messages` üzerine bir `scroll` listener'ı da eklendi, kullanıcı manuel kaydırdığında butonu
+buna göre gösterip gizliyor. `#chatHeaderWrap`'e `position: relative` eklendi ki buton mesaj
+alanının sağ alt köşesinde sabit dursun.
+
 ## 2026-08-20 — Gizli video/genel dosya gönderme, uygulama içi güncelleme sistemi, mesaj yanıtlama
 
 Üç ardışık commit'i özetler (en eskiden en yeniye): `77054af` "feat: gizli video, genel dosya
