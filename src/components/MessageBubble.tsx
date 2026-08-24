@@ -89,6 +89,7 @@ interface Props {
 }
 
 const QUICK_EMOJIS = ['❤️', '🤍', '😂', '😮', '😢', '🙏', '👍'];
+const TEXT_TRUNCATE_LENGTH = 400;
 
 /** How far (px) a message must be dragged before releasing it triggers reply. */
 const SWIPE_REPLY_THRESHOLD = 56;
@@ -175,6 +176,7 @@ function MessageBubble({
   const [pickerOpen, setPickerOpen] = useState(false);
   const [revealed, setRevealed] = useState(false);
   const [downloading, setDownloading] = useState(false);
+  const [textExpanded, setTextExpanded] = useState(false);
   const swipeX = useRef(new Animated.Value(0)).current;
   const swipeTriggered = useRef(false);
   const bubbleColor = isMine ? theme.bubbleMine : theme.bubbleOther;
@@ -429,11 +431,28 @@ function MessageBubble({
           />
         )}
 
-        {message.type === 'text' && (
-          <Text style={[styles.messageText, { color: bubbleTextColor }]}>
-            {renderTextWithLinks(message.text, bubbleTextColor)}
-          </Text>
-        )}
+        {message.type === 'text' && (() => {
+          const isLong = message.text.length > TEXT_TRUNCATE_LENGTH;
+          const displayText = isLong && !textExpanded ? `${message.text.slice(0, TEXT_TRUNCATE_LENGTH)}…` : message.text;
+          return (
+            <>
+              <Text style={[styles.messageText, { color: bubbleTextColor }]}>
+                {renderTextWithLinks(displayText, bubbleTextColor)}
+              </Text>
+              {isLong && (
+                <Pressable
+                  onPress={() => setTextExpanded(v => !v)}
+                  hitSlop={4}
+                  accessibilityRole="button"
+                  accessibilityLabel={textExpanded ? 'Daha az göster' : 'Daha fazlasını göster'}>
+                  <Text style={[styles.showMoreText, { color: bubbleTextColor }]}>
+                    {textExpanded ? 'Daha az göster' : 'Daha fazlası'}
+                  </Text>
+                </Pressable>
+              )}
+            </>
+          );
+        })()}
 
         <View style={styles.metaRow}>
           {!!message.editedAt && (
@@ -712,6 +731,13 @@ const styles = StyleSheet.create({
   messageText: {
     fontSize: 15.5,
     lineHeight: 21,
+  },
+  showMoreText: {
+    fontSize: 13,
+    fontWeight: '700',
+    marginTop: 4,
+    textDecorationLine: 'underline',
+    opacity: 0.85,
   },
   metaRow: {
     flexDirection: 'row',

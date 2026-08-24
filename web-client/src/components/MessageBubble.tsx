@@ -27,6 +27,7 @@ export function replyPreviewLabel(message: Pick<ChatMessage, 'type' | 'text' | '
 }
 
 const QUICK_EMOJIS = ['❤️', '🤍', '😂', '😮', '😢', '🙏', '👍'];
+const TEXT_TRUNCATE_LENGTH = 400;
 
 interface Props {
   message: ChatMessage;
@@ -45,6 +46,7 @@ function MessageBubble({ message, isMine, myUid, isPinned, onToggleReaction, onP
   const { theme } = useTheme();
   const [menuOpen, setMenuOpen] = useState(false);
   const [viewerOpen, setViewerOpen] = useState(false);
+  const [textExpanded, setTextExpanded] = useState(false);
 
   const bubbleColor = isMine ? theme.bubbleMine : theme.bubbleOther;
   const bubbleTextColor = isMine ? theme.bubbleMineText : theme.bubbleOtherText;
@@ -118,7 +120,24 @@ function MessageBubble({ message, isMine, myUid, isPinned, onToggleReaction, onP
           </a>
         )}
 
-        {message.type === 'text' && <div style={{ fontSize: 15.5, lineHeight: 1.4, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{message.text}</div>}
+        {message.type === 'text' && (() => {
+          const isLong = message.text.length > TEXT_TRUNCATE_LENGTH;
+          const displayText = isLong && !textExpanded ? `${message.text.slice(0, TEXT_TRUNCATE_LENGTH)}…` : message.text;
+          return (
+            <div style={{ fontSize: 15.5, lineHeight: 1.4, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+              {displayText}
+              {isLong && (
+                <button
+                  type="button"
+                  className="msg-show-more-btn"
+                  style={{ color: bubbleTextColor }}
+                  onClick={() => setTextExpanded(v => !v)}>
+                  {textExpanded ? 'Daha az göster' : 'Daha fazlası'}
+                </button>
+              )}
+            </div>
+          );
+        })()}
 
         <div className="msg-meta-row">
           {!!message.editedAt && <span style={{ opacity: 0.6, fontSize: 11 }}>düzenlendi · </span>}

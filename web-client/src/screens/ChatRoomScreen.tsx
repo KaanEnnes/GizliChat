@@ -68,6 +68,13 @@ function ChatRoomScreen({ account, contact, onBack }: Props): React.JSX.Element 
       roomId,
       messageLimit,
       nextMessages => {
+        // Measure proximity to the bottom against the DOM as it stood right before this
+        // update lands — waiting for the next scroll event to update nearBottomRef is too
+        // late/unreliable (e.g. an incoming message arriving with no user scroll in between).
+        const el = listRef.current;
+        if (el) {
+          nearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+        }
         setMessages(nextMessages);
         setError(null);
         // Mark incoming messages delivered/read once they're rendered in the open room.
