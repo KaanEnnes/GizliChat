@@ -1,5 +1,27 @@
 # Değişiklik Günlüğü
 
+## 2026-08-24 — Çok uzun metin mesajlarında "Daha fazlası" butonu (web + mobil) + karşıdan gelen mesajlarda scroll düzeltmesi
+
+**Uzun mesaj kısaltma:** Hem `web-client/src/components/MessageBubble.tsx` hem RN
+`src/components/MessageBubble.tsx`'te, 400 karakterden uzun metin mesajları artık `…` ile
+kesilip altına "Daha fazlası" bağlantısı ekleniyor; tıklanınca mesaj tam açılıyor ve buton
+"Daha az göster"e dönüyor (`textExpanded` state, `TEXT_TRUNCATE_LENGTH = 400`). Web'de düz bir
+`<button className="msg-show-more-btn">`, mobilde alt satırda ayrı bir `Pressable`+`Text`
+(`styles.showMoreText`).
+
+**Karşıdan gelen mesajlarda auto-scroll düzeltmesi:** Önceki `nearBottomRef`, yalnızca kullanıcının
+`onScroll` event'i tetiklediği anlarda güncelleniyordu. Bu, kendi mesajını gönderirken sorun
+çıkarmıyordu (ayrıca zorla kaydırılıyordu) ama karşı taraftan mesaj geldiğinde — herhangi bir
+scroll event araya girmemişse — "kullanıcı altta mı" bilgisi bayat kalabiliyor, bazen kaydırma
+tetiklenmeyebiliyordu. Artık `ChatRoomScreen.tsx`'teki `subscribeToMessages` callback'i,
+`setMessages` çağrılmadan hemen önce (yani DOM yeni mesajla güncellenmeden hemen önce) mevcut
+`listRef` DOM elemanının `scrollHeight/scrollTop/clientHeight` değerlerinden `nearBottomRef.current`'ı
+doğrudan hesaplıyor — kararı olay tabanlı, gecikmeli bir referansa değil, o anki gerçek DOM
+durumuna dayandırıyor.
+
+Build alınıp `firebase deploy --only hosting` ile `kaanchatmercan`
+(https://kaanchatmercan.web.app) üzerine deploy edildi, GitHub'a push edildi (`f279d60`).
+
 ## 2026-08-24 — web-client: kalan iki auto-scroll bug'ı düzeltildi (kendi mesajın + medya yüklemesi)
 
 Önceki `lastMessageId` düzeltmesinden sonra kullanıcı hâlâ "bazen buglanıyor" bildirdi. İki ayrı
