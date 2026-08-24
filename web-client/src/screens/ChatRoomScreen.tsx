@@ -101,10 +101,14 @@ function ChatRoomScreen({ account, contact, onBack }: Props): React.JSX.Element 
     fetchMessageById(roomId, pinnedMessageId).then(setPinnedMessage);
   }, [pinnedMessageId, messages, roomId]);
 
-  const lastMessageId = messages.length ? messages[messages.length - 1].id : null;
+  const lastMessage = messages.length ? messages[messages.length - 1] : null;
+  const lastMessageId = lastMessage?.id ?? null;
+  const lastMessageIsMine = lastMessage?.senderId === account.uid;
 
   useEffect(() => {
-    if (nearBottomRef.current) {
+    // A message I just sent should always snap the view to it, even if I'd scrolled up.
+    if (nearBottomRef.current || lastMessageIsMine) {
+      nearBottomRef.current = true;
       listRef.current?.scrollTo({ top: listRef.current.scrollHeight });
       setShowJumpToBottom(false);
     } else {
@@ -112,12 +116,30 @@ function ChatRoomScreen({ account, contact, onBack }: Props): React.JSX.Element 
     }
     // messages is a new array on every snapshot, but the query is capped at messageLimit,
     // so length alone doesn't change once the cap is hit — key off the last message instead.
-  }, [lastMessageId]);
+  }, [lastMessageId, lastMessageIsMine]);
 
   useEffect(() => {
     nearBottomRef.current = true;
     setShowJumpToBottom(false);
   }, [roomId]);
+
+  // Image/video bubbles finish loading after the initial scroll-to-bottom already ran,
+  // which grows scrollHeight and leaves the view short of the true bottom — re-pin when that happens.
+  useEffect(() => {
+    const el = listRef.current;
+    if (!el) return;
+    const handleMediaLoad = () => {
+      if (nearBottomRef.current) {
+        el.scrollTo({ top: el.scrollHeight });
+      }
+    };
+    el.addEventListener('load', handleMediaLoad, true);
+    el.addEventListener('loadedmetadata', handleMediaLoad, true);
+    return () => {
+      el.removeEventListener('load', handleMediaLoad, true);
+      el.removeEventListener('loadedmetadata', handleMediaLoad, true);
+    };
+  }, []);
 
   const handleScroll = useCallback(() => {
     const el = listRef.current;

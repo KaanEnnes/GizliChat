@@ -1,5 +1,25 @@
 # Değişiklik Günlüğü
 
+## 2026-08-24 — web-client: kalan iki auto-scroll bug'ı düzeltildi (kendi mesajın + medya yüklemesi)
+
+Önceki `lastMessageId` düzeltmesinden sonra kullanıcı hâlâ "bazen buglanıyor" bildirdi. İki ayrı
+kök neden bulundu ve `ChatRoomScreen.tsx`'te düzeltildi:
+
+1. **Kendi gönderdiğin mesaj kaydırmıyordu:** Kullanıcı yukarı kaydırmışken kendi mesajını
+   gönderdiğinde `nearBottomRef.current` hâlâ `false` olduğu için otomatik kaydırma effect'i
+   çalışmıyor, sadece "en alta git" butonu beliriyordu — oysa kendi gönderdiğin mesaj her zaman
+   ekrana gelmeli. `lastMessageIsMine` (`lastMessage?.senderId === account.uid`) eklendi;
+   `nearBottomRef.current || lastMessageIsMine` artık en alta kaydırmayı tetikliyor.
+2. **Fotoğraf/video mesajları eksik kaydırıyordu:** En alta kaydırma, mesaj DOM'a eklendiği anda
+   `scrollHeight` üzerinden hesaplanıyordu, ama `<img>`/`<video>` içerikleri ağdan asenkron
+   yüklendiği için o an bubble henüz gerçek boyutuna ulaşmamış oluyordu — sonuç: kaydırma hedefin
+   biraz altında kalıyordu. `.chat-messages` üzerine capture-phase `load`/`loadedmetadata` event
+   listener'ları eklendi; `nearBottomRef.current` true iken herhangi bir medya yüklendiğinde
+   liste tekrar en alta pinleniyor.
+
+`npm run build` + `firebase deploy --only hosting` ile `kaanchatmercan` (https://kaanchatmercan.web.app)
+üzerine deploy edildi.
+
 ## 2026-08-24 — web-client: otomatik aşağı kaydırmanın gerçek kök nedeni bulundu ve deploy edildi
 
 İlk scroll düzeltmesi (`nearBottomRef` + `useEffect(..., [messages.length])`) canlıda hâlâ
