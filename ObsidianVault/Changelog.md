@@ -1,5 +1,39 @@
 # Değişiklik Günlüğü
 
+## 2026-08-25 — Sohbet silme, unicode satranç taşları, web geri tuşu ve mobil düzeltmeler
+
+- **Sohbet silme (web + mobil)**: `contactService.ts`'e `removeContact(myUid, contactUid)`
+  eklendi — sadece `users/{myUid}/contacts/{contactUid}` dokümanını siler. Oda (`rooms/{roomId}`)
+  iki kullanıcı arasında paylaşılan tek doküman olduğu için dokunulmuyor: silme işlemi sadece
+  o kullanıcının sohbet listesinden kaldırır, karşı taraf etkilenmez ("kendinden sil", mesajlar
+  silinmez). UI: `ContactsScreen.tsx`'te favori yıldızının yanına 🗑️ butonu (web: `window.confirm`,
+  mobil: `Alert.alert`).
+- **Satranç taşları düz SVG'den Unicode sembollere geçirildi** (`chessPieceIcons.tsx`, hem
+  `src/components/` hem `web-client/src/components/`) — ♟♞♝♜♛♚, takım rengine göre
+  mavi/turuncu tint'li `<Text>`/`<SvgText>`.
+- **Web-client routing**: `web-client/src/App.tsx`'e History API tabanlı navigasyon eklendi
+  (`NavState` + `history.pushState`/`popstate`) — uygulamanın gizli-oyun-kılığı tasarımı
+  gereği URL hep aynı kalıyor (asla `/chat` gibi anlamlı bir yol yok), ama tarayıcının
+  geri/ileri tuşları artık gerçek ekranlar arası geçişi (hub↔login↔contacts↔chat) doğru
+  şekilde yapıyor. İnce nokta: login başarılı olduğunda `handleAuthenticated` gizli bir
+  "hub" (`hubOverride:true`) geçmiş kaydını Contacts kaydından hemen önce push ediyor —
+  yoksa `account` set olduktan sonra `revealed` bayrağının render üzerinde hiçbir etkisi
+  kalmadığından, girişten hemen sonra tek geri tuşu basışı ekranda hiçbir değişiklik
+  yaratmıyordu (kullanıcı "geri tuşu çalışmıyor" sanıyordu).
+- **Mobil kaydırma düzeltmesi**: `ChatRoomScreen.tsx`'te `maintainVisibleContentPosition`
+  sadece `loadingMore` (eski mesajlar yukarıdan yüklenirken) true iken aktif ediliyor —
+  önceden her zaman açıktı ve mesaj listesi her güncellendiğinde (okundu bilgisi, reaksiyon
+  vb.) kullanıcı aşağı kaydırırken bile scroll pozisyonunu yukarı çekiyordu.
+- **Mobil "görüldü" düzeltmesi**: `ChatRoomScreen.tsx`'te okundu bilgisi (`markMessageRead`)
+  artık sadece `AppState.currentState === 'active'` iken yazılıyor — önceden oda ekranı
+  arka planda/telefon kilitliyken bile mount'lu kaldığı için gelen mesajlar hiç görülmeden
+  "görüldü" olarak işaretleniyordu. Uygulama tekrar öne geldiğinde bekleyen mesajlar
+  otomatik işaretleniyor (`AppState` `change` listener).
+- Mobil `versionCode` 10→11, `versionName` "1.3.2"→"1.3.3"; yeni release APK
+  `apk-release-deploy/public/gizlichat-1.3.3.apk` olarak `gizlichat-android-updates` hosting
+  site'ına deploy edildi (bkz. [[05-Build-Deployment]] elle-adım deseni — `app_config/android`
+  Firestore dokümanı hâlâ Console'dan elle güncellenmesi gerekiyor).
+
 ## 2026-08-25 — Web-client'a şifresiz kurtarma kodu ile giriş
 
 Şifresini unutan bir kullanıcının hesabına, gerçek şifresini **hiç değiştirmeden/görmeden**
