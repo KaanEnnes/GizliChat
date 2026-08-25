@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  AppState,
   FlatList,
   ImageBackground,
   KeyboardAvoidingView,
@@ -120,6 +121,12 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
   // during which every intervening snapshot would otherwise re-trigger
   // duplicate markMessageRead calls for the same message.
   const markedReadIdsRef = useRef<Set<string>>(new Set());
+  // Mirrors AppState so the read-receipt effect below can skip writing
+  // readAt while the app is backgrounded/screen-off — the room screen stays
+  // mounted in the navigation stack even then, so without this check an
+  // incoming message would get marked "seen" purely because it was rendered
+  // off-screen, not because the user actually looked at it.
+  const isAppActiveRef = useRef(AppState.currentState === 'active');
   // Resolves once a just-started recording has actually finished starting
   // (native startRecorder() is async). On a quick tap, onPressOut can fire
   // before that promise settles — without waiting for it here, stopRecording
@@ -287,11 +294,15 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
     [handleLoadMore],
   );
 
-  useEffect(() => {
-    // Room is open, so every incoming message from the other person is being
-    // shown on screen right now — write the shared read receipt (visible to
-    // the sender as blue double ticks) for any of their messages that don't
-    // have one yet. Already-read messages are skipped, so this doesn't loop.
+  const markVisibleMessagesRead = useCallback(() => {
+    if (!isAppActiveRef.current) {
+      return;
+    }
+    // Room is open and the app is actually in the foreground, so every
+    // incoming message from the other person is being shown on screen right
+    // now — write the shared read receipt (visible to the sender as blue
+    // double ticks) for any of their messages that don't have one yet.
+    // Already-read messages are skipped, so this doesn't loop.
     messages.forEach(message => {
       if (
         message.senderId !== myUid &&
@@ -307,6 +318,22 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
       }
     });
   }, [messages, roomId, myUid]);
+
+  useEffect(() => {
+    markVisibleMessagesRead();
+  }, [markVisibleMessagesRead]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', nextState => {
+      const wasActive = isAppActiveRef.current;
+      isAppActiveRef.current = nextState === 'active';
+      // Catch up on anything that arrived while the screen was off/backgrounded.
+      if (!wasActive && isAppActiveRef.current) {
+        markVisibleMessagesRead();
+      }
+    });
+    return () => subscription.remove();
+  }, [markVisibleMessagesRead]);
 
   useEffect(() => {
     // Only react when the newest message actually changed (a fresh
@@ -851,7 +878,7 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
           keyboardShouldPersistTaps="handled"
           onScroll={handleScroll}
           scrollEventThrottle={100}
-          maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
+          maintainVisibleContentPosition={loadingMore ? { minIndexForVisible: 0 } : undefined}
           ListHeaderComponent={
             loadingMore ? (
               <View style={styles.loadingMoreRow}>

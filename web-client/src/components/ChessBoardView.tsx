@@ -2,15 +2,9 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useTheme } from '../theme/ThemeContext';
 import { Chess } from '../services/gameService';
 import { classifyMove, MOVE_QUALITY_LABELS, type MoveQuality } from '../services/chessBotService';
+import ChessPieceIcon, { shadeColor } from './chessPieceIcons';
 
 const CHESS_FILES = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
-// Both colors render from the same solid/filled glyph set (the outline
-// "white" chess characters look thin and washed out in most fonts) — black
-// vs. white is conveyed instead by fill color + a contrasting stroke.
-const CHESS_GLYPHS: Record<string, string> = {
-  wk: '♚', wq: '♛', wr: '♜', wb: '♝', wn: '♞', wp: '♟',
-  bk: '♚', bq: '♛', br: '♜', bb: '♝', bn: '♞', bp: '♟',
-};
 
 interface Props {
   fen: string;
@@ -52,6 +46,13 @@ function ChessBoardView({ fen, myColor, isMyTurn, onMove }: Props): React.JSX.El
   const [pieces, setPieces] = useState<PositionedPiece[]>([]);
   const [moveLog, setMoveLog] = useState<MoveLogEntry[]>([]);
   const chess = useMemo(() => new Chess(fen), [fen]);
+
+  // Board tint derives from the app's own blue identity color instead of a
+  // fixed green/cream chess.com look, so it matches whichever theme
+  // (light/dark) is active — pieces then use blue vs. orange (accent) to
+  // tell the two sides apart, per the app's own color language.
+  const darkSquare = theme.identity;
+  const lightSquare = shadeColor(theme.identity, theme.mode === 'dark' ? 0.62 : 0.58);
 
   const prevFenRef = useRef<string | null>(null);
   const pieceIdBySquareRef = useRef<Map<string, number>>(new Map());
@@ -193,7 +194,7 @@ function ChessBoardView({ fen, myColor, isMyTurn, onMove }: Props): React.JSX.El
                   <div
                     key={square}
                     className="chess-square-modern"
-                    style={{ background: isDark ? '#7C9A65' : '#EDEED4' }}
+                    style={{ background: isDark ? darkSquare : lightSquare }}
                     onClick={() => handleSquareClick(square)}>
                     {isSelected && <div className="chess-overlay" style={{ background: 'rgba(246,246,105,0.85)' }} />}
                     {isTarget && !isOccupiedTarget && <div className="chess-move-dot" />}
@@ -207,12 +208,15 @@ function ChessBoardView({ fen, myColor, isMyTurn, onMove }: Props): React.JSX.El
             <span
               key={piece.id}
               className="chess-piece-modern"
-              style={{
-                ...pxPercent(piece.square),
-                color: piece.color === 'w' ? '#FAFAF7' : '#1C1C1C',
-              }}
+              style={pxPercent(piece.square)}
               onClick={() => handleSquareClick(piece.square)}>
-              {CHESS_GLYPHS[`${piece.color}${piece.type}`]}
+              <ChessPieceIcon
+                type={piece.type as never}
+                team={piece.color}
+                size="100%"
+                blue={theme.identity}
+                orange={theme.accent}
+              />
             </span>
           ))}
         </div>

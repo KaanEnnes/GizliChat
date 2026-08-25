@@ -1,4 +1,4 @@
-import { collection, doc, onSnapshot, setDoc, Unsubscribe, updateDoc } from 'firebase/firestore';
+import { collection, deleteDoc, doc, onSnapshot, setDoc, Unsubscribe, updateDoc } from 'firebase/firestore';
 import { db } from './firebase';
 
 export interface Contact {
@@ -25,6 +25,11 @@ export async function addContact(myUid: string, contactUid: string, name: string
 /** Toggles whether a contact is pinned to the home dashboard's "Favoriler" row. */
 export async function setContactFavorite(myUid: string, contactUid: string, favorite: boolean): Promise<void> {
   await updateDoc(doc(db, 'users', myUid, 'contacts', contactUid), { favorite });
+}
+
+/** Removes the chat from this user's list only — the other side's contact doc and the shared room are untouched. */
+export async function removeContact(myUid: string, contactUid: string): Promise<void> {
+  await deleteDoc(doc(db, 'users', myUid, 'contacts', contactUid));
 }
 
 export function subscribeToContacts(

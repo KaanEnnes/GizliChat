@@ -10,20 +10,77 @@ import type { Contact } from './services/contactService';
 
 const PRESENCE_HEARTBEAT_MS = 25_000;
 
+// Bare-bones contact stub reconstructed from history state on back/forward —
+// only uid/name are ever read by ChatRoomScreen, so addedAt/favorite are
+// filled with harmless defaults rather than persisted.
+type ContactStub = Pick<Contact, 'uid' | 'name'>;
+
+// Everything that changes when the user "navigates" inside the app. Pushed
+// onto the browser's history stack (via history.pushState) on every
+// transition, with the URL itself left untouched — the app's whole premise
+// is a disguised games hub, so the address bar must never spell out
+// "revealed" or "chat" or leak who's being messaged. This is what makes the
+// browser's back/forward buttons and reload behave sanely without giving
+// any of that away.
+interface NavState {
+  revealed: boolean;
+  hubOverride: boolean;
+  activeContact: ContactStub | null;
+}
+
+const INITIAL_NAV_STATE: NavState = { revealed: false, hubOverride: false, activeContact: null };
+
+function pushNavState(next: NavState): void {
+  window.history.pushState(next, '');
+}
+
 function AppShell(): React.JSX.Element {
   const { theme } = useTheme();
   const isMobileLayout = useIsMobileLayout();
   const [account, setAccount] = useState<Account | null | undefined>(undefined); // undefined = auth state still resolving
-  const [activeContact, setActiveContact] = useState<Contact | null>(null);
+  const [activeContact, setActiveContactState] = useState<Contact | null>(null);
   // Whether the hidden gesture on the games hub has revealed the real login —
   // mirrors the mobile app's disguise: an anonymous session (created just for
   // leaderboard score submission) must never auto-reveal the real chat UI.
-  const [revealed, setRevealed] = useState(false);
+  const [revealed, setRevealedState] = useState(false);
   // Manually navigating back to the games hub from inside the chat UI (the
   // "Ana Sayfa" button) without logging out — the Firebase session stays
   // authenticated, so hitting the secret gesture again jumps straight back
   // to the chat instead of asking to log in again.
-  const [hubOverride, setHubOverride] = useState(false);
+  const [hubOverride, setHubOverrideState] = useState(false);
+
+  // Replaces the three plain setState calls above: every navigation both
+  // updates React state and pushes a history entry carrying the same shape,
+  // so the back/forward buttons (and popstate below) can restore it later.
+  const navigate = (next: Partial<NavState>) => {
+    const merged: NavState = {
+      revealed: next.revealed ?? revealed,
+      hubOverride: next.hubOverride ?? hubOverride,
+      activeContact: next.activeContact !== undefined ? next.activeContact : activeContact,
+    };
+    setRevealedState(merged.revealed);
+    setHubOverrideState(merged.hubOverride);
+    setActiveContactState(merged.activeContact as Contact | null);
+    pushNavState(merged);
+  };
+
+  useEffect(() => {
+    // Seed the initial history entry so the very first popstate (hitting
+    // "back" once) has somewhere defined to land instead of leaving the app.
+    window.history.replaceState(INITIAL_NAV_STATE, '');
+    const handlePopState = (event: PopStateEvent) => {
+      const state = (event.state as NavState | null) ?? INITIAL_NAV_STATE;
+      setRevealedState(state.revealed);
+      setHubOverrideState(state.hubOverride);
+      setActiveContactState(state.activeContact as Contact | null);
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  const setActiveContact = (contact: Contact | null) => navigate({ activeContact: contact });
+  const setRevealed = (value: boolean) => navigate({ revealed: value });
+  const setHubOverride = (value: boolean) => navigate({ hubOverride: value });
 
   useEffect(() => {
     return watchAuthState(async user => {
@@ -58,7 +115,18 @@ function AppShell(): React.JSX.Element {
   }
 
   if (!account) {
-    return <AuthScreen onAuthenticated={setAccount} />;
+    const handleAuthenticated = (loggedInAccount: Account) => {
+      // Insert a silent "hub" history entry behind the upcoming Contacts
+      // entry, so a single back-button press right after logging in lands
+      // on the disguise's hub screen — matching the mobile app's back-button
+      // behavior — instead of the (now-meaningless) pre-login reveal state,
+      // which renders identically to Contacts once account is set and so
+      // would make the back button look like it does nothing.
+      pushNavState({ revealed: true, hubOverride: true, activeContact: null });
+      setAccount(loggedInAccount);
+      navigate({ revealed: true, hubOverride: false, activeContact: null });
+    };
+    return <AuthScreen onAuthenticated={handleAuthenticated} />;
   }
 
   // Logged in, but manually navigated back to the hub — already authenticated,
@@ -69,14 +137,11 @@ function AppShell(): React.JSX.Element {
 
   const handleLogout = () => {
     logoutAccount().catch(() => undefined);
-    setActiveContact(null);
-    setRevealed(false);
-    setHubOverride(false);
+    navigate({ activeContact: null, revealed: false, hubOverride: false });
   };
 
   const handleGoHome = () => {
-    setActiveContact(null);
-    setHubOverride(true);
+    navigate({ activeContact: null, hubOverride: true });
   };
 
   // Desktop/tablet: contacts + chat room side by side, like the pc-client.

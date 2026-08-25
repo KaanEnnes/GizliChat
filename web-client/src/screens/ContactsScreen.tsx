@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { addContact, setContactFavorite, subscribeToContacts, type Contact } from '../services/contactService';
+import { addContact, removeContact, setContactFavorite, subscribeToContacts, type Contact } from '../services/contactService';
 import { getRoomId, subscribeToLatestMessage, type ChatMessage } from '../services/chatService';
 import { getLastReadAt, markRoomRead } from '../services/readStatusService';
 import {
@@ -148,6 +148,16 @@ function ContactsScreen({ account, onOpenRoom, onLogout, onGoHome }: Props): Rea
     (e: React.MouseEvent, contact: Contact) => {
       e.stopPropagation();
       setContactFavorite(account.uid, contact.uid, !contact.favorite).catch(() => undefined);
+    },
+    [account.uid],
+  );
+
+  const handleDeleteChat = useCallback(
+    (e: React.MouseEvent, contact: Contact) => {
+      e.stopPropagation();
+      if (window.confirm('Sohbeti sil?')) {
+        removeContact(account.uid, contact.uid).catch(() => undefined);
+      }
     },
     [account.uid],
   );
@@ -306,6 +316,9 @@ function ContactsScreen({ account, onOpenRoom, onLogout, onGoHome }: Props): Rea
               </div>
               <button className="favorite-btn" onClick={e => handleToggleFavorite(e, item)}>
                 <span style={{ color: item.favorite ? theme.accent : theme.textFaint, fontSize: 20 }}>{item.favorite ? '★' : '☆'}</span>
+              </button>
+              <button className="favorite-btn" title="Sohbeti sil" onClick={e => handleDeleteChat(e, item)}>
+                <span style={{ color: theme.textFaint, fontSize: 18 }}>🗑️</span>
               </button>
             </div>
           );

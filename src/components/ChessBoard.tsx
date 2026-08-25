@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useTheme } from '../theme/ThemeContext';
 import { Chess } from '../services/chessService';
+import ChessPieceIcon, { shadeColor } from './chessPieceIcons';
 
 interface SquareRef {
   from: string;
@@ -25,25 +26,7 @@ interface Props {
 }
 
 const FILES = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
-const PIECE_GLYPHS: Record<string, string> = {
-  wk: '♔',
-  wq: '♕',
-  wr: '♖',
-  wb: '♗',
-  wn: '♘',
-  wp: '♙',
-  bk: '♚',
-  bq: '♛',
-  br: '♜',
-  bb: '♝',
-  bn: '♞',
-  bp: '♟',
-};
 
-// Fixed chess.com-style palette — the board keeps this look regardless of
-// app light/dark theme, same as every mainstream chess client does.
-const LIGHT_SQUARE = '#EEEED2';
-const DARK_SQUARE = '#769656';
 const SELECTED_OVERLAY = 'rgba(246,246,105,0.85)';
 const LAST_MOVE_OVERLAY = 'rgba(246,246,105,0.5)';
 const PREMOVE_OVERLAY = 'rgba(235,97,80,0.55)';
@@ -92,6 +75,13 @@ function ChessBoard({
 }: Props): React.JSX.Element {
   const { theme } = useTheme();
   const [selected, setSelected] = useState<string | null>(null);
+
+  // Board tint derives from the app's own blue identity color instead of a
+  // fixed chess.com-style green/cream, so the board matches whichever theme
+  // (light/dark) is active — pieces then use blue vs. orange (accent) to
+  // tell the two sides apart, per the app's own color language.
+  const darkSquare = theme.identity;
+  const lightSquare = shadeColor(theme.identity, theme.mode === 'dark' ? 0.62 : 0.58);
 
   const chess = useMemo(() => new Chess(fen), [fen]);
   const board = useMemo(() => chess.board(), [chess]);
@@ -259,7 +249,7 @@ function ChessBoard({
                     {
                       width: cellSize,
                       height: cellSize,
-                      backgroundColor: isDark ? DARK_SQUARE : LIGHT_SQUARE,
+                      backgroundColor: isDark ? darkSquare : lightSquare,
                     },
                   ]}>
                   {isLastMove && <View style={[StyleSheet.absoluteFill, { backgroundColor: LAST_MOVE_OVERLAY }]} />}
@@ -276,7 +266,7 @@ function ChessBoard({
                     <Text
                       style={[
                         styles.rankLabel,
-                        { fontSize: coordSize, color: isDark ? LIGHT_SQUARE : DARK_SQUARE },
+                        { fontSize: coordSize, color: isDark ? lightSquare : darkSquare },
                       ]}>
                       {rank}
                     </Text>
@@ -285,7 +275,7 @@ function ChessBoard({
                     <Text
                       style={[
                         styles.fileLabel,
-                        { fontSize: coordSize, color: isDark ? LIGHT_SQUARE : DARK_SQUARE },
+                        { fontSize: coordSize, color: isDark ? lightSquare : darkSquare },
                       ]}>
                       {file}
                     </Text>
@@ -309,16 +299,13 @@ function ChessBoard({
                   transform: [{ translateX: p.anim.x }, { translateY: p.anim.y }],
                 },
               ]}>
-              <Text
-                style={[
-                  styles.pieceText,
-                  {
-                    fontSize: cellSize * 0.68,
-                    textShadowColor: 'rgba(0,0,0,0.35)',
-                  },
-                ]}>
-                {PIECE_GLYPHS[`${p.color}${p.type}`]}
-              </Text>
+              <ChessPieceIcon
+                type={p.type as never}
+                team={p.color as 'w' | 'b'}
+                size={cellSize * 0.82}
+                blue={theme.identity}
+                orange={theme.accent}
+              />
             </Animated.View>
           ))}
         </View>
@@ -354,11 +341,6 @@ const styles = StyleSheet.create({
     top: 0,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  pieceText: {
-    textAlign: 'center',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 2,
   },
   moveDot: {
     position: 'absolute',

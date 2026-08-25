@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   Modal,
   Pressable,
@@ -13,7 +14,7 @@ import {
 } from 'react-native';
 import { launchImageLibrary } from 'react-native-image-picker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { addContact, Contact, setContactFavorite, subscribeToContacts } from '../services/contactService';
+import { addContact, Contact, removeContact, setContactFavorite, subscribeToContacts } from '../services/contactService';
 import { ChatMessage, getRoomId, subscribeToLatestMessage } from '../services/chatService';
 import { getLastReadAt, markRoomRead } from '../services/readStatusService';
 import {
@@ -217,6 +218,22 @@ function ContactsScreen({ account, onOpenRoom, onOpenGames, onLogout }: Props): 
   const handleToggleFavorite = useCallback(
     (contact: Contact) => {
       setContactFavorite(account.uid, contact.uid, !contact.favorite).catch(() => undefined);
+    },
+    [account.uid],
+  );
+
+  const handleDeleteChat = useCallback(
+    (contact: Contact) => {
+      Alert.alert('Sohbeti sil?', undefined, [
+        { text: 'Vazgeç', style: 'cancel' },
+        {
+          text: 'Sil',
+          style: 'destructive',
+          onPress: () => {
+            removeContact(account.uid, contact.uid).catch(() => undefined);
+          },
+        },
+      ]);
     },
     [account.uid],
   );
@@ -492,6 +509,14 @@ function ContactsScreen({ account, onOpenRoom, onOpenGames, onLogout }: Props): 
                   <Text style={[styles.favoriteIcon, { color: item.favorite ? theme.accent : theme.textFaint }]}>
                     {item.favorite ? '★' : '☆'}
                   </Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => handleDeleteChat(item)}
+                  hitSlop={10}
+                  style={styles.favoriteButton}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${item.name} sohbetini sil`}>
+                  <Text style={[styles.favoriteIcon, { color: theme.textFaint }]}>🗑️</Text>
                 </Pressable>
               </Pressable>
             );
