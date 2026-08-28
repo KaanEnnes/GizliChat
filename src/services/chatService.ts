@@ -19,6 +19,17 @@ import {
 import { db } from './firebase';
 import { deleteRoomMedia } from './mediaService';
 import { addVideoBytesUsed } from './userService';
+import {
+  decryptBlob,
+  encryptForRoom,
+  ensureKeyPair,
+  getLoadedKeyPair,
+  getPeerPublicKey,
+  KeyPair,
+  otherUidInRoom,
+  StoredEncryptedRef,
+  UNDECRYPTABLE_PLACEHOLDER,
+} from './e2eService';
 
 export type MessageType = 'text' | 'image' | 'video' | 'audio' | 'file' | 'call' | 'chess';
 export type CallLogStatus = 'completed' | 'missed';
@@ -98,12 +109,45 @@ export function getRoomId(uidA: string, uidB: string): string {
 }
 
 /**
+ * Everything needed to decrypt any message/replyTo in a room: my own key
+ * pair (must already be loaded — see e2eService's ensureKeyPair) and the
+ * other room member's public key (fetched/cached once per room). Built once
+ * per subscribe/search/fetch call and threaded through docToMessage instead
+ * of re-fetching per-message.
+ */
+interface DecryptContext {
+  myUid: string;
+  myKeyPair: KeyPair;
+  peerPublicKey: Uint8Array | null;
+}
+
+async function buildDecryptContext(roomId: string, myUid: string): Promise<DecryptContext> {
+  const myKeyPair = getLoadedKeyPair(myUid) ?? (await ensureKeyPair(myUid));
+  const peerUid = otherUidInRoom(roomId, myUid);
+  const peerPublicKey = await getPeerPublicKey(peerUid);
+  return { myUid, myKeyPair, peerPublicKey };
+}
+
+/** Decrypts one `enc*`-prefixed field group (see docToMessage) or passes through legacy plaintext. */
+function resolveEncryptedString(encrypted: boolean, plain: string, ref: StoredEncryptedRef, senderId: string, ctx: DecryptContext): string {
+  if (!encrypted) {
+    return plain;
+  }
+  return decryptBlob(ref, senderId, ctx.myUid, ctx.myKeyPair, ctx.peerPublicKey) ?? UNDECRYPTABLE_PLACEHOLDER;
+}
+
+/**
  * Subscribes to a room's most recent `limitCount` messages in real time.
  * Firestore reflects local writes instantly (before server ack) and again
  * once confirmed, so both devices see new messages live without any manual
  * polling. Queried newest-first (so `limit` keeps the *latest* messages
  * instead of the oldest) and reversed back to ascending for display —
  * ChatRoomScreen grows `limitCount` as the user scrolls up for pagination.
+ *
+ * Message text/media (see docToMessage) is decrypted client-side right here
+ * before `onMessages` is ever called — every consumer downstream (screens,
+ * MessageBubble, search, notifications) just sees plain `ChatMessage.text`/
+ * `.mediaUrl` and never has to know encryption exists.
  */
 export function subscribeToMessages(
   roomId: string,
@@ -121,22 +165,27 @@ export function subscribeToMessages(
   return onSnapshot(
     messagesQuery,
     snapshot => {
-      onMessages(
-        snapshot.docs
-          .map(docToMessage)
-          .filter(message => !message.deletedFor?.includes(myUid))
-          .reverse(),
-      );
+      buildDecryptContext(roomId, myUid).then(ctx => {
+        onMessages(
+          snapshot.docs
+            .map(d => docToMessage(d, ctx))
+            .filter(message => !message.deletedFor?.includes(myUid))
+            .reverse(),
+        );
+      });
     },
     error => onError(error as Error),
   );
 }
 
-function docToMessage(docSnap: {
-  id: string;
-  data: (options?: { serverTimestamps?: 'estimate' | 'previous' | 'none' }) => Record<string, unknown>;
-  metadata: { hasPendingWrites: boolean };
-}): ChatMessage {
+function docToMessage(
+  docSnap: {
+    id: string;
+    data: (options?: { serverTimestamps?: 'estimate' | 'previous' | 'none' }) => Record<string, unknown>;
+    metadata: { hasPendingWrites: boolean };
+  },
+  ctx: DecryptContext,
+): ChatMessage {
   // 'estimate' makes a just-sent message's pending `serverTimestamp()`
   // resolve to the client's best-guess server time immediately instead of
   // `undefined` — without this, a freshly-sent message's `createdAt` falls
@@ -145,13 +194,67 @@ function docToMessage(docSnap: {
   // arriving from the other side in that window.
   const data = docSnap.data({ serverTimestamps: 'estimate' });
   const createdAt = data.createdAt instanceof Timestamp ? data.createdAt.toMillis() : Date.now();
+  const type = (data.type as MessageType) || 'text';
+  const senderId = typeof data.senderId === 'string' ? data.senderId : '';
+  const encrypted = data.encrypted === true;
+
+  const text = resolveEncryptedString(
+    encrypted,
+    typeof data.text === 'string' ? data.text : '',
+    { ciphertext: data.encText as string, nonce: data.encNonce as string, ciphertextSelf: data.encTextSelf as string, nonceSelf: data.encNonceSelf as string },
+    senderId,
+    ctx,
+  );
+
+  // mediaUrl encryption only applies to image/audio (inline base64 data
+  // URIs — see ChatMessage.mediaUrl's doc comment). Video stays a plain
+  // Firebase Storage download URL, out of scope for this pass.
+  let mediaUrl = typeof data.mediaUrl === 'string' ? data.mediaUrl : undefined;
+  if (encrypted && (type === 'image' || type === 'audio') && (data.encMediaUrl || data.encMediaUrlSelf)) {
+    const decryptedMedia = decryptBlob(
+      { ciphertext: data.encMediaUrl as string, nonce: data.encMediaUrlNonce as string, ciphertextSelf: data.encMediaUrlSelf as string, nonceSelf: data.encMediaUrlNonceSelf as string },
+      senderId,
+      ctx.myUid,
+      ctx.myKeyPair,
+      ctx.peerPublicKey,
+    );
+    mediaUrl = decryptedMedia ?? undefined;
+  }
+
+  const rawReplyTo = typeof data.replyTo === 'object' && data.replyTo !== null ? (data.replyTo as Record<string, unknown>) : undefined;
+  const replyTo: ReplyPreview | undefined = rawReplyTo
+    ? {
+        id: typeof rawReplyTo.id === 'string' ? rawReplyTo.id : '',
+        type: (rawReplyTo.type as MessageType) || 'text',
+        // Display label only — see buildEncryptedReplyTo's note. The
+        // ciphertext below was produced by the OUTER message's sender
+        // (`senderId`), not this label, so decryption must use `senderId`
+        // (the outer message's actual sender) as the encryption context —
+        // reusing `rawReplyTo.senderId` here would try to decrypt as the
+        // wrong party and always fail.
+        senderId: typeof rawReplyTo.senderId === 'string' ? rawReplyTo.senderId : '',
+        text: resolveEncryptedString(
+          rawReplyTo.encrypted === true,
+          typeof rawReplyTo.text === 'string' ? rawReplyTo.text : '',
+          {
+            ciphertext: rawReplyTo.encText as string,
+            nonce: rawReplyTo.encNonce as string,
+            ciphertextSelf: rawReplyTo.encTextSelf as string,
+            nonceSelf: rawReplyTo.encNonceSelf as string,
+          },
+          senderId,
+          ctx,
+        ),
+      }
+    : undefined;
+
   return {
     id: docSnap.id,
-    type: (data.type as MessageType) || 'text',
-    text: typeof data.text === 'string' ? data.text : '',
-    senderId: typeof data.senderId === 'string' ? data.senderId : '',
+    type,
+    text,
+    senderId,
     createdAt,
-    mediaUrl: typeof data.mediaUrl === 'string' ? data.mediaUrl : undefined,
+    mediaUrl,
     fileName: typeof data.fileName === 'string' ? data.fileName : undefined,
     fileSize: typeof data.fileSize === 'number' ? data.fileSize : undefined,
     durationSeconds: typeof data.durationSeconds === 'number' ? data.durationSeconds : undefined,
@@ -172,15 +275,7 @@ function docToMessage(docSnap: {
     deletedFor: Array.isArray(data.deletedFor) ? (data.deletedFor as string[]) : undefined,
     hidden: data.hidden === true,
     sizeBytes: typeof data.sizeBytes === 'number' ? data.sizeBytes : undefined,
-    replyTo:
-      typeof data.replyTo === 'object' && data.replyTo !== null
-        ? {
-            id: typeof (data.replyTo as Record<string, unknown>).id === 'string' ? ((data.replyTo as Record<string, unknown>).id as string) : '',
-            type: ((data.replyTo as Record<string, unknown>).type as MessageType) || 'text',
-            text: typeof (data.replyTo as Record<string, unknown>).text === 'string' ? ((data.replyTo as Record<string, unknown>).text as string) : '',
-            senderId: typeof (data.replyTo as Record<string, unknown>).senderId === 'string' ? ((data.replyTo as Record<string, unknown>).senderId as string) : '',
-          }
-        : undefined,
+    replyTo,
   };
 }
 
@@ -204,8 +299,10 @@ export function subscribeToLatestMessage(
   return onSnapshot(
     latestQuery,
     snapshot => {
-      const docSnap = snapshot.docs.map(docToMessage).find(message => !message.deletedFor?.includes(myUid));
-      onMessage(docSnap ?? null);
+      buildDecryptContext(roomId, myUid).then(ctx => {
+        const message = snapshot.docs.map(d => docToMessage(d, ctx)).find(m => !m.deletedFor?.includes(myUid));
+        onMessage(message ?? null);
+      });
     },
     () => onMessage(null),
   );
@@ -236,6 +333,43 @@ export async function markMessageRead(roomId: string, messageId: string): Promis
   await updateDoc(messageRef, { readAt: serverTimestamp(), deliveredAt: serverTimestamp() });
 }
 
+/**
+ * Builds the `enc*` field group for one encrypted string, or falls back to
+ * storing it as plain `text` if encryption isn't possible right now (the
+ * peer has never published a public key — e.g. an existing account that
+ * hasn't opened the app since E2E shipped). This fallback is the one
+ * deliberate compromise in this design: blocking the send entirely would be
+ * more private but would silently break messaging with anyone who hasn't
+ * updated yet, which isn't worth it for a feature most peers will pick up
+ * within their next app open.
+ */
+async function buildEncryptedFieldGroup(roomId: string, senderId: string, plaintext: string): Promise<Record<string, unknown>> {
+  const blob = await encryptForRoom(roomId, senderId, plaintext);
+  if (!blob) {
+    return { text: plaintext };
+  }
+  return {
+    text: '',
+    encrypted: true,
+    encText: blob.ciphertext,
+    encNonce: blob.nonce,
+    encTextSelf: blob.ciphertextSelf,
+    encNonceSelf: blob.nonceSelf,
+  };
+}
+
+// NOTE: `replyTo.senderId` is only ever a display label ("Sen" vs. the
+// contact's name for the QUOTED message's original author) — it is NOT who
+// is encrypting this reply. The reply preview's ciphertext is always
+// produced by the person sending THIS new message (using their own secret
+// key), to the current room peer's public key, same as the outer message's
+// own `text`. So encryption here must use the outer message's `senderId`
+// (the actual sender of the reply), never `replyTo.senderId`.
+async function buildEncryptedReplyTo(roomId: string, senderId: string, replyTo: ReplyPreview): Promise<Record<string, unknown>> {
+  const fields = await buildEncryptedFieldGroup(roomId, senderId, replyTo.text);
+  return { id: replyTo.id, type: replyTo.type, senderId: replyTo.senderId, ...fields };
+}
+
 export async function sendMessage(
   roomId: string,
   text: string,
@@ -246,12 +380,16 @@ export async function sendMessage(
   if (!trimmed) {
     return;
   }
+  const [textFields, replyToPayload] = await Promise.all([
+    buildEncryptedFieldGroup(roomId, senderId, trimmed),
+    replyTo ? buildEncryptedReplyTo(roomId, senderId, replyTo) : Promise.resolve(undefined),
+  ]);
   await addDoc(collection(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION), {
     type: 'text',
-    text: trimmed,
+    ...textFields,
     senderId,
     createdAt: serverTimestamp(),
-    ...(replyTo ? { replyTo } : {}),
+    ...(replyToPayload ? { replyTo: replyToPayload } : {}),
   });
 }
 
@@ -294,7 +432,19 @@ export async function sendChessInviteMessage(roomId: string, senderId: string): 
   });
 }
 
-/** Sends an already-uploaded image/video/audio message (see mediaService.ts for the upload step). `hidden` marks an image/video as "gizli" — MessageBubble shows a reveal button instead of the media until the recipient taps it. */
+/**
+ * Sends an already-uploaded image/video/audio message (see mediaService.ts
+ * for the upload step). `hidden` marks an image/video as "gizli" —
+ * MessageBubble shows a reveal button instead of the media until the
+ * recipient taps it.
+ *
+ * `mediaUrl` is encrypted the same way as text ONLY for image/audio — those
+ * two are inline base64 `data:` URIs stored directly on the doc (see
+ * ChatMessage.mediaUrl's doc comment), so they're genuine message content.
+ * Video is still a plain Firebase Storage download URL — out of scope for
+ * this pass (see ObsidianVault/Changelog.md: encrypting a Storage-hosted
+ * blob needs client-side stream encryption, not just this doc-field trick).
+ */
 export async function sendMediaMessage(
   roomId: string,
   senderId: string,
@@ -304,12 +454,23 @@ export async function sendMediaMessage(
   hidden?: boolean,
   sizeBytes?: number,
 ): Promise<void> {
+  const shouldEncryptMedia = type === 'image' || type === 'audio';
+  const blob = shouldEncryptMedia ? await encryptForRoom(roomId, senderId, mediaUrl) : null;
+  const mediaFields = blob
+    ? {
+        encrypted: true,
+        encMediaUrl: blob.ciphertext,
+        encMediaUrlNonce: blob.nonce,
+        encMediaUrlSelf: blob.ciphertextSelf,
+        encMediaUrlNonceSelf: blob.nonceSelf,
+      }
+    : { mediaUrl };
   await addDoc(collection(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION), {
     type,
     text: '',
     senderId,
     createdAt: serverTimestamp(),
-    mediaUrl,
+    ...mediaFields,
     ...(durationSeconds !== undefined ? { durationSeconds } : {}),
     ...(hidden ? { hidden: true } : {}),
     ...(sizeBytes !== undefined ? { sizeBytes } : {}),
@@ -335,14 +496,15 @@ export async function sendFileMessage(
   });
 }
 
-/** Edits a text message's content — sender-only (enforced by firestore.rules), and only while the sender themself hasn't deleted-for-me'd it (see deleteMessage()'s doc comment). */
-export async function editMessage(roomId: string, messageId: string, newText: string): Promise<void> {
+/** Edits a text message's content — sender-only (enforced by firestore.rules), and only while the sender themself hasn't deleted-for-me'd it (see deleteMessage()'s doc comment). `myUid` is always the message's own sender (rules reject anyone else), needed here to (re)encrypt the new text. */
+export async function editMessage(roomId: string, messageId: string, newText: string, myUid: string): Promise<void> {
   const trimmed = newText.trim();
   if (!trimmed) {
     return;
   }
+  const textFields = await buildEncryptedFieldGroup(roomId, myUid, trimmed);
   const messageRef = doc(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION, messageId);
-  await updateDoc(messageRef, { text: trimmed, editedAt: serverTimestamp() });
+  await updateDoc(messageRef, { ...textFields, editedAt: serverTimestamp() });
 }
 
 /**
@@ -404,9 +566,13 @@ export async function unpinMessage(roomId: string): Promise<void> {
 }
 
 /** One-off lookup used when the pinned message has scrolled out of the currently-loaded page — falls back to fetching just that doc instead of widening the whole live query. */
-export async function fetchMessageById(roomId: string, messageId: string): Promise<ChatMessage | null> {
+export async function fetchMessageById(roomId: string, messageId: string, myUid: string): Promise<ChatMessage | null> {
   const snap = await getDoc(doc(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION, messageId));
-  return snap.exists() ? docToMessage(snap) : null;
+  if (!snap.exists()) {
+    return null;
+  }
+  const ctx = await buildDecryptContext(roomId, myUid);
+  return docToMessage(snap, ctx);
 }
 
 /**
@@ -426,15 +592,18 @@ export async function searchMessagesInRoom(
   if (!needle) {
     return [];
   }
-  const snapshot = await getDocs(
-    query(
-      collection(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION),
-      orderBy('createdAt', 'desc'),
-      limit(MAX_MESSAGE_LIMIT),
+  const [snapshot, ctx] = await Promise.all([
+    getDocs(
+      query(
+        collection(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION),
+        orderBy('createdAt', 'desc'),
+        limit(MAX_MESSAGE_LIMIT),
+      ),
     ),
-  );
+    buildDecryptContext(roomId, myUid),
+  ]);
   return snapshot.docs
-    .map(docToMessage)
+    .map(d => docToMessage(d, ctx))
     .filter(
       message =>
         !message.deletedFor?.includes(myUid) &&

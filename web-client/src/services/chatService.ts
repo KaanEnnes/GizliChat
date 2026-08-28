@@ -17,6 +17,17 @@ import {
   updateDoc,
 } from 'firebase/firestore';
 import { db } from './firebase';
+import {
+  decryptBlob,
+  encryptForRoom,
+  ensureKeyPair,
+  getLoadedKeyPair,
+  getPeerPublicKey,
+  type KeyPair,
+  otherUidInRoom,
+  type StoredEncryptedRef,
+  UNDECRYPTABLE_PLACEHOLDER,
+} from './e2eService';
 
 export type MessageType = 'text' | 'image' | 'video' | 'audio' | 'file' | 'call';
 
@@ -47,6 +58,27 @@ export interface ChatMessage {
   };
 }
 
+/** What e2eService needs to decrypt any message/replyTo in a room — see buildDecryptContext. */
+interface DecryptContext {
+  myUid: string;
+  myKeyPair: KeyPair;
+  peerPublicKey: Uint8Array | null;
+}
+
+async function buildDecryptContext(roomId: string, myUid: string): Promise<DecryptContext> {
+  const myKeyPair = getLoadedKeyPair(myUid) ?? (await ensureKeyPair(myUid));
+  const peerUid = otherUidInRoom(roomId, myUid);
+  const peerPublicKey = await getPeerPublicKey(peerUid);
+  return { myUid, myKeyPair, peerPublicKey };
+}
+
+function resolveEncryptedString(encrypted: boolean, plain: string, ref: StoredEncryptedRef, senderId: string, ctx: DecryptContext): string {
+  if (!encrypted) {
+    return plain;
+  }
+  return decryptBlob(ref, senderId, ctx.myUid, ctx.myKeyPair, ctx.peerPublicKey) ?? UNDECRYPTABLE_PLACEHOLDER;
+}
+
 const ROOMS_COLLECTION = 'rooms';
 const MESSAGES_SUBCOLLECTION = 'messages';
 
@@ -59,20 +91,74 @@ export function getRoomId(uidA: string, uidB: string): string {
   return [uidA, uidB].sort().join('__');
 }
 
-function docToMessage(docSnap: {
-  id: string;
-  data: (options?: { serverTimestamps?: 'estimate' | 'previous' | 'none' }) => Record<string, unknown>;
-  metadata: { hasPendingWrites: boolean };
-}): ChatMessage {
+function docToMessage(
+  docSnap: {
+    id: string;
+    data: (options?: { serverTimestamps?: 'estimate' | 'previous' | 'none' }) => Record<string, unknown>;
+    metadata: { hasPendingWrites: boolean };
+  },
+  ctx: DecryptContext,
+): ChatMessage {
   const data = docSnap.data({ serverTimestamps: 'estimate' });
   const createdAt = data.createdAt instanceof Timestamp ? data.createdAt.toMillis() : Date.now();
+  const type = (data.type as MessageType) || 'text';
+  const senderId = typeof data.senderId === 'string' ? data.senderId : '';
+  const encrypted = data.encrypted === true;
+
+  const text = resolveEncryptedString(
+    encrypted,
+    typeof data.text === 'string' ? data.text : '',
+    { ciphertext: data.encText as string, nonce: data.encNonce as string, ciphertextSelf: data.encTextSelf as string, nonceSelf: data.encNonceSelf as string },
+    senderId,
+    ctx,
+  );
+
+  // mediaUrl encryption only applies to image/audio (inline base64 data
+  // URIs) — video stays a plain Storage URL, out of scope for this pass.
+  let mediaUrl = typeof data.mediaUrl === 'string' ? data.mediaUrl : undefined;
+  if (encrypted && (type === 'image' || type === 'audio') && (data.encMediaUrl || data.encMediaUrlSelf)) {
+    const decryptedMedia = decryptBlob(
+      { ciphertext: data.encMediaUrl as string, nonce: data.encMediaUrlNonce as string, ciphertextSelf: data.encMediaUrlSelf as string, nonceSelf: data.encMediaUrlNonceSelf as string },
+      senderId,
+      ctx.myUid,
+      ctx.myKeyPair,
+      ctx.peerPublicKey,
+    );
+    mediaUrl = decryptedMedia ?? undefined;
+  }
+
+  const rawReplyTo = typeof data.replyTo === 'object' && data.replyTo !== null ? (data.replyTo as Record<string, unknown>) : undefined;
+  const replyTo: ChatMessage['replyTo'] = rawReplyTo
+    ? {
+        messageId: typeof rawReplyTo.messageId === 'string' ? rawReplyTo.messageId : '',
+        type: (rawReplyTo.type as MessageType) || 'text',
+        // Display label only, not the encryption actor — see the mobile
+        // chatService.ts's identical note. The ciphertext was produced by
+        // this outer message's sender (`senderId`), so decryption must use
+        // `senderId`, not `rawReplyTo.senderId`.
+        senderId: typeof rawReplyTo.senderId === 'string' ? rawReplyTo.senderId : '',
+        text: resolveEncryptedString(
+          rawReplyTo.encrypted === true,
+          typeof rawReplyTo.text === 'string' ? rawReplyTo.text : '',
+          {
+            ciphertext: rawReplyTo.encText as string,
+            nonce: rawReplyTo.encNonce as string,
+            ciphertextSelf: rawReplyTo.encTextSelf as string,
+            nonceSelf: rawReplyTo.encNonceSelf as string,
+          },
+          senderId,
+          ctx,
+        ),
+      }
+    : undefined;
+
   return {
     id: docSnap.id,
-    type: (data.type as MessageType) || 'text',
-    text: typeof data.text === 'string' ? data.text : '',
-    senderId: typeof data.senderId === 'string' ? data.senderId : '',
+    type,
+    text,
+    senderId,
     createdAt,
-    mediaUrl: typeof data.mediaUrl === 'string' ? data.mediaUrl : undefined,
+    mediaUrl,
     fileName: typeof data.fileName === 'string' ? data.fileName : undefined,
     fileSize: typeof data.fileSize === 'number' ? data.fileSize : undefined,
     durationSeconds: typeof data.durationSeconds === 'number' ? data.durationSeconds : undefined,
@@ -86,7 +172,7 @@ function docToMessage(docSnap: {
     editedAt: data.editedAt instanceof Timestamp ? data.editedAt.toMillis() : undefined,
     deleted: data.deleted === true,
     deletedFor: Array.isArray(data.deletedFor) ? (data.deletedFor as string[]) : undefined,
-    replyTo: typeof data.replyTo === 'object' && data.replyTo !== null ? (data.replyTo as ChatMessage['replyTo']) : undefined,
+    replyTo,
   };
 }
 
@@ -104,13 +190,16 @@ export function subscribeToMessages(
   );
   return onSnapshot(
     messagesQuery,
-    snapshot =>
-      onMessages(
-        snapshot.docs
-          .map(docToMessage)
-          .filter(message => !message.deletedFor?.includes(myUid))
-          .reverse(),
-      ),
+    snapshot => {
+      buildDecryptContext(roomId, myUid).then(ctx => {
+        onMessages(
+          snapshot.docs
+            .map(d => docToMessage(d, ctx))
+            .filter(message => !message.deletedFor?.includes(myUid))
+            .reverse(),
+        );
+      });
+    },
     error => onError(error as Error),
   );
 }
@@ -121,8 +210,10 @@ export function subscribeToLatestMessage(roomId: string, myUid: string, onMessag
   return onSnapshot(
     latestQuery,
     snapshot => {
-      const found = snapshot.docs.map(docToMessage).find(message => !message.deletedFor?.includes(myUid));
-      onMessage(found ?? null);
+      buildDecryptContext(roomId, myUid).then(ctx => {
+        const found = snapshot.docs.map(d => docToMessage(d, ctx)).find(message => !message.deletedFor?.includes(myUid));
+        onMessage(found ?? null);
+      });
     },
     () => onMessage(null),
   );
@@ -143,6 +234,30 @@ export async function markMessageRead(roomId: string, messageId: string): Promis
   await updateDoc(messageRef, { readAt: serverTimestamp(), deliveredAt: serverTimestamp() });
 }
 
+/** See the mobile chatService.ts's identical helper — falls back to plain `text` if the peer has no published public key yet (hasn't opened the app since E2E shipped). */
+async function buildEncryptedFieldGroup(roomId: string, senderId: string, plaintext: string): Promise<Record<string, unknown>> {
+  const blob = await encryptForRoom(roomId, senderId, plaintext);
+  if (!blob) {
+    return { text: plaintext };
+  }
+  return {
+    text: '',
+    encrypted: true,
+    encText: blob.ciphertext,
+    encNonce: blob.nonce,
+    encTextSelf: blob.ciphertextSelf,
+    encNonceSelf: blob.nonceSelf,
+  };
+}
+
+// `replyTo.senderId` is a display label (whose message is being quoted),
+// not who is encrypting — see docToMessage's identical note. The ciphertext
+// is always produced by the CURRENT sender of this new message.
+async function buildEncryptedReplyTo(roomId: string, senderId: string, replyTo: NonNullable<ChatMessage['replyTo']>): Promise<Record<string, unknown>> {
+  const fields = await buildEncryptedFieldGroup(roomId, senderId, replyTo.text);
+  return { messageId: replyTo.messageId, type: replyTo.type, senderId: replyTo.senderId, ...fields };
+}
+
 export async function sendMessage(
   roomId: string,
   text: string,
@@ -153,15 +268,20 @@ export async function sendMessage(
   if (!trimmed) {
     return;
   }
+  const [textFields, replyToPayload] = await Promise.all([
+    buildEncryptedFieldGroup(roomId, senderId, trimmed),
+    replyTo ? buildEncryptedReplyTo(roomId, senderId, replyTo) : Promise.resolve(undefined),
+  ]);
   await addDoc(collection(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION), {
     type: 'text',
-    text: trimmed,
+    ...textFields,
     senderId,
     createdAt: serverTimestamp(),
-    ...(replyTo ? { replyTo } : {}),
+    ...(replyToPayload ? { replyTo: replyToPayload } : {}),
   });
 }
 
+/** `mediaUrl` is encrypted the same way as text for image/audio only (inline base64 data URIs) — video stays a plain Storage URL, out of scope for this pass. See the mobile chatService.ts's sendMediaMessage for the full rationale. */
 export async function sendMediaMessage(
   roomId: string,
   senderId: string,
@@ -169,12 +289,23 @@ export async function sendMediaMessage(
   mediaUrl: string,
   durationSeconds?: number,
 ): Promise<void> {
+  const shouldEncryptMedia = type === 'image' || type === 'audio';
+  const blob = shouldEncryptMedia ? await encryptForRoom(roomId, senderId, mediaUrl) : null;
+  const mediaFields = blob
+    ? {
+        encrypted: true,
+        encMediaUrl: blob.ciphertext,
+        encMediaUrlNonce: blob.nonce,
+        encMediaUrlSelf: blob.ciphertextSelf,
+        encMediaUrlNonceSelf: blob.nonceSelf,
+      }
+    : { mediaUrl };
   await addDoc(collection(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION), {
     type,
     text: '',
     senderId,
     createdAt: serverTimestamp(),
-    mediaUrl,
+    ...mediaFields,
     ...(durationSeconds !== undefined ? { durationSeconds } : {}),
   });
 }
@@ -191,13 +322,15 @@ export async function sendFileMessage(roomId: string, senderId: string, mediaUrl
   });
 }
 
-export async function editMessage(roomId: string, messageId: string, newText: string): Promise<void> {
+/** `myUid` is always the message's own sender (firestore.rules rejects anyone else editing) — needed here to (re)encrypt the new text. */
+export async function editMessage(roomId: string, messageId: string, newText: string, myUid: string): Promise<void> {
   const trimmed = newText.trim();
   if (!trimmed) {
     return;
   }
+  const textFields = await buildEncryptedFieldGroup(roomId, myUid, trimmed);
   const messageRef = doc(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION, messageId);
-  await updateDoc(messageRef, { text: trimmed, editedAt: serverTimestamp() });
+  await updateDoc(messageRef, { ...textFields, editedAt: serverTimestamp() });
 }
 
 export async function deleteMessage(roomId: string, messageId: string, myUid: string): Promise<void> {
@@ -228,9 +361,13 @@ export async function unpinMessage(roomId: string): Promise<void> {
   await setDoc(roomDocRef(roomId), { pinnedMessageId: deleteField() }, { merge: true });
 }
 
-export async function fetchMessageById(roomId: string, messageId: string): Promise<ChatMessage | null> {
+export async function fetchMessageById(roomId: string, messageId: string, myUid: string): Promise<ChatMessage | null> {
   const snap = await getDoc(doc(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION, messageId));
-  return snap.exists() ? docToMessage(snap) : null;
+  if (!snap.exists()) {
+    return null;
+  }
+  const ctx = await buildDecryptContext(roomId, myUid);
+  return docToMessage(snap, ctx);
 }
 
 /** One-off (non-live) text search over a room's message history — see the mobile chatService.ts for the full rationale (no Firestore full-text search, client-side substring match over up to MAX_MESSAGE_LIMIT messages, deleted-for-me excluded). Used by both in-chat search and cross-contact global search. */
@@ -239,10 +376,11 @@ export async function searchMessagesInRoom(roomId: string, myUid: string, queryT
   if (!needle) {
     return [];
   }
-  const snapshot = await getDocs(
-    query(collection(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION), orderBy('createdAt', 'desc'), limit(MAX_MESSAGE_LIMIT)),
-  );
+  const [snapshot, ctx] = await Promise.all([
+    getDocs(query(collection(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION), orderBy('createdAt', 'desc'), limit(MAX_MESSAGE_LIMIT))),
+    buildDecryptContext(roomId, myUid),
+  ]);
   return snapshot.docs
-    .map(docToMessage)
+    .map(d => docToMessage(d, ctx))
     .filter(message => !message.deletedFor?.includes(myUid) && message.type === 'text' && message.text.toLowerCase().includes(needle));
 }

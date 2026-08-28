@@ -628,6 +628,13 @@ import {
 // "^1.4.0") — legality checking must agree between the two clients since
 // they read/write the exact same rooms/{roomId}/game/chess Firestore doc.
 import { Chess } from 'https://esm.sh/chess.js@1.4.0';
+// E2E message encryption — same library/version as the mobile app's and
+// web-client's package.json ("tweetnacl": "^1.0.3", "tweetnacl-util":
+// "^0.15.1"), loaded from esm.sh here since this file has no build step /
+// npm install. See src/services/e2eService.ts for the full design writeup;
+// this file re-implements the identical algorithm/wire-format inline.
+import nacl from 'https://esm.sh/tweetnacl@1.0.3';
+import { decodeBase64, decodeUTF8, encodeBase64, encodeUTF8 } from 'https://esm.sh/tweetnacl-util@0.15.1';
 
 // Same project config as the mobile app (src/config/firebaseConfig.ts) —
 // these are not secrets, just public client identifiers; access is gated
@@ -681,6 +688,182 @@ const USERNAME_EMAIL_DOMAIN = '@gizlichat.local';
 const VIDEO_QUOTA_BYTES = 5120 * 1024 * 1024;
 const usernameToEmail = u => `${u.trim().toLowerCase()}${USERNAME_EMAIL_DOMAIN}`;
 const roomIdFor = (a, b) => [a, b].sort().join('__');
+
+// ---- E2E message encryption (nacl.box / X25519-XSalsa20-Poly1305) ----
+// Private key never leaves this browser (localStorage only); public key is
+// published to users/{uid}.publicKey. Identical wire format to the mobile
+// app and web-client — see src/services/e2eService.ts for the full design
+// writeup (new-account vs. new-device key generation, "encrypt to self" so
+// the sender can reopen their own sent history, etc.); this is a direct
+// port of that logic for a plain-browser module script.
+const E2E_SECRET_KEY_PREFIX = 'e2e_sk_';
+const E2E_UNDECRYPTABLE_PLACEHOLDER = '🔒 Mesaj çözülemedi (başka bir cihazın anahtarına gönderilmiş olabilir)';
+let myE2eKeyPair = null; // { publicKey: Uint8Array, secretKey: Uint8Array }
+const peerPublicKeyCache = new Map(); // uid -> Uint8Array
+const peerPublicKeyFetchInFlight = new Map(); // uid -> Promise
+
+function readLocalSecret(uid) {
+  try { return localStorage.getItem(`${E2E_SECRET_KEY_PREFIX}${uid}`); } catch { return null; }
+}
+function writeLocalSecret(uid, secretB64) {
+  try { localStorage.setItem(`${E2E_SECRET_KEY_PREFIX}${uid}`, secretB64); } catch { /* best-effort, see e2eService.ts */ }
+}
+
+/** Ensures this browser has a usable key pair for `uid`, publishing/overwriting the Firestore public key as needed. See e2eService.ts's ensureKeyPair for the 3-case breakdown (existing local key / brand-new account / new-device re-key). */
+async function ensureE2eKeyPair(uid) {
+  if (myE2eKeyPair && myE2eKeyPair.uid === uid) return myE2eKeyPair;
+
+  const storedSecret = readLocalSecret(uid);
+  if (storedSecret) {
+    const secretKey = decodeBase64(storedSecret);
+    const keyPair = { uid, secretKey, publicKey: nacl.box.keyPair.fromSecretKey(secretKey).publicKey };
+    myE2eKeyPair = keyPair;
+    getDoc(doc(db, 'users', uid)).then(snap => {
+      if (!snap.exists() || typeof snap.data()?.publicKey !== 'string') {
+        setDoc(doc(db, 'users', uid), { publicKey: encodeBase64(keyPair.publicKey) }, { merge: true }).catch(() => undefined);
+      }
+    }).catch(() => undefined);
+    return keyPair;
+  }
+
+  const generated = nacl.box.keyPair();
+  writeLocalSecret(uid, encodeBase64(generated.secretKey));
+  await setDoc(doc(db, 'users', uid), { publicKey: encodeBase64(generated.publicKey) }, { merge: true });
+  const keyPair = { uid, secretKey: generated.secretKey, publicKey: generated.publicKey };
+  myE2eKeyPair = keyPair;
+  peerPublicKeyCache.delete(uid);
+  return keyPair;
+}
+
+async function getPeerPublicKey(uid) {
+  const cached = peerPublicKeyCache.get(uid);
+  if (cached) return cached;
+  const inFlight = peerPublicKeyFetchInFlight.get(uid);
+  if (inFlight) return inFlight;
+  const fetchPromise = (async () => {
+    try {
+      const snap = await getDoc(doc(db, 'users', uid));
+      const b64 = snap.exists() ? snap.data()?.publicKey : undefined;
+      if (typeof b64 !== 'string' || !b64) return null;
+      const publicKey = decodeBase64(b64);
+      peerPublicKeyCache.set(uid, publicKey);
+      return publicKey;
+    } catch {
+      return null;
+    } finally {
+      peerPublicKeyFetchInFlight.delete(uid);
+    }
+  })();
+  peerPublicKeyFetchInFlight.set(uid, fetchPromise);
+  return fetchPromise;
+}
+
+function otherUidInRoom(roomId, myUid) {
+  const parts = roomId.split('__');
+  return parts.find(uid => uid !== myUid) ?? parts[0] ?? roomId;
+}
+
+/** Encrypts `plaintext` for a room: once to the peer's public key, once to my own (so I can reopen my own sent history). Returns null if either key is unavailable — callers fall back to legacy plaintext storage. */
+async function encryptForRoom(roomId, myUid, plaintext) {
+  const myKeyPair = myE2eKeyPair && myE2eKeyPair.uid === myUid ? myE2eKeyPair : await ensureE2eKeyPair(myUid);
+  const peerUid = otherUidInRoom(roomId, myUid);
+  const peerPublicKey = await getPeerPublicKey(peerUid);
+  if (!peerPublicKey) return null;
+
+  const messageBytes = decodeUTF8(plaintext);
+  const nonce = nacl.randomBytes(nacl.box.nonceLength);
+  const ciphertext = nacl.box(messageBytes, nonce, peerPublicKey, myKeyPair.secretKey);
+  const selfNonce = nacl.randomBytes(nacl.box.nonceLength);
+  const selfCiphertext = nacl.box(messageBytes, selfNonce, myKeyPair.publicKey, myKeyPair.secretKey);
+
+  return {
+    ciphertext: encodeBase64(ciphertext), nonce: encodeBase64(nonce),
+    ciphertextSelf: encodeBase64(selfCiphertext), nonceSelf: encodeBase64(selfNonce),
+  };
+}
+
+/**
+ * Decrypts one ciphertext/nonce pair. `ref` is `{ciphertext, nonce,
+ * ciphertextSelf, nonceSelf}` (already extracted from whichever `enc*`
+ * fields apply — see decryptMessageData below). Returns null (never
+ * throws) on failure — see e2eService.ts's decryptBlob for why this can
+ * legitimately fail (a "new device" re-key, see ensureKeyPair's case 3).
+ */
+function decryptBlob(ref, senderId, myUid, myKeyPair, peerPublicKey) {
+  const isMine = senderId === myUid;
+  const ciphertextB64 = isMine ? ref.ciphertextSelf : ref.ciphertext;
+  const nonceB64 = isMine ? ref.nonceSelf : ref.nonce;
+  if (!ciphertextB64 || !nonceB64) return null;
+  const theirPublicKeyForOpen = isMine ? myKeyPair.publicKey : peerPublicKey;
+  if (!theirPublicKeyForOpen) return null;
+  try {
+    const opened = nacl.box.open(decodeBase64(ciphertextB64), decodeBase64(nonceB64), theirPublicKeyForOpen, myKeyPair.secretKey);
+    return opened ? encodeUTF8(opened) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Decrypts a raw Firestore message `data` object into a shallow copy with
+ * plain `text`/`mediaUrl`/`replyTo.text` — everything downstream
+ * (previewText, renderMessage, replyQuoteHtml, desktop notifications) reads
+ * those fields exactly like before and never has to know encryption exists.
+ * Legacy (pre-E2E, no `encrypted` flag) messages pass through untouched.
+ *
+ * Wire field names (must match src/services/chatService.ts and
+ * web-client/src/services/chatService.ts exactly): message text uses
+ * encText/encNonce/encTextSelf/encNonceSelf; inline image/audio mediaUrl
+ * uses encMediaUrl/encMediaUrlNonce/encMediaUrlSelf/encMediaUrlNonceSelf;
+ * replyTo carries its own encText/encNonce/encTextSelf/encNonceSelf nested
+ * inside the replyTo map.
+ */
+async function decryptMessageData(roomId, myUid, data) {
+  if (!data.encrypted && !(data.replyTo && data.replyTo.encrypted)) return data;
+  const myKeyPair = myE2eKeyPair && myE2eKeyPair.uid === myUid ? myE2eKeyPair : await ensureE2eKeyPair(myUid);
+  const peerUid = otherUidInRoom(roomId, myUid);
+  const peerPublicKey = await getPeerPublicKey(peerUid);
+  const senderId = data.senderId;
+
+  const decrypted = { ...data };
+  if (data.encrypted) {
+    decrypted.text = decryptBlob(
+      { ciphertext: data.encText, nonce: data.encNonce, ciphertextSelf: data.encTextSelf, nonceSelf: data.encNonceSelf },
+      senderId, myUid, myKeyPair, peerPublicKey,
+    ) ?? E2E_UNDECRYPTABLE_PLACEHOLDER;
+
+    if ((data.type === 'image' || data.type === 'audio') && (data.encMediaUrl || data.encMediaUrlSelf)) {
+      decrypted.mediaUrl = decryptBlob(
+        { ciphertext: data.encMediaUrl, nonce: data.encMediaUrlNonce, ciphertextSelf: data.encMediaUrlSelf, nonceSelf: data.encMediaUrlNonceSelf },
+        senderId, myUid, myKeyPair, peerPublicKey,
+      ) ?? undefined;
+    }
+  }
+  if (data.replyTo && typeof data.replyTo === 'object') {
+    decrypted.replyTo = {
+      ...data.replyTo,
+      // Same note as the mobile/web chatService.ts: replyTo.senderId is a
+      // display label for the QUOTED message's original author, not who
+      // encrypted this reply preview — the ciphertext was produced by this
+      // OUTER message's actual sender (`senderId` above), so decryption
+      // must use that, never `data.replyTo.senderId`.
+      text: data.replyTo.encrypted
+        ? (decryptBlob(
+            { ciphertext: data.replyTo.encText, nonce: data.replyTo.encNonce, ciphertextSelf: data.replyTo.encTextSelf, nonceSelf: data.replyTo.encNonceSelf },
+            senderId, myUid, myKeyPair, peerPublicKey,
+          ) ?? E2E_UNDECRYPTABLE_PLACEHOLDER)
+        : (data.replyTo.text || ''),
+    };
+  }
+  return decrypted;
+}
+
+/** Wraps `encryptForRoom` into the Firestore field group used for a `text`-shaped field (message text or replyTo text) — falls back to plain `text` if the peer has no published public key yet. */
+async function buildEncryptedFieldGroup(roomId, senderId, plaintext) {
+  const blob = await encryptForRoom(roomId, senderId, plaintext);
+  if (!blob) return { text: plaintext };
+  return { text: '', encrypted: true, encText: blob.ciphertext, encNonce: blob.nonce, encTextSelf: blob.ciphertextSelf, encNonceSelf: blob.nonceSelf };
+}
 
 // ---- DOM refs ----
 const $ = id => document.getElementById(id);
@@ -824,6 +1007,9 @@ onAuthStateChanged(auth, async user => {
   whoSub.textContent = `@${myUsername}`;
   authScreen.classList.add('hidden');
   mainScreen.classList.remove('hidden');
+  // E2E key pair: generated once per browser (or reused from localStorage),
+  // public half published to Firestore — see ensureE2eKeyPair above.
+  ensureE2eKeyPair(myUid).catch(() => undefined);
   startSession();
 });
 
@@ -908,11 +1094,11 @@ function renderContactList() {
     // otherwise the sidebar preview would keep showing a message this device
     // has hidden from its own view.
     const latestQ = query(collection(db, 'rooms', roomId, 'messages'), orderBy('createdAt', 'desc'), limit(20));
-    contactListUnsubs.push(onSnapshot(latestQ, snap => {
+    contactListUnsubs.push(onSnapshot(latestQ, async snap => {
       const previewEl = document.getElementById(`preview_${contact.uid}`);
       const docSnap = snap.docs.find(d => !(d.data().deletedFor || []).includes(myUid));
       if (!docSnap) { if (previewEl) previewEl.textContent = 'Henüz mesaj yok'; return; }
-      const data = docSnap.data();
+      const data = await decryptMessageData(roomId, myUid, docSnap.data());
       if (previewEl) previewEl.textContent = previewText(data, myUid);
 
       // Same suppression rule as the mobile app: no notification for a
@@ -970,11 +1156,14 @@ function openRoom(contact) {
   const roomId = roomIdFor(myUid, contact.uid);
   const messagesQ = query(collection(db, 'rooms', roomId, 'messages'), orderBy('createdAt', 'desc'), limit(50));
   scrollToBottomBtn.classList.add('hidden');
-  roomUnsub = onSnapshot(messagesQ, snapshot => {
+  roomUnsub = onSnapshot(messagesQ, async snapshot => {
     const docs = snapshot.docs.slice().reverse();
     const wasNearBottom = messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight < 80;
     const distanceFromBottom = messagesEl.scrollHeight - messagesEl.scrollTop;
-    latestMessages = docs.map(d => ({ id: d.id, data: d.data() }));
+    // Decrypted once per snapshot (not per-render) — see decryptMessageData;
+    // everything downstream (renderMessage/previewText/replyQuoteHtml) only
+    // ever sees plain text/mediaUrl.
+    latestMessages = await Promise.all(docs.map(async d => ({ id: d.id, data: await decryptMessageData(roomId, myUid, d.data()) })));
     messagesEl.innerHTML = '';
     latestMessages
       .filter(m => !m.data.deletedFor?.includes(myUid))
@@ -1149,6 +1338,12 @@ function renderMessage(id, data) {
 
 lightbox.addEventListener('click', () => lightbox.classList.add('hidden'));
 
+// Firestore'un tek doküman limiti 1 MiB. E2E şifreleme (nacl.box) inline
+// base64 data URI'yi bir kez daha şifreleyip base64'e çeviriyor (~%33 ek
+// büyüme) — bu yüzden eski 900.000 eşiği şifrelenmiş fotoğraflarda doküman
+// limitini aşabilirdi. 650.000, şifrelendikten sonra ~866.000'e çıkıyor.
+const MAX_INLINE_IMAGE_DATA_URI_LENGTH = 650000;
+
 // ---- Sending ----
 async function sendText() {
   const trimmed = textInput.value.trim();
@@ -1158,9 +1353,13 @@ async function sendText() {
   const reply = replyingTo;
   cancelReply();
   try {
+    const textFields = await buildEncryptedFieldGroup(roomId, myUid, trimmed);
+    const replyToPayload = reply
+      ? { id: reply.id, type: reply.type, senderId: reply.senderId, ...(await buildEncryptedFieldGroup(roomId, myUid, reply.text)) }
+      : null;
     await addDoc(collection(db, 'rooms', roomId, 'messages'), {
-      type: 'text', text: trimmed, senderId: myUid, createdAt: serverTimestamp(),
-      ...(reply ? { replyTo: reply } : {}),
+      type: 'text', ...textFields, senderId: myUid, createdAt: serverTimestamp(),
+      ...(replyToPayload ? { replyTo: replyToPayload } : {}),
     });
   } catch (error) {
     showError(`Mesaj gönderilemedi: ${error.message}`);
@@ -1180,6 +1379,8 @@ fileInput.addEventListener('change', async () => {
   uploadStatus.classList.remove('hidden');
   try {
     if (isVideo) {
+      // Video stays a plain Storage download URL, unencrypted — out of
+      // scope for this pass, see ObsidianVault/Changelog.md.
       const ext = (file.name.split('.').pop() || 'mp4');
       const path = `rooms/${roomId}/media/video/${Date.now()}-${Math.random().toString(36).slice(2, 10)}.${ext}`;
       const storageRef = ref(storage, path);
@@ -1191,13 +1392,19 @@ fileInput.addEventListener('change', async () => {
       await setDoc(doc(db, 'users', myUid), { videoBytesUsed: increment(file.size) }, { merge: true });
     } else {
       const dataUri = await resizeImageToDataUri(file, 1280, 0.7);
-      if (dataUri.length > 900000) {
+      if (dataUri.length > MAX_INLINE_IMAGE_DATA_URI_LENGTH) {
         showError('Fotoğraf çok büyük, daha düşük çözünürlüklü bir fotoğraf seç.');
         return;
       }
       const hidden = window.confirm('Bu fotoğrafı gizli olarak mı göndermek istiyorsun? (Karşı taraf dokunana kadar görünmez)');
+      // Image mediaUrl (inline base64 data URI) is encrypted the same way
+      // as text — see buildEncryptedFieldGroup / decryptMessageData above.
+      const blob = await encryptForRoom(roomId, myUid, dataUri);
+      const mediaFields = blob
+        ? { encrypted: true, encMediaUrl: blob.ciphertext, encMediaUrlNonce: blob.nonce, encMediaUrlSelf: blob.ciphertextSelf, encMediaUrlNonceSelf: blob.nonceSelf }
+        : { mediaUrl: dataUri };
       await addDoc(collection(db, 'rooms', roomId, 'messages'), {
-        type: 'image', text: '', senderId: myUid, createdAt: serverTimestamp(), mediaUrl: dataUri,
+        type: 'image', text: '', senderId: myUid, createdAt: serverTimestamp(), ...mediaFields,
         ...(hidden ? { hidden: true } : {}),
       });
     }

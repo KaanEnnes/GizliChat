@@ -69,10 +69,14 @@ interface Props {
   initialJumpMessageId?: string;
 }
 
-// Firestore'un tek doküman limiti 1 MiB — base64 encoding ham veriyi ~%33
-// büyüttüğü için bu eşik, diğer mesaj alanları için de pay bırakacak
-// şekilde 900.000 karakterde (data URI önekiyle birlikte) tutuluyor.
-const MAX_INLINE_MEDIA_DATA_URI_LENGTH = 900_000;
+// Firestore'un tek doküman limiti 1 MiB. Bu eşik iki katman büyümeyi
+// hesaba katıyor: base64 data URI ham veriyi ~%33 büyütüyor, ve E2E
+// şifreleme (nacl.box) o base64 metni bir kez daha şifreleyip tekrar
+// base64'e çeviriyor (~%33 daha) — yani orijinal eşik olan 900.000'i
+// olduğu gibi bırakmak şifrelenmiş mesajlarda doküman limitini aşardı.
+// 650.000 karakter, şifrelendikten sonra ~866.000 karaktere çıkıyor,
+// diğer mesaj alanları için hâlâ pay bırakıyor.
+const MAX_INLINE_MEDIA_DATA_URI_LENGTH = 650_000;
 // MediaRecorder.stop() throws natively if called too soon after start() —
 // below this, we treat the press as an accidental tap, not a real message.
 const MIN_RECORDING_MS = 600;
@@ -193,7 +197,7 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack, initialJumpMessage
       return;
     }
     let cancelled = false;
-    fetchMessageById(roomId, pinnedMessageId).then(msg => {
+    fetchMessageById(roomId, pinnedMessageId, myUid).then(msg => {
       if (!cancelled) {
         // Deleted-for-me: keep it out of the pin banner even though the
         // fallback fetch (unlike subscribeToMessages) doesn't filter it.
@@ -431,7 +435,7 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack, initialJumpMessage
     // sending a second message quickly (before the first one's network
     // round-trip finished) silently did nothing until it caught up.
     const request = editing
-      ? editMessage(roomId, editing.id, trimmed)
+      ? editMessage(roomId, editing.id, trimmed, myUid)
       : sendMessage(
           roomId,
           trimmed,

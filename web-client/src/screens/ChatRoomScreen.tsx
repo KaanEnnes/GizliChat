@@ -31,7 +31,12 @@ import GamesModal from '../components/GamesModal';
 import GifPickerModal from '../components/GifPickerModal';
 import type { GifResult } from '../services/gifService';
 
-const IMAGE_DATA_URI_LIMIT = 900_000;
+// Firestore'un tek doküman limiti 1 MiB. E2E şifreleme (nacl.box) inline
+// base64 data URI'yi bir kez daha şifreleyip base64'e çeviriyor (~%33 ek
+// büyüme) — bu yüzden eski 900.000 eşiği şifrelenmiş fotoğraflarda doküman
+// limitini aşabilirdi. 650.000, şifrelendikten sonra ~866.000'e çıkıyor,
+// hâlâ güvenli payla.
+const IMAGE_DATA_URI_LIMIT = 650_000;
 
 interface Props {
   account: Account;
@@ -116,7 +121,7 @@ function ChatRoomScreen({ account, contact, onBack, initialJumpMessageId }: Prop
       setPinnedMessage(fromLoaded);
       return;
     }
-    fetchMessageById(roomId, pinnedMessageId).then(msg =>
+    fetchMessageById(roomId, pinnedMessageId, account.uid).then(msg =>
       setPinnedMessage(msg && !msg.deletedFor?.includes(account.uid) ? msg : null),
     );
   }, [pinnedMessageId, messages, roomId, account.uid]);
@@ -194,7 +199,7 @@ function ChatRoomScreen({ account, contact, onBack, initialJumpMessageId }: Prop
     setText('');
     try {
       if (editTarget) {
-        await editMessage(roomId, editTarget.id, trimmed);
+        await editMessage(roomId, editTarget.id, trimmed, account.uid);
         setEditTarget(null);
       } else {
         await sendMessage(roomId, trimmed, account.uid, replyTarget ? buildReplySnapshot(replyTarget) : undefined);

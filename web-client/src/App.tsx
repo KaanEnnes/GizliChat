@@ -9,6 +9,7 @@ import { fetchAccountUsername, logoutAccount, updatePresenceHeartbeat, watchAuth
 import type { Contact } from './services/contactService';
 import { initFcm } from './services/fcmService';
 import { setActiveChatUid } from './services/notificationService';
+import { ensureKeyPair } from './services/e2eService';
 
 const PRESENCE_HEARTBEAT_MS = 25_000;
 
@@ -101,6 +102,15 @@ function AppShell(): React.JSX.Element {
       setAccount({ uid: user.uid, username });
     });
   }, []);
+
+  // E2E key pair: generated once per browser (or reused if already present
+  // in localStorage), public half published to Firestore — see
+  // e2eService.ts. Runs on both a fresh login and a restored session, since
+  // both converge on `account` being set (watchAuthState above).
+  useEffect(() => {
+    if (!account) return;
+    ensureKeyPair(account.uid).catch(() => undefined);
+  }, [account]);
 
   useEffect(() => {
     if (!account) return;

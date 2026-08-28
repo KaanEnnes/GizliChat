@@ -56,7 +56,12 @@ service cloud.firestore {
       //    either, even though it's still fully visible (and untouched) for
       //    the other room member, since delete-for-me is per-viewer only.
       //    (Legacy: the old global `deleted` flag this used to check is
-      //    retired — see deletedFor below.)
+      //    retired — see deletedFor below.) The allowed key set covers both
+      //    shapes editMessage() can write: plain `text` (peer has no E2E
+      //    public key yet, rare fallback) or the full encrypted field group
+      //    (see e2eService.ts / chatService.ts's buildEncryptedFieldGroup) —
+      //    a single edit only ever touches a subset of these, `hasOnly`
+      //    just bounds the maximum.
       // 4) delete-for-me: any room member may append only their own uid to
       //    `deletedFor` — the message content itself is never touched, so
       //    the other member keeps seeing it normally (see deleteMessage()).
@@ -65,7 +70,8 @@ service cloud.firestore {
           request.resource.data.reactions.diff(resource.data.get('reactions', {})).affectedKeys().hasOnly([request.auth.uid])) ||
         (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['deliveredAt', 'readAt']) &&
           resource.data.senderId != request.auth.uid) ||
-        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['text', 'editedAt']) &&
+        (request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['text', 'editedAt', 'encrypted', 'encText', 'encNonce', 'encTextSelf', 'encNonceSelf']) &&
           resource.data.senderId == request.auth.uid &&
           resource.data.type == 'text' &&
           !(request.auth.uid in resource.data.get('deletedFor', []))) ||

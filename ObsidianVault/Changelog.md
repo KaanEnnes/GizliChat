@@ -1,5 +1,87 @@
 # Değişiklik Günlüğü
 
+## 2026-08-28 — Gerçek uçtan uca şifreleme (E2E): mesaj içeriği artık sunucuda okunamıyor
+
+Bu ana kadar mesajlar Firestore'da düz metin olarak duruyordu — "gizli chat" adı sadece
+uygulamanın oyun kılığı görünümünden geliyordu, veritabanına erişebilen biri (Firebase Console,
+sızdırılmış servis hesabı vs.) her mesajı okuyabilirdi. Artık değil: mesaj içeriği cihazdan
+çıkmadan önce şifreleniyor, sunucu sadece şifreli metni görüyor. Üç client'ın da (mobil,
+web-client, pc-client) aynı algoritmayı ve aynı wire format'ı kullanması gerektiği için
+**tweetnacl** (`nacl.box`, X25519-XSalsa20-Poly1305) seçildi — saf JS, native modül gerektirmiyor,
+RN/tarayıcı/plain `<script type="module">` üçünde de aynen çalışıyor.
+
+**Anahtar yönetimi** (her üç client'ta da yeni `e2eService.ts` — pc-client'ta inline, esm.sh'tan
+`tweetnacl@1.0.3` + `tweetnacl-util@0.15.1` import ediliyor):
+- Her hesap, her cihazda bir kere `nacl.box.keyPair()` ile X25519 anahtar çifti üretiyor.
+- Public key `users/{uid}.publicKey`'e (base64) yazılıyor — herkes okuyabilir, zaten şifreleme
+  için gerekli olan bu.
+- Private key **hiçbir zaman cihazdan çıkmıyor**: mobilde AsyncStorage (`e2e_sk_<uid>`), web-client
+  ve pc-client'ta `localStorage`.
+- Giriş/uygulama açılışında: cihazda zaten bir private key varsa o kullanılıyor. Yoksa VE
+  Firestore'da bu hesap için henüz publicKey yoksa (yeni hesap ya da bu özellik çıktıktan sonra
+  ilk kez giriş yapan eski hesap) → yeni anahtar çifti üretilip yayınlanıyor.
+- **Yeni cihaz durumu**: hesap zaten bir publicKey'e sahip ama BU cihazda hiç private key yoksa
+  (ör. aynı hesaba ikinci telefondan giriş) — orijinal private key'i kurtarmanın hiçbir yolu yok
+  (tasarım gereği, hiç bu cihaza gelmedi). Bu cihazda yeni bir anahtar çifti üretilip Firestore'daki
+  publicKey'in üzerine yazılıyor. Sonucu: karşı tarafın ESKİ anahtara şifrelediği geçmiş mesajlar bu
+  cihazda çözülemez — hata/çökme değil, "🔒 Mesaj çözülemedi (başka bir cihazın anahtarına
+  gönderilmiş olabilir)" placeholder'ı gösteriliyor. Yeni mesajlar sorunsuz çalışıyor (güncel
+  public key artık bu cihazınki). Bu sürümde doğrulama/"safety number" UI'ı yok, bilinçli olarak
+  basit tutuldu.
+- Mobilde RN'in `crypto.getRandomValues`'u yok — `react-native-get-random-values` eklendi,
+  `index.js`'in en başında (herhangi bir `nacl` import'undan önce) side-effect import ediliyor.
+
+**Ne şifreleniyor** (`chatService.ts` — hem mobil hem web-client, pc-client'ta aynı mantık inline):
+`text` tipi mesajların `text` alanı, `replyTo` önizlemesinin `text`'i, ve `image`/`audio` tipi
+mesajların inline base64 `mediaUrl`'i (bunlar zaten Storage'a değil doğrudan Firestore dokümanına
+gömülü — bkz. `ChatMessage.mediaUrl` doc comment'i). **Kapsam dışı bırakılanlar**: `video` (hâlâ
+düz bir Firebase Storage indirme URL'i — bunu şifrelemek client-side stream şifreleme,
+upload/download değişiklikleri ve video cache servisi değişiklikleri gerektiren çok daha büyük bir
+iş, bilinçli olarak ertelendi), `call`/`chess` mesajları (korunacak metin içeriği yok), profil
+adı/kullanıcı adı/fotoğraflar (kapsam dışı — bu iş sadece mesaj içeriğiyle ilgili).
+
+**Wire format** (üç client'ta birebir aynı): mesaj dokümanına `encrypted: true` + base64
+`encText`/`encNonce` (karşı tarafın public key'ine şifreli) + `encTextSelf`/`encNonceSelf`
+(kendi public key'ime şifreli — nacl.box simetrik değil, alıcıya şifrelenen bir kutuyu gönderen
+kendi anahtarıyla açamaz, o yüzden gönderen kendi geçmişini okuyabilsin diye mesaj İKİ KERE
+şifreleniyor). Medya için aynı desen `encMediaUrl`/`encMediaUrlNonce`/`encMediaUrlSelf`/
+`encMediaUrlNonceSelf` alan adlarıyla. `replyTo` de kendi `enc*` alanlarını taşıyor (not:
+`replyTo.senderId` sadece "kimin mesajı" etiketi — şifreleyen taraf her zaman bu YENİ mesajın asıl
+göndereni, alıntılanan orijinal mesajın yazarı değil; bu ayrım gözden kaçırılırsa şifre çözme her
+zaman başarısız olur). Geriye dönük uyumluluk: eski mesajlarda `encrypted` alanı yok, `text` düz
+metin olarak duruyor — client'lar bunu tespip edip olduğu gibi gösteriyor, göç/migration yapılmıyor.
+
+**Şifre çözme nerede oluyor**: `chatService.ts`'in `docToMessage()`'ı (ve pc-client'ın
+`decryptMessageData()`'sı) — yani `subscribeToMessages`/`subscribeToLatestMessage`/
+`fetchMessageById`/`searchMessagesInRoom` çağıran her yer (ChatRoomScreen, ContactsScreen'in son
+mesaj önizlemesi, NotificationCenter, arama) otomatik olarak düz metin `ChatMessage.text`/
+`.mediaUrl` görüyor — hiçbirinin şifrelemeden haberi olması gerekmedi. `searchMessagesInRoom` artık
+çekilen her adayı önce çözüp öyle filtreliyor.
+
+**Doküman boyutu**: E2E şifreleme + tekrar base64 encoding inline base64 data URI'leri ~%33
+büyütüyor — bu yüzden fotoğraf/ses için istemci-taraflı boyut eşiği (`MAX_INLINE_MEDIA_DATA_URI_LENGTH`
+/ `IMAGE_DATA_URI_LIMIT` / `MAX_INLINE_IMAGE_DATA_URI_LENGTH`) her üç client'ta 900.000'den
+650.000 karaktere düşürüldü — şifrelendikten sonra ~866.000'e çıkıyor, Firestore'un 1 MiB doküman
+limitinin altında güvenli payla kalıyor.
+
+**Peer'in henüz public key'i yoksa** (bu özellik çıktıktan sonra hiç giriş yapmamış eski hesap):
+mesaj o an şifrelenemiyor, düz metin olarak (eski davranış gibi) gönderiliyor — engellemek yerine
+bu tercih edildi, çünkü karşı taraf güncellemeyi henüz almadıysa mesajlaşmayı tamamen kesmek daha
+kötü bir deneyim. Bu, tasarımdaki tek bilinçli ödün.
+
+**firestore.rules**: mesaj `update` kuralındaki edit carve-out'u (`hasOnly(['text', 'editedAt'])`)
+yeni `enc*` alanlarını da kapsayacak şekilde genişletildi, aksi halde şifreli bir mesajı
+düzenlemek reddedilirdi.
+
+**Kapsam dışı, bilinçli olarak ertelendi**: video mesaj şifreleme (yukarıda açıklandı), ve admin
+erişimi — bu ayrı ve bilinçli bir sonraki adım, kullanıcı ayrıca isteyecek. İkisini bu pass'e
+karıştırmak "gerçek E2E" hedefini baltalardı.
+
+Doğrulama: `npx tsc --noEmit` (mobil) ve `web-client`'ta `npx tsc -b` temiz geçti; pc-client'ın
+module script'i `node --check` ile syntax-doğrulandı. Canlı Firebase ile iki hesap arasında
+gerçek şifreleme/çözme round-trip'i (ve yeni-cihaz re-key senaryosu) bu oturumda test edilmedi —
+bir sonraki gerçek kullanım/test oturumunda elle doğrulanmalı.
+
 ## 2026-08-28 — PC istemcisi: satranç modalinde oyunu sıfırlama butonu geri eklendi
 
 USB flash bellekteki (arama/galeri/"benden sil") ve eski yerel yedekteki (satranç/XOX/
