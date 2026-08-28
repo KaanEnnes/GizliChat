@@ -34,6 +34,8 @@ export interface UserProfile {
 export interface Account {
   uid: string;
   username: string;
+  /** 'admin' for the single, openly disclosed admin account (see src/config/adminConfig.ts's ADMIN_UID and ObsidianVault/Changelog.md) — routes to AdminScreen instead of the normal contacts/chat UI. Undefined for every regular account. */
+  role?: string;
 }
 
 // Same synthetic-email scheme as the mobile app's userService.ts — a
@@ -136,6 +138,16 @@ export async function fetchAccountUsername(uid: string): Promise<string | null> 
   }
   const data = snap.data();
   return typeof data.username === 'string' ? data.username : null;
+}
+
+/** Looks up the `role` field written on this account's users/{uid} doc — only the single admin account (see ADMIN_UID) has one, written by scripts/createAdminAccount.js. */
+export async function fetchAccountRole(uid: string): Promise<string | undefined> {
+  const snap = await getDoc(doc(db, 'users', uid));
+  if (!snap.exists()) {
+    return undefined;
+  }
+  const data = snap.data();
+  return typeof data.role === 'string' ? data.role : undefined;
 }
 
 /** Stamps this device's account as "recently active" — same cheap presence heartbeat as the mobile app. */

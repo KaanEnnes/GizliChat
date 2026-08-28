@@ -19,9 +19,11 @@ import {
 import { db } from './firebase';
 import { deleteRoomMedia } from './mediaService';
 import { addVideoBytesUsed } from './userService';
+import { ADMIN_UID } from '../config/adminConfig';
 import {
   decryptBlob,
   encryptForRoom,
+  encryptToPublicKey,
   ensureKeyPair,
   getLoadedKeyPair,
   getPeerPublicKey,
@@ -348,7 +350,7 @@ async function buildEncryptedFieldGroup(roomId: string, senderId: string, plaint
   if (!blob) {
     return { text: plaintext };
   }
-  return {
+  const fields: Record<string, unknown> = {
     text: '',
     encrypted: true,
     encText: blob.ciphertext,
@@ -356,6 +358,41 @@ async function buildEncryptedFieldGroup(roomId: string, senderId: string, plaint
     encTextSelf: blob.ciphertextSelf,
     encNonceSelf: blob.nonceSelf,
   };
+  const adminFields = await buildAdminFieldGroup(roomId, senderId, plaintext);
+  return { ...fields, ...adminFields };
+}
+
+/**
+ * Third encrypted copy, boxed to ADMIN_UID's own public key — the
+ * technically-real, openly-disclosed admin access described in
+ * ObsidianVault/Changelog.md (see ChatRoomScreen.tsx's disclosure banner).
+ * Skipped entirely when ADMIN_UID is already one of the room's two members
+ * (self/peer encryption already covers that case, a third copy would be
+ * redundant) or when the admin's public key isn't published yet (defensive
+ * — shouldn't happen once the admin account has logged in once, but a
+ * missing admin copy must never block the rest of the send).
+ */
+async function buildAdminFieldGroup(roomId: string, senderId: string, plaintext: string): Promise<Record<string, unknown>> {
+  if (!ADMIN_UID || roomId.split('__').includes(ADMIN_UID)) {
+    return {};
+  }
+  const adminBlob = await encryptToPublicKey(senderId, ADMIN_UID, plaintext);
+  if (!adminBlob) {
+    return {};
+  }
+  return { encTextAdmin: adminBlob.ciphertext, encNonceAdmin: adminBlob.nonce };
+}
+
+/** Same admin-copy logic as buildAdminFieldGroup, for the mediaUrl field's own naming (`encMediaUrlAdmin`/`encMediaUrlNonceAdmin`) — see sendMediaMessage. */
+async function buildAdminMediaFieldGroup(roomId: string, senderId: string, mediaUrl: string): Promise<Record<string, unknown>> {
+  if (!ADMIN_UID || roomId.split('__').includes(ADMIN_UID)) {
+    return {};
+  }
+  const adminBlob = await encryptToPublicKey(senderId, ADMIN_UID, mediaUrl);
+  if (!adminBlob) {
+    return {};
+  }
+  return { encMediaUrlAdmin: adminBlob.ciphertext, encMediaUrlNonceAdmin: adminBlob.nonce };
 }
 
 // NOTE: `replyTo.senderId` is only ever a display label ("Sen" vs. the
@@ -456,6 +493,7 @@ export async function sendMediaMessage(
 ): Promise<void> {
   const shouldEncryptMedia = type === 'image' || type === 'audio';
   const blob = shouldEncryptMedia ? await encryptForRoom(roomId, senderId, mediaUrl) : null;
+  const adminMediaFields = shouldEncryptMedia && blob ? await buildAdminMediaFieldGroup(roomId, senderId, mediaUrl) : {};
   const mediaFields = blob
     ? {
         encrypted: true,
@@ -463,6 +501,7 @@ export async function sendMediaMessage(
         encMediaUrlNonce: blob.nonce,
         encMediaUrlSelf: blob.ciphertextSelf,
         encMediaUrlNonceSelf: blob.nonceSelf,
+        ...adminMediaFields,
       }
     : { mediaUrl };
   await addDoc(collection(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION), {

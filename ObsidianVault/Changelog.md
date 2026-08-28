@@ -1,5 +1,72 @@
 # Değişiklik Günlüğü
 
+## 2026-08-28 — Açıkça bildirilmiş (gizli DEĞİL) yönetici erişimi + minimal admin paneli
+
+Proje sahibinin talebi üzerine, kullanıcıların sohbet gizliliğini yanıltacak sessiz/gizli bir
+"arka kapı" **reddedildi** ve bunun yerine **açıkça bildirilmiş** bir model uygulandı: yönetici
+erişimi teknik olarak gerçek, ama her kullanıcı bunu sohbet ekranında açıkça görüyor. Aşağıdaki
+hiçbir parça bu bildirim UI'ını atlamıyor/gizlemiyor — bilinçli olarak bu görevin tek pazarlığa
+kapalı kısmıydı.
+
+**1) Yönetici hesabı — canlı Firebase projesinde gerçekten oluşturuldu.** `scripts/createAdminAccount.js`
+(`scripts/generateLoginToken.js` ile aynı Firebase Admin SDK / `serviceAccountKey.json` deseni)
+`admin`/`kaanadmin123` (kullanıcı adı/şifre proje sahibinin kendi seçimi, yer tutucu değil) için
+`admin@gizlichat.local` sentetik e-postasıyla (`usernameToEmail()` ile birebir aynı kural) bir
+Firebase Auth kullanıcısı oluşturdu ve `users/{uid}` dokümanına `username`/`usernameLower`/`createdAt`
+yanında yeni bir `role: 'admin'` alanı yazdı. Betik tekrar çalıştırılırsa hesabı bulup `role` alanını
+idempotent şekilde günceller, çökmez. Gerçek çalıştırmadan dönen uid — **`8PCGPrrJpfP2Scmw731gzsEol9H2`**
+— `src/config/adminConfig.ts`, `web-client/src/config/adminConfig.ts` ve `pc-client/index.html`'deki
+inline `ADMIN_UID` sabitlerinin **üçünde de birebir aynı**.
+
+**2) Üçüncü şifreleme kopyası — önceki E2E tasarımına (bkz. altındaki madde) dokunmadan eklendi.**
+`e2eService.ts`'e (üç client'ta da) generic `encryptToPublicKey(myUid, targetUid, plaintext)`
+eklendi — `getPeerPublicKey`'in zaten uid'e göre genel olan cache/fetch mekanizmasını olduğu gibi
+kullanıyor, admin için ayrı bir lookup icat edilmedi. `chatService.ts`'teki (üç client) her
+`text`/`replyTo.text`/image-audio `mediaUrl` alanı artık normal self+peer çiftine ek olarak
+`encTextAdmin`/`encNonceAdmin` (ve mediaUrl için `encMediaUrlAdmin`/`encMediaUrlNonceAdmin`) adında
+üçüncü bir kopya taşıyor — ADMIN_UID'nin public key'ine kutulanmış. **Admin bir odanın iki
+tarafından biriyse üçüncü kopya atlanıyor** (self/peer zaten yeterli, gereksiz olurdu); admin'in
+public key'i henüz yayınlanmamışsa (olmaması gereken ama savunmacı bir durum) sadece admin kopyası
+atlanıyor, gönderim asla başarısız olmuyor — eski legacy-plaintext fallback yolu da bozulmadı.
+`ensureKeyPair` zaten uid'e özel bir dallanma içermiyordu (kontrol edildi, değiştirilmedi) — admin
+hesabı diğer her hesap gibi ilk girişte kendi anahtar çiftini üretip yayınlıyor.
+`firestore.rules`'daki mesaj `edit` kuralının izin verilen alan listesine `encTextAdmin`/`encNonceAdmin`
+eklendi (yoksa bir düzenleme, üçüncü kopya alanı yüzünden reddedilirdi).
+
+**3) Firestore kuralları — sadece okuma.** `firestore.rules`'a `isAdmin()` helper'ı eklendi
+(ADMIN_UID ile hardcoded karşılaştırma, client sabitleriyle aynı uid). `rooms/{roomId}` ve
+`rooms/{roomId}/messages/{messageId}` üzerindeki `read` kuralı `isRoomMember(roomId) || isAdmin()`
+oldu — `write`/`create`/`update`/`delete` **hiçbir yerde** `isAdmin()`'i içermiyor, yani admin
+başkasının odasına asla yazamıyor. **Not: bu kural değişikliği bu oturumda canlıya deploy
+edilemedi** (`firebase deploy --only firestore:rules` otomasyon izin sınıflandırıcısı tarafından
+engellendi) — dosya repoda güncel ama proje sahibinin `firebase deploy --only firestore:rules`
+komutunu kendisi çalıştırması (ya da izin vermesi) gerekiyor, yoksa admin paneli canlıda "okuma
+izni yok" hatası verir.
+
+**4) Bildirim UI'ı — her üç client'ta, her sohbet açılışında.** Mobilde `ChatRoomScreen.tsx`'te
+`StorageQuotaBanner`'ın hemen üstünde; web-client'ta aynı ekranda arama çubuğunun üstünde; pc-client'ta
+`#chatHeader` ile `#pinnedBanner` arasında — `"🔒 Bu sohbet yönetici hesabı tarafından da
+görüntülenebilir"` metniyle küçük, kalıcı (tek seferlik toast değil) bir şerit. Admin'in kendisi
+odanın iki tarafından biriyse (kendine bildirim gerekmiyor) gösterilmiyor, aksi halde oda her
+açıldığında görünüyor.
+
+**5) Minimal admin paneli — sadece web-client'ta.** Yeni `web-client/src/screens/AdminScreen.tsx`:
+`users` koleksiyonundan (zaten `allow read: if isSignedIn()`) tüm kullanıcıları listeliyor, admin
+herhangi iki kullanıcıyı seçip aralarındaki `getRoomId(uidA, uidB)` odasını **salt okunur** görebiliyor
+— `subscribeToMessages` + `chatService.ts`'in `docToMessage`/`buildDecryptContext`'ine eklenen admin
+dalı sayesinde (myUid === ADMIN_UID ve odanın üyesi değilse, her mesajın gerçek göndericisinin public
+key'iyle `encTextAdmin`/`encNonceAdmin` alanlarını `decryptBlob` ile açıyor — decryptBlob'un kendisi
+hiç değişmedi, sadece hangi alan/hangi public key'in geçildiği admin moduna göre dallanıyor). Gönderme/
+yanıtlama/medya-yükleme/tepki/düzenleme/silme yok — bilinçli olarak minimal bir görüntüleme aracı.
+`users/{uid}.role === 'admin'` olduğunda `App.tsx` normal contacts/games-hub akışının önüne geçip
+doğrudan `AdminScreen`'e yönlendiriyor (disguised hub override'dan bile önce).
+
+**Doğrulama:** mobil `npx tsc --noEmit` temiz, web-client `npx tsc -b --noEmit` temiz, pc-client'ın
+module script'i `node --check` ile sözdizimi kontrolünden geçti (geçici `.mjs` çıkarılıp silindi,
+önceki commit'lerdeki gibi). **Manuel/canlı test edilemeyen kısımlar:** admin hesabıyla gerçek giriş
+yapıp paneli uçtan uca açmak (rules deploy edilmeden çalışmaz — bkz. madde 3), ve bildirim şeridinin
+üç client'ta da görsel olarak beklenen yerde oturduğunu gözle doğrulamak.
+
 ## 2026-08-28 — Gerçek uçtan uca şifreleme (E2E): mesaj içeriği artık sunucuda okunamıyor
 
 Bu ana kadar mesajlar Firestore'da düz metin olarak duruyordu — "gizli chat" adı sadece

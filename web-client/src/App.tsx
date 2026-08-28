@@ -5,7 +5,8 @@ import AuthScreen from './screens/AuthScreen';
 import ContactsScreen from './screens/ContactsScreen';
 import ChatRoomScreen from './screens/ChatRoomScreen';
 import GameHubScreen from './screens/GameHubScreen';
-import { fetchAccountUsername, logoutAccount, updatePresenceHeartbeat, watchAuthState, type Account } from './services/userService';
+import AdminScreen from './screens/AdminScreen';
+import { fetchAccountRole, fetchAccountUsername, logoutAccount, updatePresenceHeartbeat, watchAuthState, type Account } from './services/userService';
 import type { Contact } from './services/contactService';
 import { initFcm } from './services/fcmService';
 import { setActiveChatUid } from './services/notificationService';
@@ -98,8 +99,11 @@ function AppShell(): React.JSX.Element {
         setAccount(null);
         return;
       }
-      const username = (await fetchAccountUsername(user.uid)) ?? user.email?.split('@')[0] ?? 'Kullanıcı';
-      setAccount({ uid: user.uid, username });
+      const [username, role] = await Promise.all([
+        fetchAccountUsername(user.uid).then(u => u ?? user.email?.split('@')[0] ?? 'Kullanıcı'),
+        fetchAccountRole(user.uid),
+      ]);
+      setAccount({ uid: user.uid, username, role });
     });
   }, []);
 
@@ -157,16 +161,24 @@ function AppShell(): React.JSX.Element {
     return <AuthScreen onAuthenticated={handleAuthenticated} />;
   }
 
+  const handleLogout = () => {
+    logoutAccount().catch(() => undefined);
+    navigate({ activeContact: null, revealed: false, hubOverride: false });
+  };
+
+  // Openly disclosed (NOT secret) admin account — takes priority over the
+  // normal games-hub/contacts/chat flow entirely, including the disguised
+  // hub override below. See ObsidianVault/Changelog.md, AdminScreen.tsx,
+  // and every chat room's admin-disclosure banner.
+  if (account.role === 'admin') {
+    return <AdminScreen account={account} onLogout={handleLogout} />;
+  }
+
   // Logged in, but manually navigated back to the hub — already authenticated,
   // so the secret gesture skips the login form and returns straight to chat.
   if (hubOverride) {
     return <GameHubScreen onSecretTriggerReached={() => setHubOverride(false)} />;
   }
-
-  const handleLogout = () => {
-    logoutAccount().catch(() => undefined);
-    navigate({ activeContact: null, revealed: false, hubOverride: false });
-  };
 
   const handleGoHome = () => {
     navigate({ activeContact: null, hubOverride: true });

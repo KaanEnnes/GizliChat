@@ -15,6 +15,20 @@ service cloud.firestore {
         (request.auth.uid == parts[0] || request.auth.uid == parts[1]);
     }
 
+    // Openly disclosed (NOT secret) admin-access account — see
+    // ObsidianVault/Changelog.md and every chat room's persistent "this
+    // chat can also be viewed by the admin account" banner
+    // (ChatRoomScreen.tsx). Same uid as ADMIN_UID in
+    // src/config/adminConfig.ts / web-client/src/config/adminConfig.ts /
+    // pc-client/index.html — hardcoded here for the same reason those are:
+    // a single, unchanging admin account with no server-side allowlist doc
+    // to keep in sync. Read-only: this function is never used in a write
+    // rule below, so the admin account cannot create/update/delete anyone
+    // else's rooms or messages.
+    function isAdmin() {
+      return isSignedIn() && request.auth.uid == '8PCGPrrJpfP2Scmw731gzsEol9H2';
+    }
+
     match /users/{userId} {
       // Contact-adding looks users up by username
       // (findUserByUsername in src/services/userService.ts), which needs
@@ -35,12 +49,15 @@ service cloud.firestore {
     match /rooms/{roomId} {
       // Room-level document only holds the pinned-message pointer (see
       // pinMessage/unpinMessage in chatService.ts) — same relaxed,
-      // client-trusted model as the game subcollections below.
-      allow read, write: if isRoomMember(roomId);
+      // client-trusted model as the game subcollections below. Admin gets
+      // read access too (see isAdmin() above) so the admin panel can show
+      // the pinned-message pointer of any room — write stays member-only.
+      allow read: if isRoomMember(roomId) || isAdmin();
+      allow write: if isRoomMember(roomId);
     }
 
     match /rooms/{roomId}/messages/{messageId} {
-      allow read: if isRoomMember(roomId);
+      allow read: if isRoomMember(roomId) || isAdmin();
       allow create: if isRoomMember(roomId) &&
         request.resource.data.senderId == request.auth.uid;
       // Messages are otherwise append-only (no editing text/media/sender after
@@ -71,7 +88,7 @@ service cloud.firestore {
         (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['deliveredAt', 'readAt']) &&
           resource.data.senderId != request.auth.uid) ||
         (request.resource.data.diff(resource.data).affectedKeys()
-            .hasOnly(['text', 'editedAt', 'encrypted', 'encText', 'encNonce', 'encTextSelf', 'encNonceSelf']) &&
+            .hasOnly(['text', 'editedAt', 'encrypted', 'encText', 'encNonce', 'encTextSelf', 'encNonceSelf', 'encTextAdmin', 'encNonceAdmin']) &&
           resource.data.senderId == request.auth.uid &&
           resource.data.type == 'text' &&
           !(request.auth.uid in resource.data.get('deletedFor', []))) ||

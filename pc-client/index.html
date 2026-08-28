@@ -398,6 +398,16 @@
     background: var(--danger);
     border: 1px solid var(--surface);
   }
+  /* Disclosed (not secret) admin-access notice — persistent, shown every
+     time a chat room is opened (skipped only when admin itself is one of
+     the two participants). See ObsidianVault/Changelog.md. */
+  #adminDisclosureBanner {
+    padding: 6px 18px;
+    font-size: 11px;
+    font-weight: 600;
+    background: var(--warning-soft);
+    color: var(--warning);
+  }
   #pinnedBanner {
     display: flex;
     align-items: center;
@@ -541,6 +551,7 @@
           <span id="chatHeaderName"></span>
           <button id="gameBtn" class="iconBtn" title="Oyun oyna">🎮</button>
         </div>
+        <div id="adminDisclosureBanner" class="hidden">🔒 Bu sohbet yönetici hesabı tarafından da görüntülenebilir</div>
         <div id="pinnedBanner" class="hidden">
           <span>📌</span>
           <span class="txt" id="pinnedBannerText"></span>
@@ -652,6 +663,16 @@ const app = initializeApp(FIREBASE_CONFIG);
 const auth = getAuth(app);
 const db = getFirestore(app);
 const storage = getStorage(app);
+
+// Uid of the app's single, openly disclosed admin account (username
+// "admin", created via scripts/createAdminAccount.js). NOT a secret
+// backdoor — every chat room's header shows a persistent banner disclosing
+// that the admin account can also read that conversation (see the
+// #chatHeader / admin disclosure banner below). Must match the identical
+// constant in src/config/adminConfig.ts and web-client/src/config/adminConfig.ts —
+// all three encrypt a third message copy to this same account's E2E public
+// key (see encryptToPublicKey / buildAdminFieldGroup below).
+const ADMIN_UID = '8PCGPrrJpfP2Scmw731gzsEol9H2';
 
 // Auth's default persistence tries to open an IndexedDB connection, which is
 // flaky enough on a file:// origin in Chrome to throw "Database is
@@ -783,6 +804,25 @@ async function encryptForRoom(roomId, myUid, plaintext) {
 }
 
 /**
+ * Encrypts `plaintext` from `myUid` to a single arbitrary `targetUid`'s
+ * published public key (one ciphertext/nonce pair, no "self" copy). Used
+ * for the disclosed admin-access third copy — deliberately generic (any
+ * uid, not just the room peer) so it reuses the same peer-public-key cache
+ * as encryptForRoom instead of a parallel lookup. Returns null if either
+ * key is unavailable, same fallback contract as encryptForRoom. Identical
+ * logic to e2eService.ts's encryptToPublicKey (mobile/web-client).
+ */
+async function encryptToPublicKey(myUid, targetUid, plaintext) {
+  const myKeyPair = myE2eKeyPair && myE2eKeyPair.uid === myUid ? myE2eKeyPair : await ensureE2eKeyPair(myUid);
+  const targetPublicKey = await getPeerPublicKey(targetUid);
+  if (!targetPublicKey) return null;
+  const messageBytes = decodeUTF8(plaintext);
+  const nonce = nacl.randomBytes(nacl.box.nonceLength);
+  const ciphertext = nacl.box(messageBytes, nonce, targetPublicKey, myKeyPair.secretKey);
+  return { ciphertext: encodeBase64(ciphertext), nonce: encodeBase64(nonce) };
+}
+
+/**
  * Decrypts one ciphertext/nonce pair. `ref` is `{ciphertext, nonce,
  * ciphertextSelf, nonceSelf}` (already extracted from whichever `enc*`
  * fields apply — see decryptMessageData below). Returns null (never
@@ -862,7 +902,25 @@ async function decryptMessageData(roomId, myUid, data) {
 async function buildEncryptedFieldGroup(roomId, senderId, plaintext) {
   const blob = await encryptForRoom(roomId, senderId, plaintext);
   if (!blob) return { text: plaintext };
-  return { text: '', encrypted: true, encText: blob.ciphertext, encNonce: blob.nonce, encTextSelf: blob.ciphertextSelf, encNonceSelf: blob.nonceSelf };
+  const fields = { text: '', encrypted: true, encText: blob.ciphertext, encNonce: blob.nonce, encTextSelf: blob.ciphertextSelf, encNonceSelf: blob.nonceSelf };
+  const adminFields = await buildAdminFieldGroup(roomId, senderId, plaintext);
+  return { ...fields, ...adminFields };
+}
+
+/** Third encrypted copy, boxed to ADMIN_UID's own public key — the openly disclosed admin-access model (see the admin disclosure banner in the chat header). Skipped when ADMIN_UID is already a room member, or when the admin's public key isn't published yet (defensive — never blocks the rest of the send). Identical logic to chatService.ts's buildAdminFieldGroup (mobile/web-client). */
+async function buildAdminFieldGroup(roomId, senderId, plaintext) {
+  if (!ADMIN_UID || roomId.split('__').includes(ADMIN_UID)) return {};
+  const adminBlob = await encryptToPublicKey(senderId, ADMIN_UID, plaintext);
+  if (!adminBlob) return {};
+  return { encTextAdmin: adminBlob.ciphertext, encNonceAdmin: adminBlob.nonce };
+}
+
+/** Same admin-copy logic as buildAdminFieldGroup, for the mediaUrl field's own naming (`encMediaUrlAdmin`/`encMediaUrlNonceAdmin`). */
+async function buildAdminMediaFieldGroup(roomId, senderId, mediaUrl) {
+  if (!ADMIN_UID || roomId.split('__').includes(ADMIN_UID)) return {};
+  const adminBlob = await encryptToPublicKey(senderId, ADMIN_UID, mediaUrl);
+  if (!adminBlob) return {};
+  return { encMediaUrlAdmin: adminBlob.ciphertext, encMediaUrlNonceAdmin: adminBlob.nonce };
 }
 
 // ---- DOM refs ----
@@ -884,6 +942,7 @@ const xoxModal = $('xoxModal'), xoxContactName = $('xoxContactName'), xoxStatus 
 const xoxBoardEl = $('xoxBoard'), xoxStartBtn = $('xoxStartBtn'), xoxClose = $('xoxClose');
 const chessModal = $('chessModal'), chessContactName = $('chessContactName'), chessStatus = $('chessStatus');
 const chessBoardEl = $('chessBoard'), chessStartBtn = $('chessStartBtn'), chessClose = $('chessClose'), chessResetBtn = $('chessResetBtn');
+const adminDisclosureBanner = $('adminDisclosureBanner');
 const pinnedBanner = $('pinnedBanner'), pinnedBannerText = $('pinnedBannerText'), pinnedBannerClose = $('pinnedBannerClose');
 const replyBanner = $('replyBanner'), replyBannerText = $('replyBannerText'), replyBannerClose = $('replyBannerClose');
 const lightbox = $('lightbox'), lightboxImg = $('lightboxImg');
@@ -1152,6 +1211,11 @@ function openRoom(contact) {
   renderContactList();
   cancelReply();
 
+  // Disclosed (not secret) admin access — shown every time a room is
+  // opened, skipped only when admin itself is one of the two participants.
+  const showAdminDisclosure = !!ADMIN_UID && myUid !== ADMIN_UID && contact.uid !== ADMIN_UID;
+  adminDisclosureBanner.classList.toggle('hidden', !showAdminDisclosure);
+
   if (roomUnsub) roomUnsub();
   const roomId = roomIdFor(myUid, contact.uid);
   const messagesQ = query(collection(db, 'rooms', roomId, 'messages'), orderBy('createdAt', 'desc'), limit(50));
@@ -1400,8 +1464,9 @@ fileInput.addEventListener('change', async () => {
       // Image mediaUrl (inline base64 data URI) is encrypted the same way
       // as text — see buildEncryptedFieldGroup / decryptMessageData above.
       const blob = await encryptForRoom(roomId, myUid, dataUri);
+      const adminMediaFields = blob ? await buildAdminMediaFieldGroup(roomId, myUid, dataUri) : {};
       const mediaFields = blob
-        ? { encrypted: true, encMediaUrl: blob.ciphertext, encMediaUrlNonce: blob.nonce, encMediaUrlSelf: blob.ciphertextSelf, encMediaUrlNonceSelf: blob.nonceSelf }
+        ? { encrypted: true, encMediaUrl: blob.ciphertext, encMediaUrlNonce: blob.nonce, encMediaUrlSelf: blob.ciphertextSelf, encMediaUrlNonceSelf: blob.nonceSelf, ...adminMediaFields }
         : { mediaUrl: dataUri };
       await addDoc(collection(db, 'rooms', roomId, 'messages'), {
         type: 'image', text: '', senderId: myUid, createdAt: serverTimestamp(), ...mediaFields,

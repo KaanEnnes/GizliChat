@@ -26,6 +26,7 @@ import GifPickerModal from '../components/GifPickerModal';
 import RecordingWaveform from '../components/RecordingWaveform';
 import Avatar from '../components/Avatar';
 import StorageQuotaBanner from '../components/StorageQuotaBanner';
+import { ADMIN_UID } from '../config/adminConfig';
 import OnlineTicTacToeModal from '../components/OnlineTicTacToeModal';
 import ChessContactModal from '../components/ChessContactModal';
 import { BackChevronIcon, GameControllerIcon, ImageIcon, PhoneCallIcon, VideoCallIcon } from '../components/CallIcons';
@@ -827,6 +828,12 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack, initialJumpMessage
   }, []);
 
   const canSend = draft.trim().length > 0;
+  // Disclosed (not secret) admin access — see e2eService.ts's third
+  // encryption copy and ObsidianVault/Changelog.md. Skipped only when admin
+  // is literally one of the two people in this room (talking to yourself
+  // needs no disclosure); shown every time the room is otherwise opened,
+  // not a one-time dismissible toast.
+  const showAdminDisclosure = !!ADMIN_UID && myUid !== ADMIN_UID && contact.uid !== ADMIN_UID;
 
   return (
     <KeyboardAvoidingView
@@ -946,6 +953,14 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack, initialJumpMessage
           <Pressable onPress={handleCloseSearch} hitSlop={8} style={styles.searchNavButton} accessibilityRole="button" accessibilityLabel="Aramayı kapat">
             <Text style={[styles.searchNavIcon, { color: theme.text }]}>✕</Text>
           </Pressable>
+        </View>
+      )}
+
+      {showAdminDisclosure && (
+        <View style={[styles.adminDisclosureBanner, { backgroundColor: theme.warningSoft }]}>
+          <Text style={[styles.adminDisclosureText, { color: theme.warning }]} numberOfLines={1}>
+            🔒 Bu sohbet yönetici hesabı tarafından da görüntülenebilir
+          </Text>
         </View>
       )}
 
@@ -1272,6 +1287,14 @@ const styles = StyleSheet.create({
   },
   offlineBannerText: {
     fontSize: 12.5,
+    fontWeight: '600',
+  },
+  adminDisclosureBanner: {
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+  },
+  adminDisclosureText: {
+    fontSize: 11.5,
     fontWeight: '600',
   },
   pinnedBanner: {

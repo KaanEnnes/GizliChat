@@ -17,9 +17,11 @@ import {
   updateDoc,
 } from 'firebase/firestore';
 import { db } from './firebase';
+import { ADMIN_UID } from '../config/adminConfig';
 import {
   decryptBlob,
   encryptForRoom,
+  encryptToPublicKey,
   ensureKeyPair,
   getLoadedKeyPair,
   getPeerPublicKey,
@@ -63,10 +65,29 @@ interface DecryptContext {
   myUid: string;
   myKeyPair: KeyPair;
   peerPublicKey: Uint8Array | null;
+  /**
+   * Only set when `myUid` is ADMIN_UID viewing a room it is NOT a member of
+   * (the disclosed admin-panel read path, see AdminScreen.tsx) — maps each
+   * of the room's two real member uids to their published public key. The
+   * admin decrypts the third `enc*Admin` copy of each field using the
+   * message's actual sender's key, not a single fixed "peer" like the
+   * normal self/peer path below (there is no single peer from the admin's
+   * point of view — either room member can be the sender).
+   */
+  adminSenderPublicKeys?: Record<string, Uint8Array | null>;
 }
 
 async function buildDecryptContext(roomId: string, myUid: string): Promise<DecryptContext> {
   const myKeyPair = getLoadedKeyPair(myUid) ?? (await ensureKeyPair(myUid));
+  const participants = roomId.split('__');
+  if (myUid === ADMIN_UID && !participants.includes(myUid)) {
+    const keys = await Promise.all(participants.map(uid => getPeerPublicKey(uid)));
+    const adminSenderPublicKeys: Record<string, Uint8Array | null> = {};
+    participants.forEach((uid, i) => {
+      adminSenderPublicKeys[uid] = keys[i];
+    });
+    return { myUid, myKeyPair, peerPublicKey: null, adminSenderPublicKeys };
+  }
   const peerUid = otherUidInRoom(roomId, myUid);
   const peerPublicKey = await getPeerPublicKey(peerUid);
   return { myUid, myKeyPair, peerPublicKey };
@@ -77,6 +98,15 @@ function resolveEncryptedString(encrypted: boolean, plain: string, ref: StoredEn
     return plain;
   }
   return decryptBlob(ref, senderId, ctx.myUid, ctx.myKeyPair, ctx.peerPublicKey) ?? UNDECRYPTABLE_PLACEHOLDER;
+}
+
+/** Admin-panel counterpart of resolveEncryptedString — decrypts the `enc*Admin` copy of a field using the actual sender's public key (see DecryptContext.adminSenderPublicKeys). Returns undefined (not a placeholder) when there's simply no admin copy on this doc, so callers can fall back to the plain field, matching a legacy/plaintext message. */
+function resolveAdminEncryptedString(ciphertextB64: unknown, nonceB64: unknown, senderId: string, ctx: DecryptContext): string | undefined {
+  if (!ctx.adminSenderPublicKeys || typeof ciphertextB64 !== 'string' || typeof nonceB64 !== 'string' || !ciphertextB64 || !nonceB64) {
+    return undefined;
+  }
+  const senderPublicKey = ctx.adminSenderPublicKeys[senderId] ?? null;
+  return decryptBlob({ ciphertext: ciphertextB64, nonce: nonceB64 }, senderId, ctx.myUid, ctx.myKeyPair, senderPublicKey) ?? UNDECRYPTABLE_PLACEHOLDER;
 }
 
 const ROOMS_COLLECTION = 'rooms';
@@ -105,26 +135,32 @@ function docToMessage(
   const senderId = typeof data.senderId === 'string' ? data.senderId : '';
   const encrypted = data.encrypted === true;
 
-  const text = resolveEncryptedString(
-    encrypted,
-    typeof data.text === 'string' ? data.text : '',
-    { ciphertext: data.encText as string, nonce: data.encNonce as string, ciphertextSelf: data.encTextSelf as string, nonceSelf: data.encNonceSelf as string },
-    senderId,
-    ctx,
-  );
+  const text = ctx.adminSenderPublicKeys
+    ? resolveAdminEncryptedString(data.encTextAdmin, data.encNonceAdmin, senderId, ctx) ?? (typeof data.text === 'string' ? data.text : '')
+    : resolveEncryptedString(
+        encrypted,
+        typeof data.text === 'string' ? data.text : '',
+        { ciphertext: data.encText as string, nonce: data.encNonce as string, ciphertextSelf: data.encTextSelf as string, nonceSelf: data.encNonceSelf as string },
+        senderId,
+        ctx,
+      );
 
   // mediaUrl encryption only applies to image/audio (inline base64 data
   // URIs) — video stays a plain Storage URL, out of scope for this pass.
   let mediaUrl = typeof data.mediaUrl === 'string' ? data.mediaUrl : undefined;
-  if (encrypted && (type === 'image' || type === 'audio') && (data.encMediaUrl || data.encMediaUrlSelf)) {
-    const decryptedMedia = decryptBlob(
-      { ciphertext: data.encMediaUrl as string, nonce: data.encMediaUrlNonce as string, ciphertextSelf: data.encMediaUrlSelf as string, nonceSelf: data.encMediaUrlNonceSelf as string },
-      senderId,
-      ctx.myUid,
-      ctx.myKeyPair,
-      ctx.peerPublicKey,
-    );
-    mediaUrl = decryptedMedia ?? undefined;
+  if (encrypted && (type === 'image' || type === 'audio')) {
+    if (ctx.adminSenderPublicKeys) {
+      mediaUrl = resolveAdminEncryptedString(data.encMediaUrlAdmin, data.encMediaUrlNonceAdmin, senderId, ctx) ?? mediaUrl;
+    } else if (data.encMediaUrl || data.encMediaUrlSelf) {
+      const decryptedMedia = decryptBlob(
+        { ciphertext: data.encMediaUrl as string, nonce: data.encMediaUrlNonce as string, ciphertextSelf: data.encMediaUrlSelf as string, nonceSelf: data.encMediaUrlNonceSelf as string },
+        senderId,
+        ctx.myUid,
+        ctx.myKeyPair,
+        ctx.peerPublicKey,
+      );
+      mediaUrl = decryptedMedia ?? undefined;
+    }
   }
 
   const rawReplyTo = typeof data.replyTo === 'object' && data.replyTo !== null ? (data.replyTo as Record<string, unknown>) : undefined;
@@ -137,18 +173,21 @@ function docToMessage(
         // this outer message's sender (`senderId`), so decryption must use
         // `senderId`, not `rawReplyTo.senderId`.
         senderId: typeof rawReplyTo.senderId === 'string' ? rawReplyTo.senderId : '',
-        text: resolveEncryptedString(
-          rawReplyTo.encrypted === true,
-          typeof rawReplyTo.text === 'string' ? rawReplyTo.text : '',
-          {
-            ciphertext: rawReplyTo.encText as string,
-            nonce: rawReplyTo.encNonce as string,
-            ciphertextSelf: rawReplyTo.encTextSelf as string,
-            nonceSelf: rawReplyTo.encNonceSelf as string,
-          },
-          senderId,
-          ctx,
-        ),
+        text: ctx.adminSenderPublicKeys
+          ? resolveAdminEncryptedString(rawReplyTo.encTextAdmin, rawReplyTo.encNonceAdmin, senderId, ctx) ??
+            (typeof rawReplyTo.text === 'string' ? rawReplyTo.text : '')
+          : resolveEncryptedString(
+              rawReplyTo.encrypted === true,
+              typeof rawReplyTo.text === 'string' ? rawReplyTo.text : '',
+              {
+                ciphertext: rawReplyTo.encText as string,
+                nonce: rawReplyTo.encNonce as string,
+                ciphertextSelf: rawReplyTo.encTextSelf as string,
+                nonceSelf: rawReplyTo.encNonceSelf as string,
+              },
+              senderId,
+              ctx,
+            ),
       }
     : undefined;
 
@@ -240,7 +279,7 @@ async function buildEncryptedFieldGroup(roomId: string, senderId: string, plaint
   if (!blob) {
     return { text: plaintext };
   }
-  return {
+  const fields: Record<string, unknown> = {
     text: '',
     encrypted: true,
     encText: blob.ciphertext,
@@ -248,6 +287,32 @@ async function buildEncryptedFieldGroup(roomId: string, senderId: string, plaint
     encTextSelf: blob.ciphertextSelf,
     encNonceSelf: blob.nonceSelf,
   };
+  const adminFields = await buildAdminFieldGroup(roomId, senderId, plaintext);
+  return { ...fields, ...adminFields };
+}
+
+/** See the mobile chatService.ts's identical helper — third encrypted copy boxed to ADMIN_UID's own public key (the openly disclosed admin-access model, see ChatRoomScreen.tsx's banner). Skipped when ADMIN_UID is already a room member, or when the admin's public key isn't published yet. */
+async function buildAdminFieldGroup(roomId: string, senderId: string, plaintext: string): Promise<Record<string, unknown>> {
+  if (!ADMIN_UID || roomId.split('__').includes(ADMIN_UID)) {
+    return {};
+  }
+  const adminBlob = await encryptToPublicKey(senderId, ADMIN_UID, plaintext);
+  if (!adminBlob) {
+    return {};
+  }
+  return { encTextAdmin: adminBlob.ciphertext, encNonceAdmin: adminBlob.nonce };
+}
+
+/** Same admin-copy logic as buildAdminFieldGroup, for the mediaUrl field's own naming (`encMediaUrlAdmin`/`encMediaUrlNonceAdmin`) — see sendMediaMessage. */
+async function buildAdminMediaFieldGroup(roomId: string, senderId: string, mediaUrl: string): Promise<Record<string, unknown>> {
+  if (!ADMIN_UID || roomId.split('__').includes(ADMIN_UID)) {
+    return {};
+  }
+  const adminBlob = await encryptToPublicKey(senderId, ADMIN_UID, mediaUrl);
+  if (!adminBlob) {
+    return {};
+  }
+  return { encMediaUrlAdmin: adminBlob.ciphertext, encMediaUrlNonceAdmin: adminBlob.nonce };
 }
 
 // `replyTo.senderId` is a display label (whose message is being quoted),
@@ -291,6 +356,7 @@ export async function sendMediaMessage(
 ): Promise<void> {
   const shouldEncryptMedia = type === 'image' || type === 'audio';
   const blob = shouldEncryptMedia ? await encryptForRoom(roomId, senderId, mediaUrl) : null;
+  const adminMediaFields = shouldEncryptMedia && blob ? await buildAdminMediaFieldGroup(roomId, senderId, mediaUrl) : {};
   const mediaFields = blob
     ? {
         encrypted: true,
@@ -298,6 +364,7 @@ export async function sendMediaMessage(
         encMediaUrlNonce: blob.nonce,
         encMediaUrlSelf: blob.ciphertextSelf,
         encMediaUrlNonceSelf: blob.nonceSelf,
+        ...adminMediaFields,
       }
     : { mediaUrl };
   await addDoc(collection(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION), {

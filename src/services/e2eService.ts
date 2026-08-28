@@ -194,6 +194,27 @@ export async function encryptForRoom(roomId: string, myUid: string, plaintext: s
   };
 }
 
+/**
+ * Encrypts `plaintext` from `myUid` to a single arbitrary `targetUid`'s
+ * published public key (one ciphertext/nonce pair, no "self" copy). Used for
+ * the disclosed admin-access third copy (see chatService.ts's
+ * buildEncryptedFieldGroup / ADMIN_UID) — deliberately generic (any uid, not
+ * just the room peer) so it reuses the same peer-public-key cache as
+ * encryptForRoom instead of a parallel lookup. Returns null if either key is
+ * unavailable, same fallback contract as encryptForRoom.
+ */
+export async function encryptToPublicKey(myUid: string, targetUid: string, plaintext: string): Promise<{ ciphertext: string; nonce: string } | null> {
+  const myKeyPair = getLoadedKeyPair(myUid) ?? (await ensureKeyPair(myUid));
+  const targetPublicKey = await getPeerPublicKey(targetUid);
+  if (!targetPublicKey) {
+    return null;
+  }
+  const messageBytes = decodeUTF8(plaintext);
+  const nonce = nacl.randomBytes(nacl.box.nonceLength);
+  const ciphertext = nacl.box(messageBytes, nonce, targetPublicKey, myKeyPair.secretKey);
+  return { ciphertext: toB64(ciphertext), nonce: toB64(nonce) };
+}
+
 /** The two ciphertext/nonce pairs for one encrypted field on a stored doc — see EncryptedBlob. `undefined` fields mean "not encrypted" (legacy plaintext) or "missing" (decrypt will fail gracefully). */
 export interface StoredEncryptedRef {
   ciphertext?: string;

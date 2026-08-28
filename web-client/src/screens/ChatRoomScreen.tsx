@@ -30,6 +30,7 @@ import ImageGalleryModal from '../components/ImageGalleryModal';
 import GamesModal from '../components/GamesModal';
 import GifPickerModal from '../components/GifPickerModal';
 import type { GifResult } from '../services/gifService';
+import { ADMIN_UID } from '../config/adminConfig';
 
 // Firestore'un tek doküman limiti 1 MiB. E2E şifreleme (nacl.box) inline
 // base64 data URI'yi bir kez daha şifreleyip base64'e çeviriyor (~%33 ek
@@ -49,6 +50,11 @@ interface Props {
 function ChatRoomScreen({ account, contact, onBack, initialJumpMessageId }: Props): React.JSX.Element {
   const { theme } = useTheme();
   const roomId = getRoomId(account.uid, contact.uid);
+  // Disclosed (not secret) admin access — see e2eService.ts's third
+  // encryption copy and ObsidianVault/Changelog.md. Skipped only when admin
+  // is literally one of the two people in this room; shown every time the
+  // room is opened, not a one-time dismissible toast.
+  const showAdminDisclosure = !!ADMIN_UID && account.uid !== ADMIN_UID && contact.uid !== ADMIN_UID;
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [messageLimit, setMessageLimit] = useState(initialJumpMessageId ? MAX_MESSAGE_LIMIT : INITIAL_MESSAGE_LIMIT);
   const [pinnedMessageId, setPinnedMessageId] = useState<string | null>(null);
@@ -377,6 +383,12 @@ function ChatRoomScreen({ account, contact, onBack, initialJumpMessageId }: Prop
           🎮
         </button>
       </div>
+
+      {showAdminDisclosure && (
+        <div className="admin-disclosure-banner" style={{ background: theme.warningSoft, color: theme.warning }}>
+          🔒 Bu sohbet yönetici hesabı tarafından da görüntülenebilir
+        </div>
+      )}
 
       {searchOpen && (
         <div className="contacts-search-bar" style={{ background: theme.surface, borderColor: theme.border }}>
