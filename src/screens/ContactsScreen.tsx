@@ -72,6 +72,8 @@ function formatPreview(message: ChatMessage | null | undefined, myUid: string): 
       }
       return `${prefix}📞 ${kind}`;
     }
+    case 'chess':
+      return `${prefix}♟️ Satranç daveti`;
     default:
       return `${prefix}${message.text}`;
   }

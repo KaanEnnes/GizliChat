@@ -238,6 +238,202 @@
     justify-content: center;
   }
   #themeToggle:hover { opacity: 0.85; }
+
+  /* ---- Header actions / pinned banner ---- */
+  #chatHeader { justify-content: space-between; }
+  #chatHeaderActions { display: flex; gap: 8px; }
+  #chatHeaderActions button {
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text);
+    border-radius: 8px;
+    padding: 6px 10px;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  #chatHeaderActions button.hasBadge { position: relative; }
+  #chatHeaderActions button.hasBadge::after {
+    content: '';
+    position: absolute;
+    top: 3px; right: 3px;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--danger);
+    border: 1px solid var(--surface);
+  }
+  #pinnedBanner {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 18px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg);
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--text-muted);
+    cursor: pointer;
+  }
+  #pinnedBanner .txt { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #pinnedBanner .close { color: var(--text-faint); font-weight: 700; cursor: pointer; }
+
+  /* ---- Message bubble extras: reply quote, hover actions, hidden pill ---- */
+  .bubble { position: relative; }
+  .msgRow { position: relative; }
+  .msgActions {
+    position: absolute;
+    top: -14px;
+    display: none;
+    gap: 4px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 2px 4px;
+  }
+  .msgRow.mine .msgActions { right: 4px; }
+  .msgRow:not(.mine) .msgActions { left: 4px; }
+  .msgRow:hover .msgActions { display: flex; }
+  .msgActions button {
+    border: none;
+    background: none;
+    cursor: pointer;
+    font-size: 12.5px;
+    padding: 2px 4px;
+    color: var(--text-muted);
+  }
+  .replyQuote {
+    border-left: 3px solid var(--identity);
+    background: rgba(0,0,0,0.06);
+    border-radius: 6px;
+    padding: 5px 8px;
+    margin-bottom: 6px;
+    font-size: 12.5px;
+  }
+  :root[data-theme="dark"] .replyQuote { background: rgba(255,255,255,0.06); }
+  .replyQuote .sender { font-weight: 700; color: var(--identity); margin-bottom: 1px; }
+  .replyQuote .txt { opacity: 0.85; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .hiddenPill {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    background: var(--bg);
+    cursor: pointer;
+    min-width: 170px;
+  }
+  .hiddenPill .icon { font-size: 20px; }
+  .hiddenPill .label { font-weight: 700; font-size: 13px; }
+  .hiddenPill .hint { font-size: 11px; color: var(--text-muted); margin-top: 1px; }
+  .pillMsg {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border-radius: 10px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  /* ---- Reply composer banner ---- */
+  #replyBanner {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 18px;
+    border-top: 1px solid var(--border);
+    background: var(--bg);
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--text-muted);
+  }
+  #replyBanner .txt { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #replyBanner .close { color: var(--text-faint); font-weight: 700; cursor: pointer; }
+
+  /* ---- Lightbox (hidden-photo viewer) ---- */
+  #lightbox {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.85);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+    cursor: pointer;
+  }
+  #lightbox img { max-width: 90vw; max-height: 90vh; border-radius: 8px; }
+
+  /* ---- Chess modal ---- */
+  #chessModal {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.55);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 90;
+  }
+  #chessCard {
+    width: 420px;
+    max-width: 92vw;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 18px;
+  }
+  #chessCard .head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+  #chessCard .head h3 { margin: 0; font-size: 15px; }
+  #chessCard .head .btns { display: flex; gap: 10px; }
+  #chessCard .head button { border: none; background: none; cursor: pointer; font-size: 15px; color: var(--text-muted); }
+  #chessStatus { font-size: 12.5px; color: var(--text-muted); font-weight: 600; margin-bottom: 12px; }
+  #chessBoard {
+    display: grid;
+    grid-template-columns: repeat(8, 1fr);
+    width: 360px;
+    height: 360px;
+    max-width: 100%;
+    aspect-ratio: 1;
+    margin: 0 auto;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .chessSq {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 26px;
+    cursor: pointer;
+    user-select: none;
+    position: relative;
+  }
+  .chessSq.light { background: #EEEED2; }
+  .chessSq.dark { background: #769656; }
+  .chessSq.selected::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: rgba(246,246,105,0.6);
+  }
+  .chessSq.target::after {
+    content: '';
+    position: absolute;
+    width: 26%; height: 26%;
+    border-radius: 50%;
+    background: rgba(20,20,20,0.28);
+  }
+  #chessStartBtn {
+    display: block;
+    margin: 16px auto 0;
+    border: none;
+    border-radius: 12px;
+    padding: 10px 22px;
+    background: var(--identity);
+    color: var(--identity-text);
+    font-weight: 700;
+    cursor: pointer;
+  }
 </style>
 </head>
 <body>
@@ -274,11 +470,26 @@
     <div id="chatArea">
       <div id="chatEmpty">Sohbet açmak için soldan bir kişi seç.</div>
       <div id="chatHeaderWrap" class="hidden" style="display:flex; flex-direction:column; min-height:0; flex:1;">
-        <div id="chatHeader"></div>
+        <div id="chatHeader">
+          <span id="chatHeaderName"></span>
+          <div id="chatHeaderActions">
+            <button id="chessOpenBtn" title="Satranç">♟️</button>
+          </div>
+        </div>
+        <div id="pinnedBanner" class="hidden">
+          <span>📌</span>
+          <span class="txt" id="pinnedBannerText"></span>
+          <span class="close" id="pinnedBannerClose" title="Sabiti kaldır">✕</span>
+        </div>
         <div id="chatQuota"></div>
         <div id="globalError" class="hidden"></div>
         <div id="messages"></div>
         <div id="uploadStatus" class="hidden"></div>
+        <div id="replyBanner" class="hidden">
+          <span>↩️</span>
+          <span class="txt" id="replyBannerText"></span>
+          <span class="close" id="replyBannerClose" title="Yanıtlamayı iptal et">✕</span>
+        </div>
         <div id="composer">
           <button id="attachBtn" class="iconBtn" title="Fotoğraf/Video gönder">📎</button>
           <input id="fileInput" type="file" accept="image/*,video/*" class="hidden" />
@@ -291,6 +502,25 @@
 
 </div>
 
+<div id="lightbox" class="hidden">
+  <img id="lightboxImg" src="" />
+</div>
+
+<div id="chessModal" class="hidden">
+  <div id="chessCard">
+    <div class="head">
+      <h3 id="chessTitle">Satranç</h3>
+      <div class="btns">
+        <button id="chessResetBtn" title="Sıfırla">🔄</button>
+        <button id="chessCloseBtn" title="Kapat">✕</button>
+      </div>
+    </div>
+    <div id="chessStatus"></div>
+    <div id="chessBoard"></div>
+    <button id="chessStartBtn" class="hidden">OYUNU BAŞLAT</button>
+  </div>
+</div>
+
 <script type="module">
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.17.1/firebase-app.js';
 import {
@@ -299,11 +529,12 @@ import {
 } from 'https://www.gstatic.com/firebasejs/12.17.1/firebase-auth.js';
 import {
   getFirestore, doc, setDoc, getDoc, getDocs, collection, addDoc, query, where,
-  orderBy, limit, onSnapshot, serverTimestamp, Timestamp, increment,
+  orderBy, limit, onSnapshot, serverTimestamp, Timestamp, increment, deleteField,
 } from 'https://www.gstatic.com/firebasejs/12.17.1/firebase-firestore.js';
 import {
   getStorage, ref, uploadBytes, getDownloadURL,
 } from 'https://www.gstatic.com/firebasejs/12.17.1/firebase-storage.js';
+import { Chess } from 'https://esm.sh/chess.js@1.0.4';
 
 // Same project config as the mobile app (src/config/firebaseConfig.ts) —
 // these are not secrets, just public client identifiers; access is gated
@@ -366,17 +597,33 @@ const authSubmit = $('authSubmit'), authToggle = $('authToggle'), authError = $(
 const whoLabel = $('whoLabel'), whoSub = $('whoSub'), quotaBanner = $('quotaBanner');
 const addContactInput = $('addContactInput'), contactList = $('contactList');
 const chatEmpty = $('chatEmpty'), chatHeaderWrap = $('chatHeaderWrap'), chatHeader = $('chatHeader');
+const chatHeaderName = $('chatHeaderName');
 const chatQuota = $('chatQuota'), messagesEl = $('messages'), globalError = $('globalError');
 const textInput = $('textInput'), sendBtn = $('sendBtn');
 const attachBtn = $('attachBtn'), fileInput = $('fileInput'), uploadStatus = $('uploadStatus');
+const pinnedBanner = $('pinnedBanner'), pinnedBannerText = $('pinnedBannerText'), pinnedBannerClose = $('pinnedBannerClose');
+const replyBanner = $('replyBanner'), replyBannerText = $('replyBannerText'), replyBannerClose = $('replyBannerClose');
+const lightbox = $('lightbox'), lightboxImg = $('lightboxImg');
+const chessOpenBtn = $('chessOpenBtn'), chessModal = $('chessModal'), chessCloseBtn = $('chessCloseBtn');
+const chessResetBtn = $('chessResetBtn'), chessTitle = $('chessTitle'), chessStatusEl = $('chessStatus');
+const chessBoardEl = $('chessBoard'), chessStartBtn = $('chessStartBtn');
 
 let isRegisterMode = false;
 let myUid = null, myUsername = null;
 let contacts = []; // {uid, name}
 let activeContactUid = null;
+let activeContact = null;
 let roomUnsub = null;
 let contactListUnsubs = [];
 let profileUnsub = null;
+let pinnedUnsub = null;
+let pinnedMessageId = null;
+let latestMessages = []; // [{id, data}] for the currently-open room, for pin/reply jump-to lookups
+let replyingTo = null; // {id, type, text, senderId}
+let chessUnsub = null;
+let chessGame = null; // {fen, playerWhite, playerBlack, status, outcome, updatedAt}
+let chessSelected = null;
+const START_FEN = new Chess().fen();
 // When this session started — only messages newer than this trigger a
 // desktop notification, so re-opening the app doesn't re-notify for the
 // whole existing history. Tracked per contact so a burst from the same
@@ -490,10 +737,17 @@ function cleanupSession() {
   contactListUnsubs = [];
   if (roomUnsub) roomUnsub();
   if (profileUnsub) profileUnsub();
+  if (pinnedUnsub) pinnedUnsub();
+  if (chessUnsub) chessUnsub();
   contacts = [];
   activeContactUid = null;
+  activeContact = null;
+  pinnedMessageId = null;
+  latestMessages = [];
+  chessGame = null;
   contactList.innerHTML = '';
   messagesEl.innerHTML = '';
+  chessModal.classList.add('hidden');
 }
 
 function startSession() {
@@ -584,10 +838,11 @@ function renderContactList() {
 function previewText(data, myUid) {
   const mine = data.senderId === myUid ? 'Sen: ' : '';
   switch (data.type) {
-    case 'image': return `${mine}📷 Fotoğraf`;
+    case 'image': return data.hidden ? `${mine}🙈 Gizli Fotoğraf` : `${mine}📷 Fotoğraf`;
     case 'video': return `${mine}🎥 Video`;
     case 'audio': return `${mine}🎤 Sesli mesaj`;
     case 'call': return `📞 Arama`;
+    case 'chess': return `${mine}♟️ Satranç daveti`;
     default: return `${mine}${data.text || ''}`;
   }
 }
@@ -601,20 +856,84 @@ function escapeHtml(str) {
 // ---- Chat room ----
 function openRoom(contact) {
   activeContactUid = contact.uid;
+  activeContact = contact;
   chatEmpty.classList.add('hidden');
   chatHeaderWrap.classList.remove('hidden');
-  chatHeader.textContent = contact.name;
+  chatHeaderName.textContent = contact.name;
   renderContactList();
+  cancelReply();
 
   if (roomUnsub) roomUnsub();
   const roomId = roomIdFor(myUid, contact.uid);
   const messagesQ = query(collection(db, 'rooms', roomId, 'messages'), orderBy('createdAt', 'desc'), limit(50));
   roomUnsub = onSnapshot(messagesQ, snapshot => {
     const docs = snapshot.docs.slice().reverse();
+    latestMessages = docs.map(d => ({ id: d.id, data: d.data() }));
     messagesEl.innerHTML = '';
-    docs.forEach(d => messagesEl.appendChild(renderMessage(d.data())));
+    latestMessages.forEach(m => messagesEl.appendChild(renderMessage(m.id, m.data)));
     messagesEl.scrollTop = messagesEl.scrollHeight;
+    renderPinnedBanner();
   }, error => showError(`Sohbete bağlanılamadı: ${error.message}`));
+
+  if (pinnedUnsub) pinnedUnsub();
+  pinnedUnsub = onSnapshot(doc(db, 'rooms', roomId), snap => {
+    pinnedMessageId = snap.data()?.pinnedMessageId || null;
+    renderPinnedBanner();
+  });
+
+  subscribeChessGame(roomId);
+}
+
+function renderPinnedBanner() {
+  if (!pinnedMessageId) {
+    pinnedBanner.classList.add('hidden');
+    return;
+  }
+  const found = latestMessages.find(m => m.id === pinnedMessageId);
+  if (!found) {
+    pinnedBanner.classList.add('hidden');
+    return;
+  }
+  pinnedBannerText.textContent = found.data.deleted ? 'Bu mesaj silindi' : previewText(found.data, myUid);
+  pinnedBanner.classList.remove('hidden');
+}
+
+pinnedBanner.addEventListener('click', e => {
+  if (e.target === pinnedBannerClose) return;
+  const el = messagesEl.querySelector(`[data-msg-id="${pinnedMessageId}"]`);
+  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+});
+pinnedBannerClose.addEventListener('click', async () => {
+  if (!activeContactUid) return;
+  const roomId = roomIdFor(myUid, activeContactUid);
+  await setDoc(doc(db, 'rooms', roomId), { pinnedMessageId: deleteField() }, { merge: true });
+});
+
+async function togglePin(messageId) {
+  if (!activeContactUid) return;
+  const roomId = roomIdFor(myUid, activeContactUid);
+  const next = pinnedMessageId === messageId ? deleteField() : messageId;
+  await setDoc(doc(db, 'rooms', roomId), { pinnedMessageId: next }, { merge: true });
+}
+
+// ---- Reply ----
+function setReplyingTo(id, data) {
+  replyingTo = { id, type: data.type, text: data.text || '', senderId: data.senderId };
+  replyBannerText.textContent = `${data.senderId === myUid ? 'Kendine' : activeContact?.name || ''} yanıtlıyorsun: ${previewText(data, myUid)}`;
+  replyBanner.classList.remove('hidden');
+  textInput.focus();
+}
+function cancelReply() {
+  replyingTo = null;
+  replyBanner.classList.add('hidden');
+}
+replyBannerClose.addEventListener('click', cancelReply);
+
+function replyQuoteHtml(replyTo) {
+  if (!replyTo) return '';
+  const senderLabel = replyTo.senderId === myUid ? 'Sen' : (activeContact?.name || 'O');
+  const label = previewText({ type: replyTo.type, text: replyTo.text, senderId: replyTo.senderId }, myUid).replace(/^Sen: /, '');
+  return `<div class="replyQuote"><div class="sender">${escapeHtml(senderLabel)}</div><div class="txt">${escapeHtml(label)}</div></div>`;
 }
 
 function formatTime(ts) {
@@ -623,30 +942,80 @@ function formatTime(ts) {
   return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
 }
 
-function renderMessage(data) {
+function renderMessage(id, data) {
   const row = document.createElement('div');
   row.className = 'msgRow' + (data.senderId === myUid ? ' mine' : '');
+  row.dataset.msgId = id;
+
+  // Call/chess entries render as a plain centered pill, same as the mobile app — no reply/pin actions on those.
+  if (data.type === 'call') {
+    const pill = document.createElement('div');
+    pill.className = 'pillMsg';
+    pill.textContent = `${data.callVideo ? '🎥 Görüntülü' : '📞 Sesli'} arama`;
+    row.style.justifyContent = 'center';
+    row.appendChild(pill);
+    return row;
+  }
+  if (data.type === 'chess') {
+    const pill = document.createElement('div');
+    pill.className = 'pillMsg';
+    pill.textContent = data.senderId === myUid ? '♟️ Satranç daveti gönderdin' : '♟️ Satranç daveti aldın';
+    row.style.justifyContent = 'center';
+    row.appendChild(pill);
+    return row;
+  }
+
   const bubble = document.createElement('div');
   bubble.className = 'bubble';
+  bubble.innerHTML = replyQuoteHtml(data.replyTo);
 
-  if (data.type === 'image' && data.mediaUrl) {
-    bubble.innerHTML = `<img src="${data.mediaUrl}" />`;
+  if (data.deleted) {
+    bubble.innerHTML += `<span style="opacity:.6;font-style:italic;">🚫 Bu mesaj silindi</span>`;
+  } else if (data.type === 'image' && data.hidden && data.mediaUrl) {
+    const pill = document.createElement('div');
+    pill.className = 'hiddenPill';
+    pill.innerHTML = `<span class="icon">🙈</span><div><div class="label">Gizli Fotoğraf</div><div class="hint">Görmek için tıkla</div></div>`;
+    pill.addEventListener('click', () => {
+      lightboxImg.src = data.mediaUrl;
+      lightbox.classList.remove('hidden');
+    });
+    bubble.appendChild(pill);
+  } else if (data.type === 'image' && data.mediaUrl) {
+    bubble.innerHTML += `<img src="${data.mediaUrl}" />`;
   } else if (data.type === 'video' && data.mediaUrl) {
-    bubble.innerHTML = `<video src="${data.mediaUrl}" controls></video>`;
+    bubble.innerHTML += `<video src="${data.mediaUrl}" controls></video>`;
   } else if (data.type === 'audio' && data.mediaUrl) {
-    bubble.innerHTML = `<audio src="${data.mediaUrl}" controls></audio>`;
-  } else if (data.type === 'call') {
-    bubble.textContent = `${data.callVideo ? '🎥 Görüntülü' : '📞 Sesli'} arama`;
+    bubble.innerHTML += `<audio src="${data.mediaUrl}" controls></audio>`;
   } else {
     bubble.appendChild(document.createTextNode(data.text || ''));
   }
+
   const time = document.createElement('div');
   time.className = 'time';
   time.textContent = formatTime(data.createdAt);
   bubble.appendChild(time);
   row.appendChild(bubble);
+
+  if (!data.deleted) {
+    const actions = document.createElement('div');
+    actions.className = 'msgActions';
+    const replyBtn = document.createElement('button');
+    replyBtn.title = 'Yanıtla';
+    replyBtn.textContent = '↩️';
+    replyBtn.addEventListener('click', () => setReplyingTo(id, data));
+    const pinBtn = document.createElement('button');
+    pinBtn.title = pinnedMessageId === id ? 'Sabiti kaldır' : 'Sabitle';
+    pinBtn.textContent = '📌';
+    pinBtn.addEventListener('click', () => togglePin(id));
+    actions.appendChild(replyBtn);
+    actions.appendChild(pinBtn);
+    row.appendChild(actions);
+  }
+
   return row;
 }
+
+lightbox.addEventListener('click', () => lightbox.classList.add('hidden'));
 
 // ---- Sending ----
 async function sendText() {
@@ -654,9 +1023,12 @@ async function sendText() {
   if (!trimmed || !activeContactUid) return;
   textInput.value = '';
   const roomId = roomIdFor(myUid, activeContactUid);
+  const reply = replyingTo;
+  cancelReply();
   try {
     await addDoc(collection(db, 'rooms', roomId, 'messages'), {
       type: 'text', text: trimmed, senderId: myUid, createdAt: serverTimestamp(),
+      ...(reply ? { replyTo: reply } : {}),
     });
   } catch (error) {
     showError(`Mesaj gönderilemedi: ${error.message}`);
@@ -691,8 +1063,10 @@ fileInput.addEventListener('change', async () => {
         showError('Fotoğraf çok büyük, daha düşük çözünürlüklü bir fotoğraf seç.');
         return;
       }
+      const hidden = window.confirm('Bu fotoğrafı gizli olarak mı göndermek istiyorsun? (Karşı taraf dokunana kadar görünmez)');
       await addDoc(collection(db, 'rooms', roomId, 'messages'), {
         type: 'image', text: '', senderId: myUid, createdAt: serverTimestamp(), mediaUrl: dataUri,
+        ...(hidden ? { hidden: true } : {}),
       });
     }
   } catch (error) {
@@ -701,6 +1075,149 @@ fileInput.addEventListener('change', async () => {
     uploadStatus.classList.add('hidden');
   }
 });
+
+// ---- Chess (mirrors src/services/chessService.ts's contact-mode game, rooms/{roomId}/game/chess) ----
+function chessDocRef(roomId) { return doc(db, 'rooms', roomId, 'game', 'chess'); }
+
+function subscribeChessGame(roomId) {
+  if (chessUnsub) chessUnsub();
+  chessUnsub = onSnapshot(chessDocRef(roomId), snap => {
+    chessGame = snap.exists() ? snap.data() : null;
+    chessSelected = null;
+    if (!chessModal.classList.contains('hidden')) renderChessModal();
+    updateChessBadge();
+  });
+}
+
+function updateChessBadge() {
+  chessOpenBtn.classList.toggle('hasBadge', chessGame?.status === 'active');
+}
+
+async function startChessGame() {
+  if (!activeContactUid) return;
+  const roomId = roomIdFor(myUid, activeContactUid);
+  await setDoc(chessDocRef(roomId), {
+    fen: START_FEN, playerWhite: myUid, playerBlack: activeContactUid,
+    status: 'active', outcome: null, updatedAt: serverTimestamp(),
+  });
+  await addDoc(collection(db, 'rooms', roomId, 'messages'), {
+    type: 'chess', text: '', senderId: myUid, createdAt: serverTimestamp(),
+  });
+}
+
+async function resetChessGame() {
+  if (!activeContactUid || !chessGame) return;
+  const roomId = roomIdFor(myUid, activeContactUid);
+  await setDoc(chessDocRef(roomId), {
+    fen: START_FEN, playerWhite: chessGame.playerWhite, playerBlack: chessGame.playerBlack,
+    status: 'active', outcome: null, updatedAt: serverTimestamp(),
+  });
+}
+
+async function playChessMove(from, to) {
+  if (!activeContactUid || !chessGame || chessGame.status !== 'active') return;
+  const isWhite = chessGame.playerWhite === myUid;
+  const chess = new Chess(chessGame.fen);
+  if ((chess.turn() === 'w') !== isWhite) return;
+  try {
+    chess.move({ from, to, promotion: 'q' });
+  } catch {
+    return; // illegal move — ignore the click rather than surface an error
+  }
+  let outcome = null;
+  if (chess.isCheckmate()) outcome = isWhite ? 'white' : 'black';
+  else if (chess.isDraw() || chess.isStalemate()) outcome = 'draw';
+  const roomId = roomIdFor(myUid, activeContactUid);
+  await setDoc(chessDocRef(roomId), {
+    fen: chess.fen(), status: chess.isGameOver() ? 'finished' : 'active', outcome, updatedAt: serverTimestamp(),
+  }, { merge: true });
+}
+
+function chessMyColor() {
+  if (!chessGame) return null;
+  if (chessGame.playerWhite === myUid) return 'w';
+  if (chessGame.playerBlack === myUid) return 'b';
+  return null;
+}
+
+const CHESS_GLYPHS = { wk: '♔', wq: '♕', wr: '♖', wb: '♗', wn: '♘', wp: '♙', bk: '♚', bq: '♛', br: '♜', bb: '♝', bn: '♞', bp: '♟' };
+
+function renderChessModal() {
+  const myColor = chessMyColor();
+  const game = chessGame;
+  chessTitle.textContent = `Satranç — ${activeContact?.name || ''}`;
+
+  if (!game || game.status === 'finished') {
+    chessStartBtn.classList.remove('hidden');
+    chessStartBtn.textContent = game ? 'YENİDEN OYNA' : 'OYUNU BAŞLAT';
+    chessStartBtn.onclick = game ? resetChessGame : startChessGame;
+    chessStatusEl.textContent = game
+      ? game.outcome === 'draw' ? 'Berabere'
+        : (game.outcome === 'white' && myColor === 'w') || (game.outcome === 'black' && myColor === 'b') ? 'Kazandın! 🎉'
+        : `${activeContact?.name || 'Rakip'} kazandı`
+      : `${activeContact?.name || ''} ile yeni bir oyun başlat`;
+  } else {
+    chessStartBtn.classList.add('hidden');
+    const isMyTurn = game.status === 'active' && !!myColor && game.fen.split(' ')[1] === myColor;
+    chessStatusEl.textContent = isMyTurn ? 'Sırası sende' : `Sırası ${activeContact?.name || ''}'da`;
+  }
+  chessResetBtn.style.visibility = game ? 'visible' : 'hidden';
+
+  const fen = game?.fen || START_FEN;
+  const chess = new Chess(fen);
+  const board = chess.board();
+  const flip = myColor === 'b';
+  const ranks = flip ? [1,2,3,4,5,6,7,8] : [8,7,6,5,4,3,2,1];
+  const files = flip ? ['h','g','f','e','d','c','b','a'] : ['a','b','c','d','e','f','g','h'];
+  const legalTargets = chessSelected
+    ? new Set(chess.moves({ square: chessSelected, verbose: true }).map(m => m.to))
+    : new Set();
+
+  chessBoardEl.innerHTML = '';
+  ranks.forEach(rank => {
+    files.forEach(file => {
+      const square = `${file}${rank}`;
+      const rankIndex = 8 - rank;
+      const fileIndex = ['a','b','c','d','e','f','g','h'].indexOf(file);
+      const piece = board[rankIndex]?.[fileIndex];
+      const isDark = (rankIndex + fileIndex) % 2 === 1;
+      const sq = document.createElement('div');
+      sq.className = `chessSq ${isDark ? 'dark' : 'light'}${chessSelected === square ? ' selected' : ''}${legalTargets.has(square) ? ' target' : ''}`;
+      if (piece) sq.textContent = CHESS_GLYPHS[`${piece.color}${piece.type}`];
+      sq.addEventListener('click', () => handleChessSquareClick(square));
+      chessBoardEl.appendChild(sq);
+    });
+  });
+}
+
+function handleChessSquareClick(square) {
+  const myColor = chessMyColor();
+  if (!myColor || !chessGame || chessGame.status !== 'active') return;
+  const isMyTurn = chessGame.fen.split(' ')[1] === myColor;
+  if (!isMyTurn) return;
+  const chess = new Chess(chessGame.fen);
+  if (chessSelected) {
+    const targets = new Set(chess.moves({ square: chessSelected, verbose: true }).map(m => m.to));
+    if (targets.has(square)) {
+      playChessMove(chessSelected, square);
+      chessSelected = null;
+      renderChessModal();
+      return;
+    }
+  }
+  const piece = chess.get(square);
+  chessSelected = piece && piece.color === myColor ? square : null;
+  renderChessModal();
+}
+
+chessOpenBtn.addEventListener('click', () => {
+  if (!activeContactUid) return;
+  chessSelected = null;
+  chessModal.classList.remove('hidden');
+  renderChessModal();
+});
+chessCloseBtn.addEventListener('click', () => chessModal.classList.add('hidden'));
+chessResetBtn.addEventListener('click', resetChessGame);
 
 function resizeImageToDataUri(file, maxSize, quality) {
   return new Promise((resolve, reject) => {

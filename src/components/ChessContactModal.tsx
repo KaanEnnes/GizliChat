@@ -4,6 +4,7 @@ import { useTheme } from '../theme/ThemeContext';
 import { Contact } from '../services/contactService';
 import { playGameOverSound, playTapSound, playWinSound } from '../services/soundService';
 import { ChessGame, playContactChessMove, START_FEN, startContactChessGame } from '../services/chessService';
+import { sendChessInviteMessage } from '../services/chatService';
 import ChessBoard from './ChessBoard';
 
 interface Props {
@@ -47,6 +48,12 @@ function ChessContactModal({ visible, onClose, roomId, myUid, contact, game }: P
   const handleStart = () => {
     playTapSound();
     startContactChessGame(roomId, myUid, contact.uid).catch(() => undefined);
+    sendChessInviteMessage(roomId, myUid).catch(() => undefined);
+  };
+
+  const handleReset = () => {
+    playTapSound();
+    startContactChessGame(roomId, myUid, contact.uid).catch(() => undefined);
   };
 
   const handleMove = (from: string, to: string) => {
@@ -78,9 +85,20 @@ function ChessContactModal({ visible, onClose, roomId, myUid, contact, game }: P
         <View style={[styles.card, { backgroundColor: theme.surface, borderColor: theme.border }]}>
           <View style={styles.header}>
             <Text style={[styles.title, { color: theme.text }]}>Satranç — {contact.name}</Text>
-            <Pressable onPress={onClose} hitSlop={8} accessibilityRole="button" accessibilityLabel="Kapat">
-              <Text style={[styles.closeIcon, { color: theme.textMuted }]}>✕</Text>
-            </Pressable>
+            <View style={styles.headerButtons}>
+              {game && (
+                <Pressable
+                  onPress={handleReset}
+                  hitSlop={8}
+                  accessibilityRole="button"
+                  accessibilityLabel="Oyunu sıfırla">
+                  <Text style={[styles.resetIcon, { color: theme.textMuted }]}>🔄</Text>
+                </Pressable>
+              )}
+              <Pressable onPress={onClose} hitSlop={8} accessibilityRole="button" accessibilityLabel="Kapat">
+                <Text style={[styles.closeIcon, { color: theme.textMuted }]}>✕</Text>
+              </Pressable>
+            </View>
           </View>
 
           <Text style={[styles.status, { color: theme.textMuted }]}>{statusText}</Text>
@@ -95,7 +113,7 @@ function ChessContactModal({ visible, onClose, roomId, myUid, contact, game }: P
 
           {(!game || game.status === 'finished') && (
             <Pressable
-              onPress={handleStart}
+              onPress={game ? handleReset : handleStart}
               style={[styles.startButton, { backgroundColor: theme.accent }]}
               accessibilityRole="button"
               accessibilityLabel={game ? 'Yeniden oyna' : 'Oyunu başlat'}>
@@ -135,6 +153,15 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 16,
     fontWeight: '800',
+  },
+  headerButtons: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  resetIcon: {
+    fontSize: 16,
+    padding: 4,
   },
   closeIcon: {
     fontSize: 16,

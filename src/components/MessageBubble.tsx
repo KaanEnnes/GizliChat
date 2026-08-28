@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { Image, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { Animated, Image, Modal, PanResponder, Pressable, StyleSheet, Text, View } from 'react-native';
 import Video from 'react-native-video';
 import type { ChatMessage } from '../services/chatService';
 import AudioMessagePlayer from './AudioMessagePlayer';
@@ -40,7 +40,11 @@ interface Props {
   onUnpin: () => void;
   onEdit: (message: ChatMessage) => void;
   onDelete: (message: ChatMessage) => void;
+  onReply: (message: ChatMessage) => void;
 }
+
+const SWIPE_REPLY_THRESHOLD = 56;
+const SWIPE_REPLY_MAX = 84;
 
 const QUICK_EMOJIS = ['❤️', '🤍', '😂', '😮', '😢', '🙏', '👍'];
 
@@ -49,6 +53,23 @@ function formatTime(timestamp: number): string {
   const hours = date.getHours().toString().padStart(2, '0');
   const minutes = date.getMinutes().toString().padStart(2, '0');
   return `${hours}:${minutes}`;
+}
+
+function replyPreviewLabel(reply: NonNullable<ChatMessage['replyTo']>): string {
+  switch (reply.type) {
+    case 'image':
+      return '📷 Fotoğraf';
+    case 'video':
+      return '🎥 Video';
+    case 'audio':
+      return '🎤 Sesli mesaj';
+    case 'call':
+      return '📞 Arama';
+    case 'chess':
+      return '♟️ Satranç daveti';
+    default:
+      return reply.text;
+  }
 }
 
 function formatCallDuration(totalSeconds: number): string {
@@ -71,11 +92,42 @@ function MessageBubble({
   onUnpin,
   onEdit,
   onDelete,
+  onReply,
 }: Props): React.JSX.Element {
   const { theme } = useTheme();
   const [viewerOpen, setViewerOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [revealed, setRevealed] = useState(false);
+  const [viewedOnce, setViewedOnce] = useState(false);
+  const swipeX = useRef(new Animated.Value(0)).current;
+  const swipeIconOpacity = swipeX.interpolate({
+    inputRange: [0, SWIPE_REPLY_THRESHOLD],
+    outputRange: [0, 1],
+    extrapolate: 'clamp',
+  });
+  const panResponder = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (_evt, gesture) =>
+        !message.deleted &&
+        message.type !== 'call' &&
+        message.type !== 'chess' &&
+        Math.abs(gesture.dx) > 8 &&
+        Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.5,
+      onPanResponderMove: (_evt, gesture) => {
+        if (gesture.dx > 0) {
+          swipeX.setValue(Math.min(gesture.dx, SWIPE_REPLY_MAX));
+        }
+      },
+      onPanResponderRelease: (_evt, gesture) => {
+        if (gesture.dx > SWIPE_REPLY_THRESHOLD) {
+          onReply(message);
+        }
+        Animated.spring(swipeX, { toValue: 0, useNativeDriver: true, speed: 20, bounciness: 6 }).start();
+      },
+      onPanResponderTerminate: () => {
+        Animated.spring(swipeX, { toValue: 0, useNativeDriver: true, speed: 20, bounciness: 6 }).start();
+      },
+    }),
+  ).current;
   const bubbleColor = isMine ? theme.bubbleMine : theme.bubbleOther;
   const bubbleTextColor = isMine ? theme.bubbleMineText : theme.bubbleOtherText;
   const myReaction = message.reactions?.[myUid];
@@ -160,6 +212,24 @@ function MessageBubble({
     );
   }
 
+  // Chess invite entry — centered like a call log, just informational.
+  if (message.type === 'chess') {
+    return (
+      <View style={styles.callRow}>
+        <View style={[styles.callPill, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+          <Text style={styles.callIcon}>♟️</Text>
+          <View style={styles.callTextWrap}>
+            <Text style={[styles.callLabel, { color: theme.text }]}>
+              {isMine ? 'Satranç daveti gönderdin' : 'Satranç daveti aldın'}
+            </Text>
+            <Text style={[styles.callDetail, { color: theme.textMuted }]}>Oynamak için oyun menüsünü aç</Text>
+          </View>
+          <Text style={[styles.callTime, { color: theme.textFaint }]}>{formatTime(message.createdAt)}</Text>
+        </View>
+      </View>
+    );
+  }
+
   // Soft-deleted — content is already cleared server-side, just show the placeholder.
   if (message.deleted) {
     return (
@@ -171,7 +241,12 @@ function MessageBubble({
     );
   }
 
-  const showHiddenOverlay = message.type === 'image' && message.hidden && !revealed;
+  const isHiddenImage = message.type === 'image' && !!message.hidden;
+
+  const handleOpenHidden = () => {
+    setViewedOnce(true);
+    setViewerOpen(true);
+  };
 
   return (
     <View
@@ -179,31 +254,51 @@ function MessageBubble({
         styles.row,
         isMine ? styles.rowRight : styles.rowLeft,
         hasReactions && styles.rowWithReactions,
-      ]}>
+      ]}
+      {...panResponder.panHandlers}>
       {isPinned && (
         <Text style={[styles.pinnedTag, { color: theme.textFaint }]}>📌 Sabitlendi</Text>
       )}
-      <Pressable
-        onLongPress={handleLongPress}
-        delayLongPress={280}
-        style={[
-          styles.bubble,
-          { backgroundColor: bubbleColor },
-          isMine ? styles.bubbleMine : styles.bubbleOther,
-        ]}>
-        {message.type === 'image' && message.mediaUrl && showHiddenOverlay && (
+      <Animated.View
+        style={[styles.swipeReplyIcon, isMine ? { right: '20%' } : { left: '20%' }, { opacity: swipeIconOpacity }]}>
+        <Text style={styles.swipeReplyIconText}>↩️</Text>
+      </Animated.View>
+      <Animated.View style={{ transform: [{ translateX: swipeX }] }}>
           <Pressable
-            onPress={() => setRevealed(true)}
-            style={[styles.hiddenMediaBox, { backgroundColor: theme.surfaceAlt }]}
+            onLongPress={handleLongPress}
+            delayLongPress={280}
+            style={[
+              styles.bubble,
+              { backgroundColor: bubbleColor },
+              isMine ? styles.bubbleMine : styles.bubbleOther,
+            ]}>
+            {message.replyTo && (
+              <View style={[styles.replyQuote, { borderLeftColor: theme.accent, backgroundColor: theme.overlay }]}>
+                <Text style={[styles.replyQuoteSender, { color: theme.accent }]} numberOfLines={1}>
+                  {message.replyTo.senderId === myUid ? 'Sen' : 'O'}
+                </Text>
+                <Text style={[styles.replyQuoteText, { color: bubbleTextColor }]} numberOfLines={1}>
+                  {replyPreviewLabel(message.replyTo)}
+                </Text>
+              </View>
+            )}
+            {message.type === 'image' && message.mediaUrl && isHiddenImage && (
+          <Pressable
+            onPress={handleOpenHidden}
+            style={[styles.hiddenMediaPill, { backgroundColor: theme.surfaceAlt }]}
             accessibilityRole="button"
             accessibilityLabel="Gizli fotoğrafı göster">
             <Text style={styles.hiddenMediaIcon}>🙈</Text>
-            <Text style={[styles.hiddenMediaText, { color: theme.text }]}>Gizli Fotoğraf</Text>
-            <Text style={[styles.hiddenMediaHint, { color: theme.textMuted }]}>Görmek için dokun</Text>
+            <View style={styles.hiddenMediaTextWrap}>
+              <Text style={[styles.hiddenMediaText, { color: theme.text }]}>Gizli Fotoğraf</Text>
+              <Text style={[styles.hiddenMediaHint, { color: theme.textMuted }]}>
+                {viewedOnce ? 'Tekrar görmek için dokun' : 'Görmek için dokun'}
+              </Text>
+            </View>
           </Pressable>
         )}
 
-        {message.type === 'image' && message.mediaUrl && !showHiddenOverlay && (
+        {message.type === 'image' && message.mediaUrl && !isHiddenImage && (
           <Pressable onPress={() => setViewerOpen(true)}>
             <Image source={{ uri: message.mediaUrl }} style={styles.mediaImage} resizeMode="cover" />
           </Pressable>
@@ -270,7 +365,8 @@ function MessageBubble({
             ))}
           </View>
         )}
-      </Pressable>
+          </Pressable>
+      </Animated.View>
 
       <Modal visible={pickerOpen} transparent animationType="fade" onRequestClose={() => setPickerOpen(false)}>
         <Pressable
@@ -293,6 +389,16 @@ function MessageBubble({
           </View>
 
           <View style={[styles.actionCard, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+            <Pressable
+              style={styles.actionRow}
+              onPress={() => {
+                setPickerOpen(false);
+                onReply(message);
+              }}
+              accessibilityRole="button"
+              accessibilityLabel="Mesajı yanıtla">
+              <Text style={[styles.actionRowText, { color: theme.text }]}>↩️  Yanıtla</Text>
+            </Pressable>
             <Pressable
               style={styles.actionRow}
               onPress={handlePin}
@@ -444,19 +550,47 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     marginBottom: 2,
   },
-  hiddenMediaBox: {
-    width: 220,
-    height: 220,
-    borderRadius: 10,
+  swipeReplyIcon: {
+    position: 'absolute',
+    top: '50%',
+    marginTop: -12,
+  },
+  swipeReplyIconText: {
+    fontSize: 20,
+  },
+  replyQuote: {
+    borderLeftWidth: 3,
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    marginBottom: 6,
+  },
+  replyQuoteSender: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    marginBottom: 1,
+  },
+  replyQuoteText: {
+    fontSize: 12.5,
+    opacity: 0.85,
+  },
+  hiddenMediaPill: {
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
+    minWidth: 170,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
   },
   hiddenMediaIcon: {
-    fontSize: 34,
-    marginBottom: 8,
+    fontSize: 22,
+    marginRight: 10,
+  },
+  hiddenMediaTextWrap: {
+    flexShrink: 1,
   },
   hiddenMediaText: {
-    fontSize: 14,
+    fontSize: 13.5,
     fontWeight: '700',
   },
   hiddenMediaHint: {

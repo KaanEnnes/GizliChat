@@ -15,9 +15,19 @@ import {
   updateDoc,
 } from 'firebase/firestore';
 import { db } from './firebase';
+import { deleteRoomMedia } from './mediaService';
+import { addVideoBytesUsed } from './userService';
 
-export type MessageType = 'text' | 'image' | 'video' | 'audio' | 'call';
+export type MessageType = 'text' | 'image' | 'video' | 'audio' | 'call' | 'chess';
 export type CallLogStatus = 'completed' | 'missed';
+
+/** Lightweight snapshot of the message being replied to — stored inline so the quoted preview renders without an extra fetch. */
+export interface ReplyPreview {
+  id: string;
+  type: MessageType;
+  text: string;
+  senderId: string;
+}
 
 export interface ChatMessage {
   id: string;
@@ -54,6 +64,10 @@ export interface ChatMessage {
   deleted?: boolean;
   /** Present for image/video messages sent as "gizli" (hidden) — the bubble shows a reveal button instead of the media until tapped. */
   hidden?: boolean;
+  /** Present when this message was sent as a reply — a snapshot of the quoted message, shown at the top of the bubble. */
+  replyTo?: ReplyPreview;
+  /** Present for video messages (the only type still on Firebase Storage, see `mediaUrl` above) — the uploaded blob's size, so deleteMessage can both remove the Storage object and refund this account's video-storage quota. */
+  sizeBytes?: number;
 }
 
 // Each 1-1 conversation gets its own room under rooms/{roomId}/messages.
@@ -140,6 +154,16 @@ function docToMessage(docSnap: {
     editedAt: data.editedAt instanceof Timestamp ? data.editedAt.toMillis() : undefined,
     deleted: data.deleted === true,
     hidden: data.hidden === true,
+    sizeBytes: typeof data.sizeBytes === 'number' ? data.sizeBytes : undefined,
+    replyTo:
+      typeof data.replyTo === 'object' && data.replyTo !== null
+        ? {
+            id: typeof (data.replyTo as Record<string, unknown>).id === 'string' ? ((data.replyTo as Record<string, unknown>).id as string) : '',
+            type: ((data.replyTo as Record<string, unknown>).type as MessageType) || 'text',
+            text: typeof (data.replyTo as Record<string, unknown>).text === 'string' ? ((data.replyTo as Record<string, unknown>).text as string) : '',
+            senderId: typeof (data.replyTo as Record<string, unknown>).senderId === 'string' ? ((data.replyTo as Record<string, unknown>).senderId as string) : '',
+          }
+        : undefined,
   };
 }
 
@@ -192,7 +216,12 @@ export async function markMessageRead(roomId: string, messageId: string): Promis
   await updateDoc(messageRef, { readAt: serverTimestamp(), deliveredAt: serverTimestamp() });
 }
 
-export async function sendMessage(roomId: string, text: string, senderId: string): Promise<void> {
+export async function sendMessage(
+  roomId: string,
+  text: string,
+  senderId: string,
+  replyTo?: ReplyPreview,
+): Promise<void> {
   const trimmed = text.trim();
   if (!trimmed) {
     return;
@@ -202,6 +231,7 @@ export async function sendMessage(roomId: string, text: string, senderId: string
     text: trimmed,
     senderId,
     createdAt: serverTimestamp(),
+    ...(replyTo ? { replyTo } : {}),
   });
 }
 
@@ -234,6 +264,16 @@ export async function sendCallLogMessage(
   );
 }
 
+/** Posts a "Satranç daveti" system entry (rendered like a call log by MessageBubble) so the other side sees in the chat that a chess game just started. */
+export async function sendChessInviteMessage(roomId: string, senderId: string): Promise<void> {
+  await addDoc(collection(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION), {
+    type: 'chess',
+    text: '',
+    senderId,
+    createdAt: serverTimestamp(),
+  });
+}
+
 /** Sends an already-uploaded image/video/audio message (see mediaService.ts for the upload step). `hidden` marks an image/video as "gizli" — MessageBubble shows a reveal button instead of the media until the recipient taps it. */
 export async function sendMediaMessage(
   roomId: string,
@@ -242,6 +282,7 @@ export async function sendMediaMessage(
   mediaUrl: string,
   durationSeconds?: number,
   hidden?: boolean,
+  sizeBytes?: number,
 ): Promise<void> {
   await addDoc(collection(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION), {
     type,
@@ -251,6 +292,7 @@ export async function sendMediaMessage(
     mediaUrl,
     ...(durationSeconds !== undefined ? { durationSeconds } : {}),
     ...(hidden ? { hidden: true } : {}),
+    ...(sizeBytes !== undefined ? { sizeBytes } : {}),
   });
 }
 
@@ -264,9 +306,23 @@ export async function editMessage(roomId: string, messageId: string, newText: st
   await updateDoc(messageRef, { text: trimmed, editedAt: serverTimestamp() });
 }
 
-/** Soft-deletes a message: clears its content but keeps the doc (and its position in history) so the other side sees a "message deleted" placeholder — sender-only (enforced by firestore.rules). */
-export async function deleteMessage(roomId: string, messageId: string): Promise<void> {
-  const messageRef = doc(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION, messageId);
+/**
+ * Soft-deletes a message: clears its content but keeps the doc (and its
+ * position in history) so the other side sees a "message deleted" placeholder
+ * — sender-only (enforced by firestore.rules). For a video (the only type
+ * still backed by an actual Firebase Storage object, see `mediaUrl` above)
+ * this also removes the uploaded blob and refunds its bytes from the
+ * sender's video-storage quota — otherwise deleting a video would clear the
+ * chat bubble but leave the file (and the quota bar) untouched forever.
+ */
+export async function deleteMessage(roomId: string, message: ChatMessage): Promise<void> {
+  if (message.type === 'video' && message.mediaUrl) {
+    await deleteRoomMedia(message.mediaUrl).catch(() => undefined);
+    if (message.sizeBytes) {
+      await addVideoBytesUsed(message.senderId, -message.sizeBytes).catch(() => undefined);
+    }
+  }
+  const messageRef = doc(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION, message.id);
   await updateDoc(messageRef, { deleted: true, text: '', mediaUrl: deleteField() });
 }
 

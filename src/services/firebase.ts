@@ -26,10 +26,14 @@ export const auth = initializeAuth(app, {
   persistence: getReactNativePersistence(AsyncStorage),
 });
 
-// Long polling avoids gRPC streaming issues some Android network stacks have
-// with Firestore's default WebChannel transport.
+// Auto-detects whether gRPC streaming works and only falls back to long
+// polling when it doesn't — forcing long polling unconditionally (the
+// previous setting) left the app stuck on long-held HTTP connections that
+// Android's Doze/App Standby power saving silently drops, so a dropped
+// connection could sit unnoticed for minutes before the SDK's backoff
+// retried it, making moves/messages appear to arrive minutes late.
 export const db = initializeFirestore(app, {
-  experimentalForceLongPolling: true,
+  experimentalAutoDetectLongPolling: true,
 });
 
 let authReadyPromise: Promise<User> | null = null;

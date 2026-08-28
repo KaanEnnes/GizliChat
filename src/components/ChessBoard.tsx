@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Animated, Easing, PanResponder, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useTheme } from '../theme/ThemeContext';
 import { Chess } from '../services/chessService';
 
@@ -92,6 +92,7 @@ function ChessBoard({
 }: Props): React.JSX.Element {
   const { theme } = useTheme();
   const [selected, setSelected] = useState<string | null>(null);
+  const boardRef = useRef<View>(null);
 
   const chess = useMemo(() => new Chess(fen), [fen]);
   const board = useMemo(() => chess.board(), [chess]);
@@ -219,6 +220,113 @@ function ChessBoard({
 
   const coordSize = Math.max(14, cellSize * 0.24);
 
+  // ---- Drag-to-move: lets a piece be picked up and slid to its target in one
+  // gesture, instead of only tap-square-then-tap-square. A plain tap (no real
+  // movement) still just selects, same as before.
+  const dragRef = useRef<{ square: string; piece: AnimPiece; base: { x: number; y: number } } | null>(null);
+  const DRAG_THRESHOLD = cellSize * 0.25;
+
+  // `locationX/locationY` are reported by RN relative to the responder view
+  // itself (this board), not the screen — unlike a manual
+  // measureInWindow()-vs-pageX/Y comparison, this can't drift out of sync
+  // with the status bar, a surrounding Modal's own window, or layout timing,
+  // which is what was making every touch land one row off from the piece
+  // actually tapped.
+  const squareAtLocalXY = (localX: number, localY: number): string | null => {
+    if (localX < 0 || localY < 0 || localX >= size || localY >= size) {
+      return null;
+    }
+    const fileIdx = Math.min(7, Math.max(0, Math.floor(localX / cellSize)));
+    const rankIdx = Math.min(7, Math.max(0, Math.floor(localY / cellSize)));
+    return `${files[fileIdx]}${ranks[rankIdx]}`;
+  };
+
+  const panResponder = useMemo(
+    () =>
+      PanResponder.create({
+        // Capture (not bubble) phase: without this, the square Pressables —
+        // being deeper in the tree — get asked first and always claim the
+        // touch for their own onPress, so this responder would never see a
+        // touch that starts on a piece at all.
+        onStartShouldSetPanResponderCapture: evt => {
+          if (!myColor) {
+            return false;
+          }
+          const sq = squareAtLocalXY(evt.nativeEvent.locationX, evt.nativeEvent.locationY);
+          if (!sq) {
+            return false;
+          }
+          const piece = chess.get(sq as never);
+          if (!piece || piece.color !== myColor) {
+            return false;
+          }
+          return isMyTurn || !!allowPremove;
+        },
+        onPanResponderGrant: evt => {
+          const sq = squareAtLocalXY(evt.nativeEvent.locationX, evt.nativeEvent.locationY);
+          if (!sq) {
+            return;
+          }
+          setSelected(sq);
+          const piece = piecesRef.current.find(p => p.square === sq);
+          if (piece) {
+            dragRef.current = { square: sq, piece, base: squareToXY(sq) };
+          }
+        },
+        onPanResponderMove: (_evt, gestureState) => {
+          const d = dragRef.current;
+          if (!d) {
+            return;
+          }
+          d.piece.anim.setValue({ x: d.base.x + gestureState.dx, y: d.base.y + gestureState.dy });
+        },
+        onPanResponderRelease: (evt, gestureState) => {
+          const d = dragRef.current;
+          dragRef.current = null;
+          if (!d) {
+            return;
+          }
+          const moved = Math.hypot(gestureState.dx, gestureState.dy) > DRAG_THRESHOLD;
+          const snapBack = () =>
+            Animated.timing(d.piece.anim, { toValue: d.base, duration: 150, useNativeDriver: true }).start();
+          if (!moved) {
+            snapBack();
+            return;
+          }
+          const toSq = squareAtLocalXY(evt.nativeEvent.locationX, evt.nativeEvent.locationY);
+          if (!toSq || toSq === d.square) {
+            snapBack();
+            return;
+          }
+          if (!isMyTurn) {
+            if (allowPremove && onSetPremove) {
+              onSetPremove(d.square, toSq);
+            }
+            setSelected(null);
+            snapBack();
+            return;
+          }
+          const targets = new Set(chess.moves({ square: d.square as never, verbose: true }).map(m => m.to));
+          if (targets.has(toSq)) {
+            Animated.timing(d.piece.anim, { toValue: squareToXY(toSq), duration: 90, useNativeDriver: true }).start();
+            onMove(d.square, toSq);
+            setSelected(null);
+          } else {
+            snapBack();
+          }
+        },
+        onPanResponderTerminate: () => {
+          const d = dragRef.current;
+          dragRef.current = null;
+          if (d) {
+            Animated.timing(d.piece.anim, { toValue: d.base, duration: 150, useNativeDriver: true }).start();
+          }
+        },
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [myColor, isMyTurn, allowPremove, chess, cellSize, size, files, ranks],
+  );
+
   return (
     <View
       style={[
@@ -226,6 +334,8 @@ function ChessBoard({
         { shadowColor: theme.mode === 'dark' ? '#000' : '#1E293B' },
       ]}>
       <View
+        ref={boardRef}
+        {...panResponder.panHandlers}
         style={[
           styles.board,
           {

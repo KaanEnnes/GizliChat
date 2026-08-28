@@ -73,6 +73,26 @@ const MIN_RECORDING_MS = 600;
 // mid-scroll through history, generous enough to survive minor list jitter.
 const NEAR_BOTTOM_THRESHOLD_PX = 120;
 
+function replyPreviewLabel(message: ChatMessage): string {
+  if (message.deleted) {
+    return 'Bu mesaj silindi';
+  }
+  switch (message.type) {
+    case 'image':
+      return '📷 Fotoğraf';
+    case 'video':
+      return '🎥 Video';
+    case 'audio':
+      return '🎤 Sesli mesaj';
+    case 'call':
+      return '📞 Arama';
+    case 'chess':
+      return '♟️ Satranç daveti';
+    default:
+      return message.text;
+  }
+}
+
 function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JSX.Element {
   const insets = useSafeAreaInsets();
   const { theme } = useTheme();
@@ -99,6 +119,7 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
   const [pinnedMessageId, setPinnedMessageId] = useState<string | null>(null);
   const [pinnedMessagePreview, setPinnedMessagePreview] = useState<ChatMessage | null>(null);
   const [editingMessage, setEditingMessage] = useState<ChatMessage | null>(null);
+  const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
   const listRef = useRef<FlatList<ChatMessage>>(null);
   const recordingStartedAtRef = useRef<number | null>(null);
   const lastMessageIdRef = useRef<string | null>(null);
@@ -353,6 +374,15 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
     setDraft('');
   }, []);
 
+  const handleReplyRequest = useCallback((message: ChatMessage) => {
+    setEditingMessage(null);
+    setReplyingTo(message);
+  }, []);
+
+  const handleCancelReply = useCallback(() => {
+    setReplyingTo(null);
+  }, []);
+
   const handleSend = useCallback(() => {
     const trimmed = draft.trim();
     if (!trimmed || sendingRef.current) {
@@ -361,13 +391,22 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
     sendingRef.current = true;
     setSending(true);
     const editing = editingMessage;
-    const request = editing ? editMessage(roomId, editing.id, trimmed) : sendMessage(roomId, trimmed, myUid);
+    const reply = replyingTo;
+    const request = editing
+      ? editMessage(roomId, editing.id, trimmed)
+      : sendMessage(
+          roomId,
+          trimmed,
+          myUid,
+          reply ? { id: reply.id, type: reply.type, text: reply.text, senderId: reply.senderId } : undefined,
+        );
     request
       .then(() => {
         // Only cleared on success — on failure the draft stays in the input
         // so the user can just press send again instead of retyping it.
         setDraft('');
         setEditingMessage(null);
+        setReplyingTo(null);
       })
       .catch(error => {
         setConnectionError(editing ? `Mesaj düzenlenemedi: ${error.message}` : `Mesaj gönderilemedi: ${error.message}`);
@@ -376,7 +415,7 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
         sendingRef.current = false;
         setSending(false);
       });
-  }, [draft, roomId, myUid, editingMessage]);
+  }, [draft, roomId, myUid, editingMessage, replyingTo]);
 
   const handlePickMedia = useCallback(
     (source: 'library' | 'camera', hidden?: boolean) => {
@@ -430,7 +469,7 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
           setUploadingMedia(true);
           try {
             const { url, sizeBytes } = await uploadRoomMedia(roomId, isVideo ? 'video' : 'image', asset.uri, extension);
-            await sendMediaMessage(roomId, myUid, isVideo ? 'video' : 'image', url, undefined, hidden);
+            await sendMediaMessage(roomId, myUid, isVideo ? 'video' : 'image', url, undefined, hidden, isVideo ? sizeBytes : undefined);
             if (isVideo) {
               addVideoBytesUsed(myUid, sizeBytes).catch(() => undefined);
             }
@@ -565,6 +604,7 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
   }, [roomId]);
 
   const handleEditRequest = useCallback((message: ChatMessage) => {
+    setReplyingTo(null);
     setEditingMessage(message);
     setDraft(message.text);
   }, []);
@@ -577,7 +617,7 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
           text: 'Sil',
           style: 'destructive',
           onPress: () => {
-            deleteMessage(roomId, message.id).catch(error => {
+            deleteMessage(roomId, message).catch(error => {
               setConnectionError(`Silinemedi: ${(error as Error).message}`);
             });
           },
@@ -759,6 +799,7 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
               onUnpin={handleUnpinMessage}
               onEdit={handleEditRequest}
               onDelete={handleDeleteMessage}
+              onReply={handleReplyRequest}
             />
           )}
           contentContainerStyle={styles.listContent}
@@ -795,6 +836,19 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
         <View style={[styles.recordingBanner, { backgroundColor: theme.background }]}>
           <View style={[styles.recordingDot, { backgroundColor: theme.danger }]} />
           <RecordingWaveform level={recordingLevel} color={theme.identity} />
+        </View>
+      )}
+
+      {replyingTo && (
+        <View style={[styles.editingBanner, { backgroundColor: theme.surfaceAlt, borderTopColor: theme.border }]}>
+          <Text style={[styles.editingBannerIcon, { color: theme.identity }]}>↩️</Text>
+          <Text style={[styles.editingBannerText, { color: theme.textMuted }]} numberOfLines={1}>
+            {replyingTo.senderId === myUid ? 'Kendine' : contact.name}{' '}
+            yanıtlıyorsun: {replyPreviewLabel(replyingTo)}
+          </Text>
+          <Pressable onPress={handleCancelReply} hitSlop={8} accessibilityRole="button" accessibilityLabel="Yanıtlamayı iptal et">
+            <Text style={[styles.editingBannerClose, { color: theme.textFaint }]}>✕</Text>
+          </Pressable>
         </View>
       )}
 
