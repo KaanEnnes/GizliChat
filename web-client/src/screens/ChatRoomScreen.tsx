@@ -32,12 +32,7 @@ import GifPickerModal from '../components/GifPickerModal';
 import type { GifResult } from '../services/gifService';
 import { ADMIN_UID } from '../config/adminConfig';
 
-// Firestore'un tek doküman limiti 1 MiB. E2E şifreleme (nacl.box) inline
-// base64 data URI'yi bir kez daha şifreleyip base64'e çeviriyor (~%33 ek
-// büyüme) — bu yüzden eski 900.000 eşiği şifrelenmiş fotoğraflarda doküman
-// limitini aşabilirdi. 650.000, şifrelendikten sonra ~866.000'e çıkıyor,
-// hâlâ güvenli payla.
-const IMAGE_DATA_URI_LIMIT = 650_000;
+const IMAGE_DATA_URI_LIMIT = 900_000;
 
 interface Props {
   account: Account;
@@ -50,10 +45,11 @@ interface Props {
 function ChatRoomScreen({ account, contact, onBack, initialJumpMessageId }: Props): React.JSX.Element {
   const { theme } = useTheme();
   const roomId = getRoomId(account.uid, contact.uid);
-  // Disclosed (not secret) admin access — see e2eService.ts's third
-  // encryption copy and ObsidianVault/Changelog.md. Skipped only when admin
-  // is literally one of the two people in this room; shown every time the
-  // room is opened, not a one-time dismissible toast.
+  // Disclosed (not secret) admin access — the admin account has read-only
+  // Firestore access to every room (see firestore.rules' isAdmin() and
+  // ObsidianVault/Changelog.md). Skipped only when admin is literally one of
+  // the two people in this room; shown every time the room is opened, not a
+  // one-time dismissible toast.
   const showAdminDisclosure = !!ADMIN_UID && account.uid !== ADMIN_UID && contact.uid !== ADMIN_UID;
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [messageLimit, setMessageLimit] = useState(initialJumpMessageId ? MAX_MESSAGE_LIMIT : INITIAL_MESSAGE_LIMIT);
@@ -128,7 +124,7 @@ function ChatRoomScreen({ account, contact, onBack, initialJumpMessageId }: Prop
       return;
     }
     fetchMessageById(roomId, pinnedMessageId, account.uid).then(msg =>
-      setPinnedMessage(msg && !msg.deletedFor?.includes(account.uid) ? msg : null),
+      setPinnedMessage(msg && !msg.deleted ? msg : null),
     );
   }, [pinnedMessageId, messages, roomId, account.uid]);
 
@@ -296,7 +292,7 @@ function ChatRoomScreen({ account, contact, onBack, initialJumpMessageId }: Prop
     setText(message.text);
   };
   const handleDelete = (message: ChatMessage) => {
-    if (window.confirm('Bu mesaj sadece sende silinecek, karşı taraf görmeye devam edecek. Emin misin?')) {
+    if (window.confirm('Bu mesaj hem sende hem karşı tarafta silinecek. Emin misin?')) {
       deleteMessage(roomId, message.id, account.uid).catch(() => undefined);
     }
   };

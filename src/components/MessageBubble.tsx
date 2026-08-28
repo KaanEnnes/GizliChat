@@ -105,7 +105,7 @@ const SWIPE_MAX_DRAG = 84;
 
 /** One-line preview shown for a message with no meaningful `text` — used both inside a reply quote block and (via ChatRoomScreen's search results) as a search-row snippet. */
 export function replyPreviewLabel(
-  message: Pick<ChatMessage, 'type' | 'text'> & Partial<Pick<ChatMessage, 'fileName' | 'callVideo' | 'deleted'>>,
+  message: Pick<ChatMessage, 'type' | 'text'> & Partial<Pick<ChatMessage, 'fileName' | 'callVideo'>>,
 ): string {
   switch (message.type) {
     case 'image':
@@ -121,7 +121,7 @@ export function replyPreviewLabel(
     case 'chess':
       return '♟️ Satranç daveti';
     default:
-      return message.deleted ? 'Bu mesaj silindi' : message.text;
+      return message.text;
   }
 }
 
@@ -219,9 +219,6 @@ function MessageBubble({
   };
 
   const handleLongPress = () => {
-    if (message.deleted) {
-      return;
-    }
     setPickerOpen(true);
   };
 
@@ -338,16 +335,11 @@ function MessageBubble({
     );
   }
 
-  // Soft-deleted — content is already cleared server-side, just show the placeholder.
-  if (message.deleted) {
-    return (
-      <View style={[styles.row, isMine ? styles.rowRight : styles.rowLeft]}>
-        <View style={[styles.bubble, styles.deletedBubble, { borderColor: theme.border }]}>
-          <Text style={[styles.deletedText, { color: theme.textFaint }]}>🚫 Bu mesaj silindi</Text>
-        </View>
-      </View>
-    );
-  }
+  // A deleted message (see ChatMessage.deleted) never reaches this component
+  // in the first place — subscribeToMessages/subscribeToLatestMessage/
+  // searchMessagesInRoom in chatService.ts already filter it out of the list
+  // for both room members, so there's no per-bubble "deleted" state to
+  // render here.
 
   const showHiddenOverlay = (message.type === 'image' || message.type === 'video') && message.hidden && !revealed;
 
@@ -508,13 +500,6 @@ function MessageBubble({
         })()}
 
         <View style={styles.metaRow}>
-          {!!message.deletedFor?.length && (
-            <Text
-              style={[styles.timeText, styles.mutedMeta, { color: bubbleTextColor }]}
-              accessibilityLabel="Karşı taraf bu mesajı kendi tarafından sildi">
-              🗑️{' '}
-            </Text>
-          )}
           {!!message.editedAt && (
             <Text style={[styles.timeText, styles.mutedMeta, { color: bubbleTextColor }]}>düzenlendi · </Text>
           )}
@@ -766,15 +751,6 @@ const styles = StyleSheet.create({
   actionRowText: {
     fontSize: 14.5,
     fontWeight: '600',
-  },
-  deletedBubble: {
-    borderWidth: 1,
-    borderStyle: 'dashed',
-    backgroundColor: 'transparent',
-  },
-  deletedText: {
-    fontSize: 13.5,
-    fontStyle: 'italic',
   },
   pinnedTag: {
     fontSize: 10.5,

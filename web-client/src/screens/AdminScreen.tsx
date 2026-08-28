@@ -20,11 +20,13 @@ interface Props {
  * openly-disclosed admin-access model (see ObsidianVault/Changelog.md and
  * every chat room's "🔒 Bu sohbet yönetici hesabı tarafından da
  * görüntülenebilir" banner). Lets the admin account pick any two registered
- * users and view the messages between them, decrypted with the admin's own
- * E2E key pair via the third `encTextAdmin`/`encNonceAdmin`-family copy
- * every client now encrypts alongside the normal self/peer copies (see
- * chatService.ts's buildAdminFieldGroup and its docToMessage/
- * buildDecryptContext admin branch).
+ * users and view the plaintext messages between them, via the read-only
+ * `isAdmin()` Firestore rule grant on rooms/messages (see firestore.rules).
+ *
+ * Deliberately shows messages either room member has "deleted" too (see
+ * `includeDeleted: true` below and ChatMessage.deleted's doc comment) — the
+ * whole point of the shared delete flag is that the underlying data stays
+ * intact in Firestore, and this panel is exactly where that matters.
  *
  * Deliberately minimal: no send/reply/media-upload/reactions/edit/delete —
  * this is an internal visibility tool, not a second full chat client, and
@@ -60,12 +62,17 @@ function AdminScreen({ account, onLogout }: Props): React.JSX.Element {
       return undefined;
     }
     setRoomError(null);
+    // includeDeleted: true — the admin panel must keep showing a message
+    // either room member has "deleted", since the whole point of that flag
+    // is that the data stays in Firestore for exactly this kind of
+    // visibility (see chatService.ts's ChatMessage.deleted doc comment).
     const unsubscribe = subscribeToMessages(
       roomId,
       200,
       account.uid,
       setMessages,
       err => setRoomError(`Sohbet yüklenemedi: ${err.message}`),
+      true,
     );
     return unsubscribe;
   }, [roomId, account.uid]);
@@ -73,9 +80,6 @@ function AdminScreen({ account, onLogout }: Props): React.JSX.Element {
   const nameFor = (uid: string) => users.find(u => u.uid === uid)?.username ?? uid;
 
   const renderContent = (message: ChatMessage): React.ReactNode => {
-    if (message.deletedFor?.length && message.type === 'text' && !message.text) {
-      return <i style={{ opacity: 0.6 }}>(boş)</i>;
-    }
     switch (message.type) {
       case 'image':
         return message.mediaUrl ? (
@@ -172,6 +176,9 @@ function AdminScreen({ account, onLogout }: Props): React.JSX.Element {
           <div key={message.id} style={{ marginBottom: 14 }}>
             <div style={{ fontSize: 11.5, fontWeight: 700, color: theme.textMuted, marginBottom: 3 }}>
               {nameFor(message.senderId)} · {new Date(message.createdAt).toLocaleString('tr-TR')}
+              {message.deleted && (
+                <span style={{ marginLeft: 6, fontWeight: 600, color: theme.danger }}>(kullanıcılar tarafından silindi)</span>
+              )}
             </div>
             <div
               style={{

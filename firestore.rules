@@ -68,32 +68,28 @@ service cloud.firestore {
       //    sender themself) may stamp `deliveredAt`/`readAt` on a message,
       //    driving the sender's WhatsApp-style tick icons.
       // 3) edit: only the sender, only a text message, and only while the
-      //    sender themself hasn't deleted-for-me'd it — a message the sender
-      //    has hidden from their own view shouldn't be editable by them
-      //    either, even though it's still fully visible (and untouched) for
-      //    the other room member, since delete-for-me is per-viewer only.
-      //    (Legacy: the old global `deleted` flag this used to check is
-      //    retired — see deletedFor below.) The allowed key set covers both
-      //    shapes editMessage() can write: plain `text` (peer has no E2E
-      //    public key yet, rare fallback) or the full encrypted field group
-      //    (see e2eService.ts / chatService.ts's buildEncryptedFieldGroup) —
-      //    a single edit only ever touches a subset of these, `hasOnly`
-      //    just bounds the maximum.
-      // 4) delete-for-me: any room member may append only their own uid to
-      //    `deletedFor` — the message content itself is never touched, so
-      //    the other member keeps seeing it normally (see deleteMessage()).
+      //    message hasn't been deleted (see deleteMessage()) — a deleted
+      //    message can't be edited by anyone, since it's hidden from both
+      //    room members already.
+      // 4) delete: any room member may set exactly `deleted`/`deletedBy`/
+      //    `deletedAt` — `deleted` must be `true` and `deletedBy` must be the
+      //    caller's own uid. This hides the message from BOTH room members
+      //    (see the `!message.deleted` filters in chatService.ts) but never
+      //    touches `text`/`mediaUrl`/any other field — the content stays
+      //    fully intact in Firestore (see deleteMessage()'s doc comment and
+      //    the admin panel, which deliberately does not apply that filter).
       allow update: if isRoomMember(roomId) && (
         (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reactions']) &&
           request.resource.data.reactions.diff(resource.data.get('reactions', {})).affectedKeys().hasOnly([request.auth.uid])) ||
         (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['deliveredAt', 'readAt']) &&
           resource.data.senderId != request.auth.uid) ||
-        (request.resource.data.diff(resource.data).affectedKeys()
-            .hasOnly(['text', 'editedAt', 'encrypted', 'encText', 'encNonce', 'encTextSelf', 'encNonceSelf', 'encTextAdmin', 'encNonceAdmin']) &&
+        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['text', 'editedAt']) &&
           resource.data.senderId == request.auth.uid &&
           resource.data.type == 'text' &&
-          !(request.auth.uid in resource.data.get('deletedFor', []))) ||
-        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['deletedFor']) &&
-          request.resource.data.deletedFor == resource.data.get('deletedFor', []).concat([request.auth.uid]))
+          !resource.data.get('deleted', false)) ||
+        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['deleted', 'deletedBy', 'deletedAt']) &&
+          request.resource.data.deleted == true &&
+          request.resource.data.deletedBy == request.auth.uid)
       );
       allow delete: if false;
     }

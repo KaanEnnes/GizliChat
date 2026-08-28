@@ -70,14 +70,10 @@ interface Props {
   initialJumpMessageId?: string;
 }
 
-// Firestore'un tek doküman limiti 1 MiB. Bu eşik iki katman büyümeyi
-// hesaba katıyor: base64 data URI ham veriyi ~%33 büyütüyor, ve E2E
-// şifreleme (nacl.box) o base64 metni bir kez daha şifreleyip tekrar
-// base64'e çeviriyor (~%33 daha) — yani orijinal eşik olan 900.000'i
-// olduğu gibi bırakmak şifrelenmiş mesajlarda doküman limitini aşardı.
-// 650.000 karakter, şifrelendikten sonra ~866.000 karaktere çıkıyor,
-// diğer mesaj alanları için hâlâ pay bırakıyor.
-const MAX_INLINE_MEDIA_DATA_URI_LENGTH = 650_000;
+// Firestore'un tek doküman limiti 1 MiB — base64 encoding ham veriyi ~%33
+// büyüttüğü için bu eşik, diğer mesaj alanları için de pay bırakacak
+// şekilde 900.000 karakterde (data URI önekiyle birlikte) tutuluyor.
+const MAX_INLINE_MEDIA_DATA_URI_LENGTH = 900_000;
 // MediaRecorder.stop() throws natively if called too soon after start() —
 // below this, we treat the press as an accidental tap, not a real message.
 const MIN_RECORDING_MS = 600;
@@ -200,9 +196,9 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack, initialJumpMessage
     let cancelled = false;
     fetchMessageById(roomId, pinnedMessageId, myUid).then(msg => {
       if (!cancelled) {
-        // Deleted-for-me: keep it out of the pin banner even though the
-        // fallback fetch (unlike subscribeToMessages) doesn't filter it.
-        setPinnedMessagePreview(msg && !msg.deletedFor?.includes(myUid) ? msg : null);
+        // Deleted: keep it out of the pin banner even though the fallback
+        // fetch (unlike subscribeToMessages) doesn't filter it.
+        setPinnedMessagePreview(msg && !msg.deleted ? msg : null);
       }
     });
     return () => {
@@ -717,11 +713,11 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack, initialJumpMessage
     setDraft(message.text);
   }, []);
 
-  // "Delete for me" — hides the message from this device only, the other
-  // side keeps seeing it untouched (see deleteMessage() in chatService.ts).
+  // Hides the message for both room members at once — the underlying data
+  // stays intact in Firestore (see deleteMessage() in chatService.ts).
   const handleDeleteMessage = useCallback(
     (message: ChatMessage) => {
-      Alert.alert('Mesajı sil', 'Bu mesaj sadece sende silinecek, karşı taraf görmeye devam edecek.', [
+      Alert.alert('Mesajı sil', 'Bu mesaj hem sende hem karşı tarafta silinecek.', [
         { text: 'Vazgeç', style: 'cancel' },
         {
           text: 'Sil',
@@ -828,11 +824,12 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack, initialJumpMessage
   }, []);
 
   const canSend = draft.trim().length > 0;
-  // Disclosed (not secret) admin access — see e2eService.ts's third
-  // encryption copy and ObsidianVault/Changelog.md. Skipped only when admin
-  // is literally one of the two people in this room (talking to yourself
-  // needs no disclosure); shown every time the room is otherwise opened,
-  // not a one-time dismissible toast.
+  // Disclosed (not secret) admin access — the admin account has read-only
+  // Firestore access to every room (see firestore.rules' isAdmin() and
+  // ObsidianVault/Changelog.md). Skipped only when admin is literally one of
+  // the two people in this room (talking to yourself needs no disclosure);
+  // shown every time the room is otherwise opened, not a one-time
+  // dismissible toast.
   const showAdminDisclosure = !!ADMIN_UID && myUid !== ADMIN_UID && contact.uid !== ADMIN_UID;
 
   return (
@@ -1016,9 +1013,7 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack, initialJumpMessage
           accessibilityLabel="Sabitlenmiş mesaja git">
           <Text style={styles.pinnedBannerIcon}>📌</Text>
           <Text style={[styles.pinnedBannerText, { color: theme.textMuted }]} numberOfLines={1}>
-            {pinnedMessagePreview.deleted
-              ? 'Bu mesaj silindi'
-              : pinnedMessagePreview.type === 'text'
+            {pinnedMessagePreview.type === 'text'
               ? pinnedMessagePreview.text
               : pinnedMessagePreview.type === 'image'
               ? '📷 Fotoğraf'

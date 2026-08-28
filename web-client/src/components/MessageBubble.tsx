@@ -15,7 +15,7 @@ function formatTime(timestamp: number): string {
   return `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
 }
 
-export function replyPreviewLabel(message: Pick<ChatMessage, 'type' | 'text' | 'fileName' | 'deleted'>): string {
+export function replyPreviewLabel(message: Pick<ChatMessage, 'type' | 'text' | 'fileName'>): string {
   switch (message.type) {
     case 'image':
       return '📷 Fotoğraf';
@@ -24,7 +24,7 @@ export function replyPreviewLabel(message: Pick<ChatMessage, 'type' | 'text' | '
     case 'file':
       return `📄 ${message.fileName || 'Dosya'}`;
     default:
-      return message.deleted ? 'Bu mesaj silindi' : message.text;
+      return message.text;
   }
 }
 
@@ -82,15 +82,10 @@ function MessageBubble({ message, isMine, myUid, isPinned, highlighted, onToggle
     );
   }
 
-  if (message.deleted) {
-    return (
-      <div className={`msg-row ${isMine ? 'mine' : 'other'}`}>
-        <div className="msg-bubble deleted" style={{ borderColor: theme.border }}>
-          <span style={{ color: theme.textFaint, fontStyle: 'italic', fontSize: 13.5 }}>🚫 Bu mesaj silindi</span>
-        </div>
-      </div>
-    );
-  }
+  // A deleted message (see ChatMessage.deleted) never reaches this component
+  // — subscribeToMessages/subscribeToLatestMessage/searchMessagesInRoom in
+  // chatService.ts already filter it out of the list for both room members
+  // (the admin panel's AdminScreen.tsx is the one place that doesn't).
 
   return (
     <div id={`msg-${message.id}`} className={`msg-row ${isMine ? 'mine' : 'other'} ${hasReactions ? 'with-reactions' : ''}`}>
@@ -161,11 +156,6 @@ function MessageBubble({ message, isMine, myUid, isPinned, highlighted, onToggle
         })()}
 
         <div className="msg-meta-row">
-          {!!message.deletedFor?.length && (
-            <span style={{ opacity: 0.6, fontSize: 11 }} title="Karşı taraf bu mesajı kendi tarafından sildi">
-              🗑️{' '}
-            </span>
-          )}
           {!!message.editedAt && <span style={{ opacity: 0.6, fontSize: 11 }}>düzenlendi · </span>}
           <span style={{ opacity: 0.6, fontSize: 11 }}>{formatTime(message.createdAt)}</span>
           {isMine && (

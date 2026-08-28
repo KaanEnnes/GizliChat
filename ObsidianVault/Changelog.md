@@ -1,5 +1,86 @@
 # Değişiklik Günlüğü
 
+## 2026-08-28 — Şifreleme kaldırıldı (bilinçli geri alma) + silme modeli "her ikisinde de gizle, veri kalsın" olarak değişti
+
+Proje sahibinin **doğrudan talebiyle** iki değişiklik: (1) aşağıdaki iki maddede açıklanan
+uçtan uca mesaj şifrelemesi (E2E) **tamamen geri alındı** — bu bir bug fix değil, bilinçli bir
+karar: proje sahibi şifrelemeyi tutmamaya karar verdi. (2) Mesaj silme modeli, kişiye özel
+`deletedFor` (delete-for-me) dizisinden, tek bir paylaşılan `deleted` bayrağına geçti.
+
+**1) Şifreleme kaldırıldı.** `72233d6` (gerçek E2E, tweetnacl `nacl.box`) ve `ee5ebda`'nın (admin
+erişimi) şifrelemeye bağımlı kısımları geri alındı — **admin hesabı/rolü, admin'in salt-okunur
+Firestore erişimi, bildirim şeridi, admin paneli UI'ı ve satranç-sıfırlama düzeltmesi aynen
+kaldı**, sadece şifreleme iskeleti söküldü:
+- Üç client'taki `chatService.ts` (mobil, web-client) ve `pc-client/index.html`: `sendMessage`,
+  `sendMediaMessage`, `editMessage`, alım/decrypt yolu (`docToMessage`) ve `ReplyPreview`/`replyTo`
+  artık doğrudan düz `text`/`mediaUrl` alanlarını okuyup yazıyor — `encrypted`/`encText`/
+  `encNonce`/`encTextSelf`/`encNonceSelf`/`encTextAdmin`/`encNonceAdmin`/`encMediaUrl*` alanlarının
+  hiçbiri artık yazılmıyor/okunmuyor. `searchMessagesInRoom` düz `.text` üzerinde eşleşiyor, ayrı
+  bir decrypt adımı yok.
+- `src/services/e2eService.ts` ve `web-client/src/services/e2eService.ts` **tamamen silindi**;
+  `AppNavigator.tsx`/`App.tsx`'teki `ensureKeyPair` çağrıları kaldırıldı; `index.js`'teki
+  `import 'react-native-get-random-values'` satırı kaldırıldı (sadece nacl için gerekliydi).
+  `tweetnacl`/`tweetnacl-util`/`react-native-get-random-values` bağımlılıkları `package.json` ve
+  `web-client/package.json`'dan çıkarıldı (repo genelinde başka kullanım yok, grep ile doğrulandı),
+  `npm install` her iki tarafta da çalıştırılıp lockfile'lar güncellendi.
+- **Admin paneli** (`web-client/src/screens/AdminScreen.tsx`): artık admin'in kendi anahtar
+  çiftiyle decrypt yapmıyor, doğrudan `message.text`/`message.mediaUrl` okuyor.
+- **Bildirim şeridi** üç client'ta da **aynen kaldı** — `"🔒 Bu sohbet yönetici hesabı tarafından da
+  görüntülenebilir"` metni zaten şifrelemeden bahsetmiyordu, hâlâ doğru: admin artık düz metni
+  Firestore okuma izniyle görebiliyor, bunu kullanıcıya bildirmek — şifreleme yokken — eskisinden
+  daha da önemli.
+- `firestore.rules`'daki edit carve-out'unun `hasOnly([...])` listesinden `encrypted`/`encText`/
+  `encNonce`/`encTextSelf`/`encNonceSelf`/`encTextAdmin`/`encNonceAdmin` çıkarıldı, sadece
+  `['text', 'editedAt']` kaldı (bkz. madde 2 için `deleted` kontrolü).
+- Görsel/ses/dosya boyutu eşikleri (`MAX_INLINE_MEDIA_DATA_URI_LENGTH` vb.) şifrelemenin getirdiği
+  ~%33 ek büyüme payı olmadan eski 900.000 karakter değerine döndü (üç client'ta da).
+
+**2) Silme modeli: "her ikisinde de gizle, veri Firestore'da kalsın".** Eskiden `deleteMessage()`
+sadece silen kişinin kendi görünümünden mesajı gizliyordu (`deletedFor: string[]`, per-viewer). Artık
+oda üyelerinden **hangisi silerse silsin, mesaj her iki tarafın listesinden de anında kayboluyor** —
+ama içerik (`text`/`mediaUrl`/her şey) **Firestore'da olduğu gibi duruyor**, silinmiyor. Bu bilinçli:
+veri örneğin admin panelinden hâlâ görülebilsin diye.
+- `deleteMessage(roomId, message, myUid)` artık `updateDoc(messageRef, { deleted: true, deletedBy:
+  myUid, deletedAt: serverTimestamp() })` yazıyor — `text`/`mediaUrl`/`fileName` gibi hiçbir alana
+  dokunmuyor.
+- Eski "her iki taraf da sildiyse video Storage'dan silinsin" (`hiddenForEveryone` kontrolü,
+  `deleteRoomMedia` çağrısı) mantığı **tamamen kaldırıldı** — artık silme tek işlemde her iki
+  tarafı da anında gizlediği için, ve asıl amaç veriyi (medya dahil) korumak olduğu için, bir mesaj
+  silindiğinde video dosyası Storage'da kalmaya devam ediyor.
+- `!message.deletedFor?.includes(myUid)` filtresi geçen her yerde `!message.deleted`'e çevrildi:
+  mobil `ChatRoomScreen.tsx`/`subscribeToMessages`, web-client eşleniği, `pc-client/index.html`,
+  `subscribeToLatestMessage`'ın (mobil + web-client `chatService.ts`) dahili filtresi (böylece
+  `NotificationCenter.tsx`/`ContactsScreen.tsx` gibi onu tüketen ekranlar otomatik doğru davranıyor),
+  `searchMessagesInRoom`.
+- **Admin paneli bu filtreyi UYGULAMIYOR** — `subscribeToMessages`'a yeni bir `includeDeleted`
+  parametresi eklendi (varsayılan `false`), `AdminScreen.tsx` `true` geçiyor, böylece kullanıcılar
+  tarafından "silinmiş" mesajlar da dahil hepsini görüyor; silinmiş olanların yanına küçük
+  "(kullanıcılar tarafından silindi)" etiketi eklendi (opsiyonel görsel ayrım).
+- `firestore.rules`: eski `hasOnly(['deletedFor'])` carve-out'u, tam olarak `deleted`/`deletedBy`/
+  `deletedAt` üçlüsünü set etmeye izin veren bir kurala değişti (`deleted == true` ve
+  `deletedBy == request.auth.uid` şartıyla). Edit carve-out'u da artık `deletedFor` yerine
+  `!resource.data.get('deleted', false)` kontrolü yapıyor — silinmiş bir mesaj kimse tarafından
+  düzenlenemiyor.
+- `ChatMessage` arayüzü (`chatService.ts`, her iki kopya): `deletedFor?: string[]` yerine
+  `deleted?: boolean`, `deletedBy?: string`, `deletedAt?: number` — `docToMessage`'ın alan
+  eşlemesi buna göre güncellendi.
+- `MessageBubble.tsx` (mobil + web-client) ve `pc-client/index.html`'deki eski "mesaj silindi"
+  placeholder render mantığı kaldırıldı — artık `deleted: true` olan mesajlar listeden tamamen
+  filtrelendiği için (yukarı bkz.), bir bubble'ın kendi içinde "silindi" göstermesine gerek yok;
+  bu, ayrı ve daha eski bir "global deleted + içerik temizlenir" modelinden kalma ölü kod olduğu
+  için silindi (`deletedFor?.length` tabanlı 🗑️ ikonu dahil).
+
+**Doğrulama:** mobil `npx tsc --noEmit` temiz, web-client `npx tsc -b --force` temiz, pc-client'ın
+module script'i `node --check` ile sözdizimi kontrolünden geçti (geçici `.mjs` çıkarılıp silindi,
+önceki commit'lerdeki gibi). Repo genelinde `deletedFor`/`encText`/`encNonce`/`encTextSelf`/
+`encTextAdmin`/`e2eService`/`ensureKeyPair` için grep temiz döndü (bu Changelog'un eski maddeleri
+hariç — onlar tarihsel kayıt, değiştirilmedi). **Manuel/canlı test edilemeyen kısımlar:** yeni
+`firestore.rules`'ın gerçek projeye deploy edilmesi (`firebase deploy --only firestore:rules` bu
+oturumda çalıştırılmadı — deploy edilmeden mevcut kurallar geçerli kalır, yani hem eski şifreleme
+alan adları hem eski `deletedFor` carve-out'u canlıda hâlâ yürürlükte olabilir); iki gerçek hesapla
+uçtan uca mesajlaşıp silme/düzenleme/admin-panel akışlarının canlıda beklendiği gibi çalıştığını
+gözle doğrulamak.
+
 ## 2026-08-28 — Açıkça bildirilmiş (gizli DEĞİL) yönetici erişimi + minimal admin paneli
 
 Proje sahibinin talebi üzerine, kullanıcıların sohbet gizliliğini yanıltacak sessiz/gizli bir

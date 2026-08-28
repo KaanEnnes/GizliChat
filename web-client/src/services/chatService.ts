@@ -1,6 +1,5 @@
 import {
   addDoc,
-  arrayUnion,
   collection,
   deleteField,
   doc,
@@ -17,19 +16,6 @@ import {
   updateDoc,
 } from 'firebase/firestore';
 import { db } from './firebase';
-import { ADMIN_UID } from '../config/adminConfig';
-import {
-  decryptBlob,
-  encryptForRoom,
-  encryptToPublicKey,
-  ensureKeyPair,
-  getLoadedKeyPair,
-  getPeerPublicKey,
-  type KeyPair,
-  otherUidInRoom,
-  type StoredEncryptedRef,
-  UNDECRYPTABLE_PLACEHOLDER,
-} from './e2eService';
 
 export type MessageType = 'text' | 'image' | 'video' | 'audio' | 'file' | 'call';
 
@@ -50,63 +36,18 @@ export interface ChatMessage {
   deliveredAt?: number;
   readAt?: number;
   editedAt?: number;
+  /** Set once either room member deletes this message — hides it from BOTH participants' message list (see subscribeToMessages/subscribeToLatestMessage/searchMessagesInRoom's filtering and deleteMessage()). The doc and every other field (`text`/`mediaUrl`/etc.) are left fully intact in Firestore — nothing is cleared — so the data still exists for the admin panel to see (see AdminScreen.tsx, which deliberately does not apply this filter). */
   deleted?: boolean;
-  deletedFor?: string[];
+  /** Uid of whichever room member called deleteMessage() — set alongside `deleted`. */
+  deletedBy?: string;
+  /** When the message was deleted — set alongside `deleted`. */
+  deletedAt?: number;
   replyTo?: {
     messageId: string;
     text: string;
     senderId: string;
     type: MessageType;
   };
-}
-
-/** What e2eService needs to decrypt any message/replyTo in a room — see buildDecryptContext. */
-interface DecryptContext {
-  myUid: string;
-  myKeyPair: KeyPair;
-  peerPublicKey: Uint8Array | null;
-  /**
-   * Only set when `myUid` is ADMIN_UID viewing a room it is NOT a member of
-   * (the disclosed admin-panel read path, see AdminScreen.tsx) — maps each
-   * of the room's two real member uids to their published public key. The
-   * admin decrypts the third `enc*Admin` copy of each field using the
-   * message's actual sender's key, not a single fixed "peer" like the
-   * normal self/peer path below (there is no single peer from the admin's
-   * point of view — either room member can be the sender).
-   */
-  adminSenderPublicKeys?: Record<string, Uint8Array | null>;
-}
-
-async function buildDecryptContext(roomId: string, myUid: string): Promise<DecryptContext> {
-  const myKeyPair = getLoadedKeyPair(myUid) ?? (await ensureKeyPair(myUid));
-  const participants = roomId.split('__');
-  if (myUid === ADMIN_UID && !participants.includes(myUid)) {
-    const keys = await Promise.all(participants.map(uid => getPeerPublicKey(uid)));
-    const adminSenderPublicKeys: Record<string, Uint8Array | null> = {};
-    participants.forEach((uid, i) => {
-      adminSenderPublicKeys[uid] = keys[i];
-    });
-    return { myUid, myKeyPair, peerPublicKey: null, adminSenderPublicKeys };
-  }
-  const peerUid = otherUidInRoom(roomId, myUid);
-  const peerPublicKey = await getPeerPublicKey(peerUid);
-  return { myUid, myKeyPair, peerPublicKey };
-}
-
-function resolveEncryptedString(encrypted: boolean, plain: string, ref: StoredEncryptedRef, senderId: string, ctx: DecryptContext): string {
-  if (!encrypted) {
-    return plain;
-  }
-  return decryptBlob(ref, senderId, ctx.myUid, ctx.myKeyPair, ctx.peerPublicKey) ?? UNDECRYPTABLE_PLACEHOLDER;
-}
-
-/** Admin-panel counterpart of resolveEncryptedString — decrypts the `enc*Admin` copy of a field using the actual sender's public key (see DecryptContext.adminSenderPublicKeys). Returns undefined (not a placeholder) when there's simply no admin copy on this doc, so callers can fall back to the plain field, matching a legacy/plaintext message. */
-function resolveAdminEncryptedString(ciphertextB64: unknown, nonceB64: unknown, senderId: string, ctx: DecryptContext): string | undefined {
-  if (!ctx.adminSenderPublicKeys || typeof ciphertextB64 !== 'string' || typeof nonceB64 !== 'string' || !ciphertextB64 || !nonceB64) {
-    return undefined;
-  }
-  const senderPublicKey = ctx.adminSenderPublicKeys[senderId] ?? null;
-  return decryptBlob({ ciphertext: ciphertextB64, nonce: nonceB64 }, senderId, ctx.myUid, ctx.myKeyPair, senderPublicKey) ?? UNDECRYPTABLE_PLACEHOLDER;
 }
 
 const ROOMS_COLLECTION = 'rooms';
@@ -121,73 +62,25 @@ export function getRoomId(uidA: string, uidB: string): string {
   return [uidA, uidB].sort().join('__');
 }
 
-function docToMessage(
-  docSnap: {
-    id: string;
-    data: (options?: { serverTimestamps?: 'estimate' | 'previous' | 'none' }) => Record<string, unknown>;
-    metadata: { hasPendingWrites: boolean };
-  },
-  ctx: DecryptContext,
-): ChatMessage {
+function docToMessage(docSnap: {
+  id: string;
+  data: (options?: { serverTimestamps?: 'estimate' | 'previous' | 'none' }) => Record<string, unknown>;
+  metadata: { hasPendingWrites: boolean };
+}): ChatMessage {
   const data = docSnap.data({ serverTimestamps: 'estimate' });
   const createdAt = data.createdAt instanceof Timestamp ? data.createdAt.toMillis() : Date.now();
   const type = (data.type as MessageType) || 'text';
   const senderId = typeof data.senderId === 'string' ? data.senderId : '';
-  const encrypted = data.encrypted === true;
-
-  const text = ctx.adminSenderPublicKeys
-    ? resolveAdminEncryptedString(data.encTextAdmin, data.encNonceAdmin, senderId, ctx) ?? (typeof data.text === 'string' ? data.text : '')
-    : resolveEncryptedString(
-        encrypted,
-        typeof data.text === 'string' ? data.text : '',
-        { ciphertext: data.encText as string, nonce: data.encNonce as string, ciphertextSelf: data.encTextSelf as string, nonceSelf: data.encNonceSelf as string },
-        senderId,
-        ctx,
-      );
-
-  // mediaUrl encryption only applies to image/audio (inline base64 data
-  // URIs) — video stays a plain Storage URL, out of scope for this pass.
-  let mediaUrl = typeof data.mediaUrl === 'string' ? data.mediaUrl : undefined;
-  if (encrypted && (type === 'image' || type === 'audio')) {
-    if (ctx.adminSenderPublicKeys) {
-      mediaUrl = resolveAdminEncryptedString(data.encMediaUrlAdmin, data.encMediaUrlNonceAdmin, senderId, ctx) ?? mediaUrl;
-    } else if (data.encMediaUrl || data.encMediaUrlSelf) {
-      const decryptedMedia = decryptBlob(
-        { ciphertext: data.encMediaUrl as string, nonce: data.encMediaUrlNonce as string, ciphertextSelf: data.encMediaUrlSelf as string, nonceSelf: data.encMediaUrlNonceSelf as string },
-        senderId,
-        ctx.myUid,
-        ctx.myKeyPair,
-        ctx.peerPublicKey,
-      );
-      mediaUrl = decryptedMedia ?? undefined;
-    }
-  }
+  const text = typeof data.text === 'string' ? data.text : '';
+  const mediaUrl = typeof data.mediaUrl === 'string' ? data.mediaUrl : undefined;
 
   const rawReplyTo = typeof data.replyTo === 'object' && data.replyTo !== null ? (data.replyTo as Record<string, unknown>) : undefined;
   const replyTo: ChatMessage['replyTo'] = rawReplyTo
     ? {
         messageId: typeof rawReplyTo.messageId === 'string' ? rawReplyTo.messageId : '',
         type: (rawReplyTo.type as MessageType) || 'text',
-        // Display label only, not the encryption actor — see the mobile
-        // chatService.ts's identical note. The ciphertext was produced by
-        // this outer message's sender (`senderId`), so decryption must use
-        // `senderId`, not `rawReplyTo.senderId`.
         senderId: typeof rawReplyTo.senderId === 'string' ? rawReplyTo.senderId : '',
-        text: ctx.adminSenderPublicKeys
-          ? resolveAdminEncryptedString(rawReplyTo.encTextAdmin, rawReplyTo.encNonceAdmin, senderId, ctx) ??
-            (typeof rawReplyTo.text === 'string' ? rawReplyTo.text : '')
-          : resolveEncryptedString(
-              rawReplyTo.encrypted === true,
-              typeof rawReplyTo.text === 'string' ? rawReplyTo.text : '',
-              {
-                ciphertext: rawReplyTo.encText as string,
-                nonce: rawReplyTo.encNonce as string,
-                ciphertextSelf: rawReplyTo.encTextSelf as string,
-                nonceSelf: rawReplyTo.encNonceSelf as string,
-              },
-              senderId,
-              ctx,
-            ),
+        text: typeof rawReplyTo.text === 'string' ? rawReplyTo.text : '',
       }
     : undefined;
 
@@ -210,17 +103,29 @@ function docToMessage(
     readAt: data.readAt instanceof Timestamp ? data.readAt.toMillis() : undefined,
     editedAt: data.editedAt instanceof Timestamp ? data.editedAt.toMillis() : undefined,
     deleted: data.deleted === true,
-    deletedFor: Array.isArray(data.deletedFor) ? (data.deletedFor as string[]) : undefined,
+    deletedBy: typeof data.deletedBy === 'string' ? data.deletedBy : undefined,
+    deletedAt: data.deletedAt instanceof Timestamp ? data.deletedAt.toMillis() : undefined,
     replyTo,
   };
 }
 
+/**
+ * Subscribes to a room's most recent `limitCount` messages in real time.
+ *
+ * `includeDeleted` (default false) skips the "hide deleted messages" filter
+ * — used only by the admin panel (AdminScreen.tsx), which is deliberately
+ * allowed to keep seeing a message either room member has deleted, since the
+ * whole point of the shared `deleted` flag (see ChatMessage.deleted) is that
+ * the underlying data stays intact in Firestore for exactly this kind of
+ * visibility. The two regular clients always use the default (false).
+ */
 export function subscribeToMessages(
   roomId: string,
   limitCount: number,
   myUid: string,
   onMessages: (messages: ChatMessage[]) => void,
   onError: (error: Error) => void,
+  includeDeleted = false,
 ): Unsubscribe {
   const messagesQuery = query(
     collection(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION),
@@ -230,29 +135,25 @@ export function subscribeToMessages(
   return onSnapshot(
     messagesQuery,
     snapshot => {
-      buildDecryptContext(roomId, myUid).then(ctx => {
-        onMessages(
-          snapshot.docs
-            .map(d => docToMessage(d, ctx))
-            .filter(message => !message.deletedFor?.includes(myUid))
-            .reverse(),
-        );
-      });
+      onMessages(
+        snapshot.docs
+          .map(d => docToMessage(d))
+          .filter(message => includeDeleted || !message.deleted)
+          .reverse(),
+      );
     },
     error => onError(error as Error),
   );
 }
 
 export function subscribeToLatestMessage(roomId: string, myUid: string, onMessage: (message: ChatMessage | null) => void): Unsubscribe {
-  // Widened past 1 so a message deleted-for-me can be skipped client-side.
+  // Widened past 1 so a deleted message can be skipped client-side.
   const latestQuery = query(collection(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION), orderBy('createdAt', 'desc'), limit(20));
   return onSnapshot(
     latestQuery,
     snapshot => {
-      buildDecryptContext(roomId, myUid).then(ctx => {
-        const found = snapshot.docs.map(d => docToMessage(d, ctx)).find(message => !message.deletedFor?.includes(myUid));
-        onMessage(found ?? null);
-      });
+      const found = snapshot.docs.map(d => docToMessage(d)).find(message => !message.deleted);
+      onMessage(found ?? null);
     },
     () => onMessage(null),
   );
@@ -273,56 +174,6 @@ export async function markMessageRead(roomId: string, messageId: string): Promis
   await updateDoc(messageRef, { readAt: serverTimestamp(), deliveredAt: serverTimestamp() });
 }
 
-/** See the mobile chatService.ts's identical helper — falls back to plain `text` if the peer has no published public key yet (hasn't opened the app since E2E shipped). */
-async function buildEncryptedFieldGroup(roomId: string, senderId: string, plaintext: string): Promise<Record<string, unknown>> {
-  const blob = await encryptForRoom(roomId, senderId, plaintext);
-  if (!blob) {
-    return { text: plaintext };
-  }
-  const fields: Record<string, unknown> = {
-    text: '',
-    encrypted: true,
-    encText: blob.ciphertext,
-    encNonce: blob.nonce,
-    encTextSelf: blob.ciphertextSelf,
-    encNonceSelf: blob.nonceSelf,
-  };
-  const adminFields = await buildAdminFieldGroup(roomId, senderId, plaintext);
-  return { ...fields, ...adminFields };
-}
-
-/** See the mobile chatService.ts's identical helper — third encrypted copy boxed to ADMIN_UID's own public key (the openly disclosed admin-access model, see ChatRoomScreen.tsx's banner). Skipped when ADMIN_UID is already a room member, or when the admin's public key isn't published yet. */
-async function buildAdminFieldGroup(roomId: string, senderId: string, plaintext: string): Promise<Record<string, unknown>> {
-  if (!ADMIN_UID || roomId.split('__').includes(ADMIN_UID)) {
-    return {};
-  }
-  const adminBlob = await encryptToPublicKey(senderId, ADMIN_UID, plaintext);
-  if (!adminBlob) {
-    return {};
-  }
-  return { encTextAdmin: adminBlob.ciphertext, encNonceAdmin: adminBlob.nonce };
-}
-
-/** Same admin-copy logic as buildAdminFieldGroup, for the mediaUrl field's own naming (`encMediaUrlAdmin`/`encMediaUrlNonceAdmin`) — see sendMediaMessage. */
-async function buildAdminMediaFieldGroup(roomId: string, senderId: string, mediaUrl: string): Promise<Record<string, unknown>> {
-  if (!ADMIN_UID || roomId.split('__').includes(ADMIN_UID)) {
-    return {};
-  }
-  const adminBlob = await encryptToPublicKey(senderId, ADMIN_UID, mediaUrl);
-  if (!adminBlob) {
-    return {};
-  }
-  return { encMediaUrlAdmin: adminBlob.ciphertext, encMediaUrlNonceAdmin: adminBlob.nonce };
-}
-
-// `replyTo.senderId` is a display label (whose message is being quoted),
-// not who is encrypting — see docToMessage's identical note. The ciphertext
-// is always produced by the CURRENT sender of this new message.
-async function buildEncryptedReplyTo(roomId: string, senderId: string, replyTo: NonNullable<ChatMessage['replyTo']>): Promise<Record<string, unknown>> {
-  const fields = await buildEncryptedFieldGroup(roomId, senderId, replyTo.text);
-  return { messageId: replyTo.messageId, type: replyTo.type, senderId: replyTo.senderId, ...fields };
-}
-
 export async function sendMessage(
   roomId: string,
   text: string,
@@ -333,20 +184,15 @@ export async function sendMessage(
   if (!trimmed) {
     return;
   }
-  const [textFields, replyToPayload] = await Promise.all([
-    buildEncryptedFieldGroup(roomId, senderId, trimmed),
-    replyTo ? buildEncryptedReplyTo(roomId, senderId, replyTo) : Promise.resolve(undefined),
-  ]);
   await addDoc(collection(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION), {
     type: 'text',
-    ...textFields,
+    text: trimmed,
     senderId,
     createdAt: serverTimestamp(),
-    ...(replyToPayload ? { replyTo: replyToPayload } : {}),
+    ...(replyTo ? { replyTo } : {}),
   });
 }
 
-/** `mediaUrl` is encrypted the same way as text for image/audio only (inline base64 data URIs) — video stays a plain Storage URL, out of scope for this pass. See the mobile chatService.ts's sendMediaMessage for the full rationale. */
 export async function sendMediaMessage(
   roomId: string,
   senderId: string,
@@ -354,25 +200,12 @@ export async function sendMediaMessage(
   mediaUrl: string,
   durationSeconds?: number,
 ): Promise<void> {
-  const shouldEncryptMedia = type === 'image' || type === 'audio';
-  const blob = shouldEncryptMedia ? await encryptForRoom(roomId, senderId, mediaUrl) : null;
-  const adminMediaFields = shouldEncryptMedia && blob ? await buildAdminMediaFieldGroup(roomId, senderId, mediaUrl) : {};
-  const mediaFields = blob
-    ? {
-        encrypted: true,
-        encMediaUrl: blob.ciphertext,
-        encMediaUrlNonce: blob.nonce,
-        encMediaUrlSelf: blob.ciphertextSelf,
-        encMediaUrlNonceSelf: blob.nonceSelf,
-        ...adminMediaFields,
-      }
-    : { mediaUrl };
   await addDoc(collection(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION), {
     type,
     text: '',
     senderId,
     createdAt: serverTimestamp(),
-    ...mediaFields,
+    mediaUrl,
     ...(durationSeconds !== undefined ? { durationSeconds } : {}),
   });
 }
@@ -389,20 +222,30 @@ export async function sendFileMessage(roomId: string, senderId: string, mediaUrl
   });
 }
 
-/** `myUid` is always the message's own sender (firestore.rules rejects anyone else editing) — needed here to (re)encrypt the new text. */
+/** `myUid` is always the message's own sender (firestore.rules rejects anyone else editing). */
 export async function editMessage(roomId: string, messageId: string, newText: string, myUid: string): Promise<void> {
   const trimmed = newText.trim();
   if (!trimmed) {
     return;
   }
-  const textFields = await buildEncryptedFieldGroup(roomId, myUid, trimmed);
   const messageRef = doc(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION, messageId);
-  await updateDoc(messageRef, { ...textFields, editedAt: serverTimestamp() });
+  await updateDoc(messageRef, { text: trimmed, editedAt: serverTimestamp() });
 }
 
+/**
+ * Hides a message from BOTH room members at once — whichever one deletes it,
+ * the other stops seeing it too (see the `!message.deleted` filters in
+ * subscribeToMessages/subscribeToLatestMessage/searchMessagesInRoom).
+ * Deliberately does NOT clear `text`/`mediaUrl`/any other field: the content
+ * stays fully intact in Firestore, just hidden from the two participants'
+ * own views — the admin panel (AdminScreen.tsx) intentionally does not apply
+ * this filter, so the data remains visible there. Enforced by
+ * firestore.rules to only ever set exactly `deleted`/`deletedBy`/`deletedAt`,
+ * and only by a room member.
+ */
 export async function deleteMessage(roomId: string, messageId: string, myUid: string): Promise<void> {
   const messageRef = doc(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION, messageId);
-  await updateDoc(messageRef, { deletedFor: arrayUnion(myUid) });
+  await updateDoc(messageRef, { deleted: true, deletedBy: myUid, deletedAt: serverTimestamp() });
 }
 
 function roomDocRef(roomId: string) {
@@ -433,21 +276,19 @@ export async function fetchMessageById(roomId: string, messageId: string, myUid:
   if (!snap.exists()) {
     return null;
   }
-  const ctx = await buildDecryptContext(roomId, myUid);
-  return docToMessage(snap, ctx);
+  return docToMessage(snap);
 }
 
-/** One-off (non-live) text search over a room's message history — see the mobile chatService.ts for the full rationale (no Firestore full-text search, client-side substring match over up to MAX_MESSAGE_LIMIT messages, deleted-for-me excluded). Used by both in-chat search and cross-contact global search. */
+/** One-off (non-live) text search over a room's message history — see the mobile chatService.ts for the full rationale (no Firestore full-text search, client-side substring match over up to MAX_MESSAGE_LIMIT messages, deleted messages excluded). Used by both in-chat search and cross-contact global search. */
 export async function searchMessagesInRoom(roomId: string, myUid: string, queryText: string): Promise<ChatMessage[]> {
   const needle = queryText.trim().toLowerCase();
   if (!needle) {
     return [];
   }
-  const [snapshot, ctx] = await Promise.all([
-    getDocs(query(collection(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION), orderBy('createdAt', 'desc'), limit(MAX_MESSAGE_LIMIT))),
-    buildDecryptContext(roomId, myUid),
-  ]);
+  const snapshot = await getDocs(
+    query(collection(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION), orderBy('createdAt', 'desc'), limit(MAX_MESSAGE_LIMIT)),
+  );
   return snapshot.docs
-    .map(d => docToMessage(d, ctx))
-    .filter(message => !message.deletedFor?.includes(myUid) && message.type === 'text' && message.text.toLowerCase().includes(needle));
+    .map(d => docToMessage(d))
+    .filter(message => !message.deleted && message.type === 'text' && message.text.toLowerCase().includes(needle));
 }

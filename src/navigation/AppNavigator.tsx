@@ -10,7 +10,6 @@ import { Contact } from '../services/contactService';
 import { Account, logoutAccount, updatePresenceHeartbeat } from '../services/userService';
 import { initFcm } from '../services/fcmService';
 import { setActiveChatUid } from '../services/notificationService';
-import { ensureKeyPair } from '../services/e2eService';
 
 // How often this device stamps itself as "recently active" for other users'
 // online indicators — well under ONLINE_THRESHOLD_MS so a contact never
@@ -41,17 +40,6 @@ function AppNavigator(): React.JSX.Element {
 
     return () => subscription.remove();
   }, [screen]);
-
-  // E2E key pair: generated once per device (or reused if already present),
-  // and the public half published to Firestore — see e2eService.ts for the
-  // new-account vs. new-device logic. Runs for both a fresh login and a
-  // restored session, since both flows converge on `account` being set.
-  useEffect(() => {
-    if (!account) {
-      return;
-    }
-    ensureKeyPair(account.uid).catch(() => undefined);
-  }, [account]);
 
   useEffect(() => {
     if (!account) {
