@@ -1,5 +1,21 @@
 # Değişiklik Günlüğü
 
+## 2026-08-28 — PC istemcisi: satranç modalinde oyunu sıfırlama butonu geri eklendi
+
+USB flash bellekteki (arama/galeri/"benden sil") ve eski yerel yedekteki (satranç/XOX/
+sesli-görüntülü arama/mesaj düzenleme/FCM/PC istemcisi) iki farklı geliştirme kolunun
+`merge/usb-plus-backup` branch'inde birleştirilmesi sırasında `pc-client/index.html`'deki
+iki ayrı satranç modali implementasyonu tek dosyada birleştirilirken oyunu **oyun devam
+ederken** sıfırlayan 🔄 buton (`chessResetBtn`) yanlışlıkla düşmüştü — sadece oyun bittikten
+sonraki "YENİDEN OYNA" butonu kalmıştı. Buton, `resetChessGame()` fonksiyonu ve event
+listener'ıyla birlikte geri eklendi:
+
+- HTML: modal başlık satırına `chessClose`'dan önce `#chessResetBtn` eklendi.
+- `resetChessGame()`: mevcut oyunun `playerWhite`/`playerBlack` atamasını koruyarak `fen`'i
+  başlangıç pozisyonuna resetler (rakip renk ataması `startChessGame()`'deki gibi karışmaz).
+- Görünürlük: `renderChessModal()` içinde `chessGameState` varken (aktif ya da bitmiş fark
+  etmeksizin) buton gösteriliyor, oyun hiç başlamamışken gizli.
+
 ## 2026-08-27 — Sohbette birden fazla fotoğraf/video/dosya tek seferde gönderilebiliyor
 
 Hem mobil hem web-client'ta medya seçici tek dosyayla sınırlıydı (`result.assets[0]` /

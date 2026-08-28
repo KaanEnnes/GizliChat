@@ -596,6 +596,7 @@
     <div class="modalCard">
       <div class="modalHeaderRow">
         <span class="modalTitle">Satranç — <span id="chessContactName"></span></span>
+        <button class="modalClose hidden" id="chessResetBtn" title="Sıfırla">🔄</button>
         <button class="modalClose" id="chessClose">✕</button>
       </div>
       <div class="modalStatus" id="chessStatus"></div>
@@ -699,7 +700,7 @@ const pickXoxBtn = $('pickXoxBtn'), pickChessBtn = $('pickChessBtn'), gamePicker
 const xoxModal = $('xoxModal'), xoxContactName = $('xoxContactName'), xoxStatus = $('xoxStatus');
 const xoxBoardEl = $('xoxBoard'), xoxStartBtn = $('xoxStartBtn'), xoxClose = $('xoxClose');
 const chessModal = $('chessModal'), chessContactName = $('chessContactName'), chessStatus = $('chessStatus');
-const chessBoardEl = $('chessBoard'), chessStartBtn = $('chessStartBtn'), chessClose = $('chessClose');
+const chessBoardEl = $('chessBoard'), chessStartBtn = $('chessStartBtn'), chessClose = $('chessClose'), chessResetBtn = $('chessResetBtn');
 const pinnedBanner = $('pinnedBanner'), pinnedBannerText = $('pinnedBannerText'), pinnedBannerClose = $('pinnedBannerClose');
 const replyBanner = $('replyBanner'), replyBannerText = $('replyBannerText'), replyBannerClose = $('replyBannerClose');
 const lightbox = $('lightbox'), lightboxImg = $('lightboxImg');
@@ -1272,6 +1273,7 @@ pickChessBtn.addEventListener('click', () => {
   renderChessModal();
 });
 chessClose.addEventListener('click', closeAllGameModals);
+chessResetBtn.addEventListener('click', resetChessGame);
 chessModal.addEventListener('click', e => { if (e.target === chessModal) closeAllGameModals(); });
 
 // ---- XOX ----
@@ -1362,6 +1364,16 @@ async function startChessGame() {
   });
 }
 
+async function resetChessGame() {
+  const game = chessGameState;
+  if (!game) return;
+  const roomId = roomIdFor(myUid, activeContactUid);
+  await setDoc(gameDocRef(roomId, 'chess'), {
+    fen: new Chess().fen(), playerWhite: game.playerWhite, playerBlack: game.playerBlack,
+    status: 'active', outcome: null, updatedAt: serverTimestamp(),
+  });
+}
+
 async function playChessMove(from, to) {
   const game = chessGameState;
   if (!game || game.status !== 'active') return;
@@ -1435,6 +1447,7 @@ function renderChessModal() {
   } else {
     chessStartBtn.classList.add('hidden');
   }
+  chessResetBtn.classList.toggle('hidden', !game);
 }
 
 function handleChessSquareClick(square) {
