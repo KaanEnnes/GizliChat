@@ -436,9 +436,7 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack, initialJumpMessage
           roomId,
           trimmed,
           myUid,
-          replying
-            ? { messageId: replying.id, text: replying.text, senderId: replying.senderId, type: replying.type }
-            : undefined,
+          replying ? { id: replying.id, type: replying.type, text: replying.text, senderId: replying.senderId } : undefined,
         );
     request.catch(error => {
       setConnectionError(editing ? `Mesaj düzenlenemedi: ${error.message}` : `Mesaj gönderilemedi: ${error.message}`);
@@ -474,7 +472,11 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack, initialJumpMessage
       const extension = isVideo ? 'mp4' : 'jpg';
       try {
         const { url, sizeBytes } = await uploadRoomMedia(roomId, isVideo ? 'video' : 'image', asset.uri, extension);
-        await sendMediaMessage(roomId, myUid, isVideo ? 'video' : 'image', url, undefined, hidden);
+        // sizeBytes is only stored on the message for a video (see
+        // ChatMessage.sizeBytes) — chatService's deleteMessage() needs it to
+        // refund the sender's video-storage quota once nobody can see the
+        // message anymore.
+        await sendMediaMessage(roomId, myUid, isVideo ? 'video' : 'image', url, undefined, hidden, isVideo ? sizeBytes : undefined);
         if (isVideo) {
           addVideoBytesUsed(myUid, sizeBytes).catch(() => undefined);
         }
@@ -720,7 +722,7 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack, initialJumpMessage
           text: 'Sil',
           style: 'destructive',
           onPress: () => {
-            deleteMessage(roomId, message.id, myUid).catch(error => {
+            deleteMessage(roomId, message, myUid).catch(error => {
               setConnectionError(`Silinemedi: ${(error as Error).message}`);
             });
           },
@@ -1091,6 +1093,19 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack, initialJumpMessage
         </View>
       )}
 
+      {replyingTo && (
+        <View style={[styles.editingBanner, { backgroundColor: theme.surfaceAlt, borderTopColor: theme.border }]}>
+          <Text style={[styles.editingBannerIcon, { color: theme.identity }]}>↩️</Text>
+          <Text style={[styles.editingBannerText, { color: theme.textMuted }]} numberOfLines={1}>
+            {replyingTo.senderId === myUid ? 'Kendine' : contact.name}{' '}
+            yanıtlıyorsun: {replyPreviewLabel(replyingTo)}
+          </Text>
+          <Pressable onPress={handleCancelReply} hitSlop={8} accessibilityRole="button" accessibilityLabel="Yanıtlamayı iptal et">
+            <Text style={[styles.editingBannerClose, { color: theme.textFaint }]}>✕</Text>
+          </Pressable>
+        </View>
+      )}
+
       {editingMessage && (
         <View style={[styles.editingBanner, { backgroundColor: theme.surfaceAlt, borderTopColor: theme.border }]}>
           <Text style={[styles.editingBannerIcon, { color: theme.identity }]}>✏️</Text>
@@ -1098,18 +1113,6 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack, initialJumpMessage
             Mesajı düzenliyorsun: {editingMessage.text}
           </Text>
           <Pressable onPress={handleCancelEdit} hitSlop={8} accessibilityRole="button" accessibilityLabel="Düzenlemeyi iptal et">
-            <Text style={[styles.editingBannerClose, { color: theme.textFaint }]}>✕</Text>
-          </Pressable>
-        </View>
-      )}
-
-      {replyingTo && (
-        <View style={[styles.editingBanner, { backgroundColor: theme.surfaceAlt, borderTopColor: theme.border }]}>
-          <Text style={[styles.editingBannerIcon, { color: theme.identity }]}>↩️</Text>
-          <Text style={[styles.editingBannerText, { color: theme.textMuted }]} numberOfLines={1}>
-            Yanıtlıyorsun: {replyingTo.type === 'text' ? replyingTo.text : replyPreviewLabel(replyingTo)}
-          </Text>
-          <Pressable onPress={handleCancelReply} hitSlop={8} accessibilityRole="button" accessibilityLabel="Yanıtlamayı iptal et">
             <Text style={[styles.editingBannerClose, { color: theme.textFaint }]}>✕</Text>
           </Pressable>
         </View>

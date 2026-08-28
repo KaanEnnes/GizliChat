@@ -375,6 +375,132 @@
     justify-content: center;
   }
   #themeToggle:hover { opacity: 0.85; }
+
+  /* ---- Header actions / pinned banner ---- */
+  #chatHeader { justify-content: space-between; }
+  #chatHeaderActions { display: flex; gap: 8px; }
+  #chatHeaderActions button {
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text);
+    border-radius: 8px;
+    padding: 6px 10px;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  #chatHeaderActions button.hasBadge { position: relative; }
+  #chatHeaderActions button.hasBadge::after {
+    content: '';
+    position: absolute;
+    top: 3px; right: 3px;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--danger);
+    border: 1px solid var(--surface);
+  }
+  #pinnedBanner {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 18px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg);
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--text-muted);
+    cursor: pointer;
+  }
+  #pinnedBanner .txt { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #pinnedBanner .close { color: var(--text-faint); font-weight: 700; cursor: pointer; }
+
+  /* ---- Message bubble extras: reply quote, hover actions, hidden pill ---- */
+  .bubble { position: relative; }
+  .msgRow { position: relative; }
+  .msgActions {
+    position: absolute;
+    top: -14px;
+    display: none;
+    gap: 4px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 2px 4px;
+  }
+  .msgRow.mine .msgActions { right: 4px; }
+  .msgRow:not(.mine) .msgActions { left: 4px; }
+  .msgRow:hover .msgActions { display: flex; }
+  .msgActions button {
+    border: none;
+    background: none;
+    cursor: pointer;
+    font-size: 12.5px;
+    padding: 2px 4px;
+    color: var(--text-muted);
+  }
+  .replyQuote {
+    border-left: 3px solid var(--identity);
+    background: rgba(0,0,0,0.06);
+    border-radius: 6px;
+    padding: 5px 8px;
+    margin-bottom: 6px;
+    font-size: 12.5px;
+  }
+  :root[data-theme="dark"] .replyQuote { background: rgba(255,255,255,0.06); }
+  .replyQuote .sender { font-weight: 700; color: var(--identity); margin-bottom: 1px; }
+  .replyQuote .txt { opacity: 0.85; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .hiddenPill {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    background: var(--bg);
+    cursor: pointer;
+    min-width: 170px;
+  }
+  .hiddenPill .icon { font-size: 20px; }
+  .hiddenPill .label { font-weight: 700; font-size: 13px; }
+  .hiddenPill .hint { font-size: 11px; color: var(--text-muted); margin-top: 1px; }
+  .pillMsg {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border-radius: 10px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  /* ---- Reply composer banner ---- */
+  #replyBanner {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 18px;
+    border-top: 1px solid var(--border);
+    background: var(--bg);
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--text-muted);
+  }
+  #replyBanner .txt { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #replyBanner .close { color: var(--text-faint); font-weight: 700; cursor: pointer; }
+
+  /* ---- Lightbox (hidden-photo viewer) ---- */
+  #lightbox {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.85);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+    cursor: pointer;
+  }
+  #lightbox img { max-width: 90vw; max-height: 90vh; border-radius: 8px; }
+
 </style>
 </head>
 <body>
@@ -415,11 +541,21 @@
           <span id="chatHeaderName"></span>
           <button id="gameBtn" class="iconBtn" title="Oyun oyna">🎮</button>
         </div>
+        <div id="pinnedBanner" class="hidden">
+          <span>📌</span>
+          <span class="txt" id="pinnedBannerText"></span>
+          <span class="close" id="pinnedBannerClose" title="Sabiti kaldır">✕</span>
+        </div>
         <div id="chatQuota"></div>
         <div id="globalError" class="hidden"></div>
         <div id="messages"></div>
         <button id="scrollToBottomBtn" class="hidden" title="En alta git">↓</button>
         <div id="uploadStatus" class="hidden"></div>
+        <div id="replyBanner" class="hidden">
+          <span>↩️</span>
+          <span class="txt" id="replyBannerText"></span>
+          <span class="close" id="replyBannerClose" title="Yanıtlamayı iptal et">✕</span>
+        </div>
         <div id="composer">
           <button id="attachBtn" class="iconBtn" title="Fotoğraf/Video gönder">📎</button>
           <input id="fileInput" type="file" accept="image/*,video/*" class="hidden" />
@@ -470,6 +606,10 @@
 
 </div>
 
+<div id="lightbox" class="hidden">
+  <img id="lightboxImg" src="" />
+</div>
+
 <script type="module">
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.17.1/firebase-app.js';
 import {
@@ -478,7 +618,7 @@ import {
 } from 'https://www.gstatic.com/firebasejs/12.17.1/firebase-auth.js';
 import {
   getFirestore, doc, setDoc, getDoc, getDocs, collection, addDoc, query, where,
-  orderBy, limit, onSnapshot, serverTimestamp, Timestamp, increment,
+  orderBy, limit, onSnapshot, serverTimestamp, Timestamp, increment, deleteField,
 } from 'https://www.gstatic.com/firebasejs/12.17.1/firebase-firestore.js';
 import {
   getStorage, ref, uploadBytes, getDownloadURL,
@@ -560,6 +700,9 @@ const xoxModal = $('xoxModal'), xoxContactName = $('xoxContactName'), xoxStatus 
 const xoxBoardEl = $('xoxBoard'), xoxStartBtn = $('xoxStartBtn'), xoxClose = $('xoxClose');
 const chessModal = $('chessModal'), chessContactName = $('chessContactName'), chessStatus = $('chessStatus');
 const chessBoardEl = $('chessBoard'), chessStartBtn = $('chessStartBtn'), chessClose = $('chessClose');
+const pinnedBanner = $('pinnedBanner'), pinnedBannerText = $('pinnedBannerText'), pinnedBannerClose = $('pinnedBannerClose');
+const replyBanner = $('replyBanner'), replyBannerText = $('replyBannerText'), replyBannerClose = $('replyBannerClose');
+const lightbox = $('lightbox'), lightboxImg = $('lightboxImg');
 
 let isRegisterMode = false;
 let myUid = null, myUsername = null;
@@ -571,6 +714,10 @@ let contactListUnsubs = [];
 let profileUnsub = null;
 let xoxUnsub = null, xoxGame = null;
 let chessUnsub = null, chessGameState = null, chessSelected = null;
+let pinnedUnsub = null;
+let pinnedMessageId = null;
+let latestMessages = []; // [{id, data}] for the currently-open room, for pin/reply jump-to lookups
+let replyingTo = null; // {id, type, text, senderId}
 // When this session started — only messages newer than this trigger a
 // desktop notification, so re-opening the app doesn't re-notify for the
 // whole existing history. Tracked per contact so a burst from the same
@@ -685,12 +832,20 @@ function cleanupSession() {
   if (roomUnsub) roomUnsub();
   if (profileUnsub) profileUnsub();
   if (xoxUnsub) xoxUnsub();
+  if (pinnedUnsub) pinnedUnsub();
   if (chessUnsub) chessUnsub();
   contacts = [];
   activeContactUid = null;
   activeContact = null;
+  pinnedMessageId = null;
+  latestMessages = [];
+  xoxGame = null;
+  chessGameState = null;
   contactList.innerHTML = '';
   messagesEl.innerHTML = '';
+  gamePickerModal.classList.add('hidden');
+  xoxModal.classList.add('hidden');
+  chessModal.classList.add('hidden');
 }
 
 function startSession() {
@@ -747,11 +902,15 @@ function renderContactList() {
     contactList.appendChild(row);
 
     const roomId = roomIdFor(myUid, contact.uid);
-    const latestQ = query(collection(db, 'rooms', roomId, 'messages'), orderBy('createdAt', 'desc'), limit(1));
+    // Widened past 1 (same as the mobile app's subscribeToLatestMessage) so a
+    // message this user deleted-for-themselves can be skipped client-side —
+    // otherwise the sidebar preview would keep showing a message this device
+    // has hidden from its own view.
+    const latestQ = query(collection(db, 'rooms', roomId, 'messages'), orderBy('createdAt', 'desc'), limit(20));
     contactListUnsubs.push(onSnapshot(latestQ, snap => {
       const previewEl = document.getElementById(`preview_${contact.uid}`);
-      if (snap.empty) { if (previewEl) previewEl.textContent = 'Henüz mesaj yok'; return; }
-      const docSnap = snap.docs[0];
+      const docSnap = snap.docs.find(d => !(d.data().deletedFor || []).includes(myUid));
+      if (!docSnap) { if (previewEl) previewEl.textContent = 'Henüz mesaj yok'; return; }
       const data = docSnap.data();
       if (previewEl) previewEl.textContent = previewText(data, myUid);
 
@@ -781,10 +940,11 @@ function renderContactList() {
 function previewText(data, myUid) {
   const mine = data.senderId === myUid ? 'Sen: ' : '';
   switch (data.type) {
-    case 'image': return `${mine}📷 Fotoğraf`;
+    case 'image': return data.hidden ? `${mine}🙈 Gizli Fotoğraf` : `${mine}📷 Fotoğraf`;
     case 'video': return `${mine}🎥 Video`;
     case 'audio': return `${mine}🎤 Sesli mesaj`;
     case 'call': return `📞 Arama`;
+    case 'chess': return `${mine}♟️ Satranç daveti`;
     default: return `${mine}${data.text || ''}`;
   }
 }
@@ -803,6 +963,7 @@ function openRoom(contact) {
   chatHeaderWrap.classList.remove('hidden');
   chatHeaderName.textContent = contact.name;
   renderContactList();
+  cancelReply();
 
   if (roomUnsub) roomUnsub();
   const roomId = roomIdFor(myUid, contact.uid);
@@ -812,8 +973,11 @@ function openRoom(contact) {
     const docs = snapshot.docs.slice().reverse();
     const wasNearBottom = messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight < 80;
     const distanceFromBottom = messagesEl.scrollHeight - messagesEl.scrollTop;
+    latestMessages = docs.map(d => ({ id: d.id, data: d.data() }));
     messagesEl.innerHTML = '';
-    docs.forEach(d => messagesEl.appendChild(renderMessage(d.data())));
+    latestMessages
+      .filter(m => !m.data.deletedFor?.includes(myUid))
+      .forEach(m => messagesEl.appendChild(renderMessage(m.id, m.data)));
     if (wasNearBottom) {
       messagesEl.scrollTop = messagesEl.scrollHeight;
       scrollToBottomBtn.classList.add('hidden');
@@ -821,7 +985,14 @@ function openRoom(contact) {
       messagesEl.scrollTop = messagesEl.scrollHeight - distanceFromBottom;
       scrollToBottomBtn.classList.remove('hidden');
     }
+    renderPinnedBanner();
   }, error => showError(`Sohbete bağlanılamadı: ${error.message}`));
+
+  if (pinnedUnsub) pinnedUnsub();
+  pinnedUnsub = onSnapshot(doc(db, 'rooms', roomId), snap => {
+    pinnedMessageId = snap.data()?.pinnedMessageId || null;
+    renderPinnedBanner();
+  });
 
   if (xoxUnsub) xoxUnsub();
   xoxUnsub = onSnapshot(gameDocRef(roomId, 'ticTacToe'), snap => {
@@ -833,6 +1004,58 @@ function openRoom(contact) {
     chessGameState = snap.exists() ? snap.data() : null;
     if (!chessModal.classList.contains('hidden')) renderChessModal();
   });
+}
+
+function renderPinnedBanner() {
+  if (!pinnedMessageId) {
+    pinnedBanner.classList.add('hidden');
+    return;
+  }
+  const found = latestMessages.find(m => m.id === pinnedMessageId);
+  if (!found) {
+    pinnedBanner.classList.add('hidden');
+    return;
+  }
+  pinnedBannerText.textContent = found.data.deleted ? 'Bu mesaj silindi' : previewText(found.data, myUid);
+  pinnedBanner.classList.remove('hidden');
+}
+
+pinnedBanner.addEventListener('click', e => {
+  if (e.target === pinnedBannerClose) return;
+  const el = messagesEl.querySelector(`[data-msg-id="${pinnedMessageId}"]`);
+  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+});
+pinnedBannerClose.addEventListener('click', async () => {
+  if (!activeContactUid) return;
+  const roomId = roomIdFor(myUid, activeContactUid);
+  await setDoc(doc(db, 'rooms', roomId), { pinnedMessageId: deleteField() }, { merge: true });
+});
+
+async function togglePin(messageId) {
+  if (!activeContactUid) return;
+  const roomId = roomIdFor(myUid, activeContactUid);
+  const next = pinnedMessageId === messageId ? deleteField() : messageId;
+  await setDoc(doc(db, 'rooms', roomId), { pinnedMessageId: next }, { merge: true });
+}
+
+// ---- Reply ----
+function setReplyingTo(id, data) {
+  replyingTo = { id, type: data.type, text: data.text || '', senderId: data.senderId };
+  replyBannerText.textContent = `${data.senderId === myUid ? 'Kendine' : activeContact?.name || ''} yanıtlıyorsun: ${previewText(data, myUid)}`;
+  replyBanner.classList.remove('hidden');
+  textInput.focus();
+}
+function cancelReply() {
+  replyingTo = null;
+  replyBanner.classList.add('hidden');
+}
+replyBannerClose.addEventListener('click', cancelReply);
+
+function replyQuoteHtml(replyTo) {
+  if (!replyTo) return '';
+  const senderLabel = replyTo.senderId === myUid ? 'Sen' : (activeContact?.name || 'O');
+  const label = previewText({ type: replyTo.type, text: replyTo.text, senderId: replyTo.senderId }, myUid).replace(/^Sen: /, '');
+  return `<div class="replyQuote"><div class="sender">${escapeHtml(senderLabel)}</div><div class="txt">${escapeHtml(label)}</div></div>`;
 }
 
 messagesEl.addEventListener('scroll', () => {
@@ -850,30 +1073,80 @@ function formatTime(ts) {
   return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
 }
 
-function renderMessage(data) {
+function renderMessage(id, data) {
   const row = document.createElement('div');
   row.className = 'msgRow' + (data.senderId === myUid ? ' mine' : '');
+  row.dataset.msgId = id;
+
+  // Call/chess entries render as a plain centered pill, same as the mobile app — no reply/pin actions on those.
+  if (data.type === 'call') {
+    const pill = document.createElement('div');
+    pill.className = 'pillMsg';
+    pill.textContent = `${data.callVideo ? '🎥 Görüntülü' : '📞 Sesli'} arama`;
+    row.style.justifyContent = 'center';
+    row.appendChild(pill);
+    return row;
+  }
+  if (data.type === 'chess') {
+    const pill = document.createElement('div');
+    pill.className = 'pillMsg';
+    pill.textContent = data.senderId === myUid ? '♟️ Satranç daveti gönderdin' : '♟️ Satranç daveti aldın';
+    row.style.justifyContent = 'center';
+    row.appendChild(pill);
+    return row;
+  }
+
   const bubble = document.createElement('div');
   bubble.className = 'bubble';
+  bubble.innerHTML = replyQuoteHtml(data.replyTo);
 
-  if (data.type === 'image' && data.mediaUrl) {
-    bubble.innerHTML = `<img src="${data.mediaUrl}" />`;
+  if (data.deleted) {
+    bubble.innerHTML += `<span style="opacity:.6;font-style:italic;">🚫 Bu mesaj silindi</span>`;
+  } else if (data.type === 'image' && data.hidden && data.mediaUrl) {
+    const pill = document.createElement('div');
+    pill.className = 'hiddenPill';
+    pill.innerHTML = `<span class="icon">🙈</span><div><div class="label">Gizli Fotoğraf</div><div class="hint">Görmek için tıkla</div></div>`;
+    pill.addEventListener('click', () => {
+      lightboxImg.src = data.mediaUrl;
+      lightbox.classList.remove('hidden');
+    });
+    bubble.appendChild(pill);
+  } else if (data.type === 'image' && data.mediaUrl) {
+    bubble.innerHTML += `<img src="${data.mediaUrl}" />`;
   } else if (data.type === 'video' && data.mediaUrl) {
-    bubble.innerHTML = `<video src="${data.mediaUrl}" controls></video>`;
+    bubble.innerHTML += `<video src="${data.mediaUrl}" controls></video>`;
   } else if (data.type === 'audio' && data.mediaUrl) {
-    bubble.innerHTML = `<audio src="${data.mediaUrl}" controls></audio>`;
-  } else if (data.type === 'call') {
-    bubble.textContent = `${data.callVideo ? '🎥 Görüntülü' : '📞 Sesli'} arama`;
+    bubble.innerHTML += `<audio src="${data.mediaUrl}" controls></audio>`;
   } else {
     bubble.appendChild(document.createTextNode(data.text || ''));
   }
+
   const time = document.createElement('div');
   time.className = 'time';
   time.textContent = formatTime(data.createdAt);
   bubble.appendChild(time);
   row.appendChild(bubble);
+
+  if (!data.deleted) {
+    const actions = document.createElement('div');
+    actions.className = 'msgActions';
+    const replyBtn = document.createElement('button');
+    replyBtn.title = 'Yanıtla';
+    replyBtn.textContent = '↩️';
+    replyBtn.addEventListener('click', () => setReplyingTo(id, data));
+    const pinBtn = document.createElement('button');
+    pinBtn.title = pinnedMessageId === id ? 'Sabiti kaldır' : 'Sabitle';
+    pinBtn.textContent = '📌';
+    pinBtn.addEventListener('click', () => togglePin(id));
+    actions.appendChild(replyBtn);
+    actions.appendChild(pinBtn);
+    row.appendChild(actions);
+  }
+
   return row;
 }
+
+lightbox.addEventListener('click', () => lightbox.classList.add('hidden'));
 
 // ---- Sending ----
 async function sendText() {
@@ -881,9 +1154,12 @@ async function sendText() {
   if (!trimmed || !activeContactUid) return;
   textInput.value = '';
   const roomId = roomIdFor(myUid, activeContactUid);
+  const reply = replyingTo;
+  cancelReply();
   try {
     await addDoc(collection(db, 'rooms', roomId, 'messages'), {
       type: 'text', text: trimmed, senderId: myUid, createdAt: serverTimestamp(),
+      ...(reply ? { replyTo: reply } : {}),
     });
   } catch (error) {
     showError(`Mesaj gönderilemedi: ${error.message}`);
@@ -918,8 +1194,10 @@ fileInput.addEventListener('change', async () => {
         showError('Fotoğraf çok büyük, daha düşük çözünürlüklü bir fotoğraf seç.');
         return;
       }
+      const hidden = window.confirm('Bu fotoğrafı gizli olarak mı göndermek istiyorsun? (Karşı taraf dokunana kadar görünmez)');
       await addDoc(collection(db, 'rooms', roomId, 'messages'), {
         type: 'image', text: '', senderId: myUid, createdAt: serverTimestamp(), mediaUrl: dataUri,
+        ...(hidden ? { hidden: true } : {}),
       });
     }
   } catch (error) {

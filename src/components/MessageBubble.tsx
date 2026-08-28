@@ -103,8 +103,10 @@ const SWIPE_REPLY_THRESHOLD = 56;
 /** Hard cap on how far the bubble visually follows the finger, past which it just resists. */
 const SWIPE_MAX_DRAG = 84;
 
-/** One-line preview shown inside a reply quote block for non-text message types, which have no `text`. */
-export function replyPreviewLabel(message: ChatMessage): string {
+/** One-line preview shown for a message with no meaningful `text` — used both inside a reply quote block and (via ChatRoomScreen's search results) as a search-row snippet. */
+export function replyPreviewLabel(
+  message: Pick<ChatMessage, 'type' | 'text'> & Partial<Pick<ChatMessage, 'fileName' | 'callVideo' | 'deleted'>>,
+): string {
   switch (message.type) {
     case 'image':
       return '📷 Fotoğraf';
@@ -116,6 +118,8 @@ export function replyPreviewLabel(message: ChatMessage): string {
       return `📄 ${message.fileName || 'Dosya'}`;
     case 'call':
       return message.callVideo ? '🎥 Görüntülü arama' : '📞 Sesli arama';
+    case 'chess':
+      return '♟️ Satranç daveti';
     default:
       return message.deleted ? 'Bu mesaj silindi' : message.text;
   }
@@ -316,6 +320,24 @@ function MessageBubble({
     );
   }
 
+  // Chess invite entry — centered like a call log, just informational.
+  if (message.type === 'chess') {
+    return (
+      <View style={styles.callRow}>
+        <View style={[styles.callPill, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+          <Text style={styles.callIcon}>♟️</Text>
+          <View style={styles.callTextWrap}>
+            <Text style={[styles.callLabel, { color: theme.text }]}>
+              {isMine ? 'Satranç daveti gönderdin' : 'Satranç daveti aldın'}
+            </Text>
+            <Text style={[styles.callDetail, { color: theme.textMuted }]}>Oynamak için oyun menüsünü aç</Text>
+          </View>
+          <Text style={[styles.callTime, { color: theme.textFaint }]}>{formatTime(message.createdAt)}</Text>
+        </View>
+      </View>
+    );
+  }
+
   // Soft-deleted — content is already cleared server-side, just show the placeholder.
   if (message.deleted) {
     return (
@@ -329,13 +351,18 @@ function MessageBubble({
 
   const showHiddenOverlay = (message.type === 'image' || message.type === 'video') && message.hidden && !revealed;
 
+  const handleRevealHidden = () => {
+    setRevealed(true);
+  };
+
   return (
     <View
       style={[
         styles.row,
         isMine ? styles.rowRight : styles.rowLeft,
         hasReactions && styles.rowWithReactions,
-      ]}>
+      ]}
+      {...panResponder.panHandlers}>
       {isPinned && (
         <Text style={[styles.pinnedTag, { color: theme.textFaint }]}>📌 Sabitlendi</Text>
       )}
@@ -368,37 +395,42 @@ function MessageBubble({
             ]}>
             {message.replyTo && (
               <Pressable
-                onPress={() => onJumpToReply(message.replyTo!.messageId)}
+                onPress={() => onJumpToReply(message.replyTo!.id)}
                 style={[
                   styles.replyQuote,
                   { borderLeftColor: theme.identity, backgroundColor: theme.overlay },
                 ]}
                 accessibilityRole="button"
                 accessibilityLabel="Yanıtlanan mesaja git">
+                <Text style={[styles.replyQuoteSender, { color: theme.identity }]} numberOfLines={1}>
+                  {message.replyTo.senderId === myUid ? 'Sen' : 'O'}
+                </Text>
                 <Text style={[styles.replyQuoteText, { color: bubbleTextColor }]} numberOfLines={1}>
-                  {replyPreviewLabel({ ...message.replyTo, id: '', createdAt: 0 } as ChatMessage)}
+                  {replyPreviewLabel(message.replyTo)}
                 </Text>
               </Pressable>
             )}
-        {(message.type === 'image' || message.type === 'video') && message.mediaUrl && showHiddenOverlay && (
-          <Pressable
-            onPress={() => setRevealed(true)}
-            style={[styles.hiddenMediaBox, { backgroundColor: theme.surfaceAlt }]}
-            accessibilityRole="button"
-            accessibilityLabel={message.type === 'video' ? 'Gizli videoyu göster' : 'Gizli fotoğrafı göster'}>
-            <Text style={styles.hiddenMediaIcon}>🙈</Text>
-            <Text style={[styles.hiddenMediaText, { color: theme.text }]}>
-              {message.type === 'video' ? 'Gizli Video' : 'Gizli Fotoğraf'}
-            </Text>
-            <Text style={[styles.hiddenMediaHint, { color: theme.textMuted }]}>Görmek için dokun</Text>
-          </Pressable>
-        )}
+            {(message.type === 'image' || message.type === 'video') && message.mediaUrl && showHiddenOverlay && (
+              <Pressable
+                onPress={handleRevealHidden}
+                style={[styles.hiddenMediaPill, { backgroundColor: theme.surfaceAlt }]}
+                accessibilityRole="button"
+                accessibilityLabel={message.type === 'video' ? 'Gizli videoyu göster' : 'Gizli fotoğrafı göster'}>
+                <Text style={styles.hiddenMediaIcon}>🙈</Text>
+                <View style={styles.hiddenMediaTextWrap}>
+                  <Text style={[styles.hiddenMediaText, { color: theme.text }]}>
+                    {message.type === 'video' ? 'Gizli Video' : 'Gizli Fotoğraf'}
+                  </Text>
+                  <Text style={[styles.hiddenMediaHint, { color: theme.textMuted }]}>Görmek için dokun</Text>
+                </View>
+              </Pressable>
+            )}
 
-        {message.type === 'image' && message.mediaUrl && !showHiddenOverlay && (
-          <Pressable onPress={() => (onImagePress ? onImagePress(message.id) : setViewerOpen(true))}>
-            <Image source={{ uri: message.mediaUrl }} style={styles.mediaImage} resizeMode="cover" />
-          </Pressable>
-        )}
+            {message.type === 'image' && message.mediaUrl && !showHiddenOverlay && (
+              <Pressable onPress={() => (onImagePress ? onImagePress(message.id) : setViewerOpen(true))}>
+                <Image source={{ uri: message.mediaUrl }} style={styles.mediaImage} resizeMode="cover" />
+              </Pressable>
+            )}
 
         {message.type === 'video' && cachedVideoUri && !showHiddenOverlay && (
           <Pressable onPress={() => setViewerOpen(true)} style={styles.videoThumbWrap}>
@@ -659,8 +691,13 @@ const styles = StyleSheet.create({
     borderLeftWidth: 3,
     borderRadius: 6,
     paddingHorizontal: 8,
-    paddingVertical: 4,
+    paddingVertical: 5,
     marginBottom: 6,
+  },
+  replyQuoteSender: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    marginBottom: 1,
   },
   replyQuoteText: {
     fontSize: 12.5,
@@ -744,19 +781,23 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     marginBottom: 2,
   },
-  hiddenMediaBox: {
-    width: 220,
-    height: 220,
-    borderRadius: 10,
+  hiddenMediaPill: {
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
+    minWidth: 170,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
   },
   hiddenMediaIcon: {
-    fontSize: 34,
-    marginBottom: 8,
+    fontSize: 22,
+    marginRight: 10,
+  },
+  hiddenMediaTextWrap: {
+    flexShrink: 1,
   },
   hiddenMediaText: {
-    fontSize: 14,
+    fontSize: 13.5,
     fontWeight: '700',
   },
   hiddenMediaHint: {

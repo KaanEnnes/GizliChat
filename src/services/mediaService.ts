@@ -1,4 +1,4 @@
-import { getDownloadURL, getStorage, ref, uploadBytes } from 'firebase/storage';
+import { deleteObject, getDownloadURL, getStorage, ref, uploadBytes } from 'firebase/storage';
 import { app } from './firebase';
 
 const storage = getStorage(app);
@@ -25,6 +25,22 @@ export async function uploadRoomMedia(
   await uploadBytes(storageRef, blob, { contentType: blob.type || undefined });
   const url = await getDownloadURL(storageRef);
   return { url, sizeBytes: blob.size };
+}
+
+/**
+ * Deletes a previously-uploaded Storage object given its download URL (as
+ * saved on the message doc) — the JS SDK's `ref()` accepts an https download
+ * URL directly, no need to keep the raw storage path around separately.
+ * Swallows "already gone" errors since a message can only be deleted once.
+ */
+export async function deleteRoomMedia(url: string): Promise<void> {
+  try {
+    await deleteObject(ref(storage, url));
+  } catch (error) {
+    if ((error as { code?: string }).code !== 'storage/object-not-found') {
+      throw error;
+    }
+  }
 }
 
 /**

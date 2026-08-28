@@ -17,9 +17,19 @@ import {
   updateDoc,
 } from 'firebase/firestore';
 import { db } from './firebase';
+import { deleteRoomMedia } from './mediaService';
+import { addVideoBytesUsed } from './userService';
 
-export type MessageType = 'text' | 'image' | 'video' | 'audio' | 'file' | 'call';
+export type MessageType = 'text' | 'image' | 'video' | 'audio' | 'file' | 'call' | 'chess';
 export type CallLogStatus = 'completed' | 'missed';
+
+/** Lightweight snapshot of the message being replied to — stored inline so the quoted preview renders without an extra fetch. */
+export interface ReplyPreview {
+  id: string;
+  type: MessageType;
+  text: string;
+  senderId: string;
+}
 
 export interface ChatMessage {
   id: string;
@@ -63,12 +73,9 @@ export interface ChatMessage {
   /** Present for image/video messages sent as "gizli" (hidden) — the bubble shows a reveal button instead of the media until tapped. */
   hidden?: boolean;
   /** Set when this message was sent as a reply (swipe-to-reply) — a snapshot of the original message, not a live reference, so it still renders correctly if the original is later edited/deleted. */
-  replyTo?: {
-    messageId: string;
-    text: string;
-    senderId: string;
-    type: MessageType;
-  };
+  replyTo?: ReplyPreview;
+  /** Present for video messages (the only type still on Firebase Storage, see `mediaUrl` above) — the uploaded blob's size, so deleteMessage can both remove the Storage object and refund this account's video-storage quota. */
+  sizeBytes?: number;
 }
 
 // Each 1-1 conversation gets its own room under rooms/{roomId}/messages.
@@ -164,9 +171,15 @@ function docToMessage(docSnap: {
     deleted: data.deleted === true,
     deletedFor: Array.isArray(data.deletedFor) ? (data.deletedFor as string[]) : undefined,
     hidden: data.hidden === true,
+    sizeBytes: typeof data.sizeBytes === 'number' ? data.sizeBytes : undefined,
     replyTo:
       typeof data.replyTo === 'object' && data.replyTo !== null
-        ? (data.replyTo as ChatMessage['replyTo'])
+        ? {
+            id: typeof (data.replyTo as Record<string, unknown>).id === 'string' ? ((data.replyTo as Record<string, unknown>).id as string) : '',
+            type: ((data.replyTo as Record<string, unknown>).type as MessageType) || 'text',
+            text: typeof (data.replyTo as Record<string, unknown>).text === 'string' ? ((data.replyTo as Record<string, unknown>).text as string) : '',
+            senderId: typeof (data.replyTo as Record<string, unknown>).senderId === 'string' ? ((data.replyTo as Record<string, unknown>).senderId as string) : '',
+          }
         : undefined,
   };
 }
@@ -227,7 +240,7 @@ export async function sendMessage(
   roomId: string,
   text: string,
   senderId: string,
-  replyTo?: ChatMessage['replyTo'],
+  replyTo?: ReplyPreview,
 ): Promise<void> {
   const trimmed = text.trim();
   if (!trimmed) {
@@ -271,6 +284,16 @@ export async function sendCallLogMessage(
   );
 }
 
+/** Posts a "Satranç daveti" system entry (rendered like a call log by MessageBubble) so the other side sees in the chat that a chess game just started. */
+export async function sendChessInviteMessage(roomId: string, senderId: string): Promise<void> {
+  await addDoc(collection(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION), {
+    type: 'chess',
+    text: '',
+    senderId,
+    createdAt: serverTimestamp(),
+  });
+}
+
 /** Sends an already-uploaded image/video/audio message (see mediaService.ts for the upload step). `hidden` marks an image/video as "gizli" — MessageBubble shows a reveal button instead of the media until the recipient taps it. */
 export async function sendMediaMessage(
   roomId: string,
@@ -279,6 +302,7 @@ export async function sendMediaMessage(
   mediaUrl: string,
   durationSeconds?: number,
   hidden?: boolean,
+  sizeBytes?: number,
 ): Promise<void> {
   await addDoc(collection(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION), {
     type,
@@ -288,6 +312,7 @@ export async function sendMediaMessage(
     mediaUrl,
     ...(durationSeconds !== undefined ? { durationSeconds } : {}),
     ...(hidden ? { hidden: true } : {}),
+    ...(sizeBytes !== undefined ? { sizeBytes } : {}),
   });
 }
 
@@ -310,7 +335,7 @@ export async function sendFileMessage(
   });
 }
 
-/** Edits a text message's content — sender-only (enforced by firestore.rules), and only while it hasn't been deleted. */
+/** Edits a text message's content — sender-only (enforced by firestore.rules), and only while the sender themself hasn't deleted-for-me'd it (see deleteMessage()'s doc comment). */
 export async function editMessage(roomId: string, messageId: string, newText: string): Promise<void> {
   const trimmed = newText.trim();
   if (!trimmed) {
@@ -320,9 +345,36 @@ export async function editMessage(roomId: string, messageId: string, newText: st
   await updateDoc(messageRef, { text: trimmed, editedAt: serverTimestamp() });
 }
 
-/** "Delete for me": hides a message from only the caller's own view — the doc and its content are untouched, so the other room member keeps seeing it normally. Works on any message (yours or theirs), enforced by firestore.rules to only ever add the caller's own uid. */
-export async function deleteMessage(roomId: string, messageId: string, myUid: string): Promise<void> {
-  const messageRef = doc(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION, messageId);
+/**
+ * "Delete for me": hides a message from only the caller's own view — the doc
+ * and its content are untouched, so the other room member keeps seeing it
+ * normally. Works on any message (yours or theirs), enforced by
+ * firestore.rules to only ever add the caller's own uid. This replaces
+ * backup/master's old "soft delete for everyone" model (a global `deleted`
+ * flag plus clearing `text`/`mediaUrl`), which is fully retired — see
+ * `deletedFor` on ChatMessage.
+ *
+ * backup/master's video cleanup (removing the uploaded Storage blob and
+ * refunding its bytes from the sender's quota) is preserved, but deferred:
+ * since delete-for-me is per-viewer, nuking the Storage object as soon as
+ * *one* side deletes it would break playback for the other member who still
+ * has it in view. Instead the cleanup only runs once every room participant
+ * (derived from `roomId`, which is always `[uidA, uidB].sort().join('__')`)
+ * has deleted-for-me the message — i.e. nobody can see it anymore.
+ */
+export async function deleteMessage(roomId: string, message: ChatMessage, myUid: string): Promise<void> {
+  const nextDeletedFor = Array.from(new Set([...(message.deletedFor ?? []), myUid]));
+  const participants = roomId.split('__');
+  const hiddenForEveryone = participants.length > 0 && participants.every(uid => nextDeletedFor.includes(uid));
+
+  if (hiddenForEveryone && message.type === 'video' && message.mediaUrl) {
+    await deleteRoomMedia(message.mediaUrl).catch(() => undefined);
+    if (message.sizeBytes) {
+      await addVideoBytesUsed(message.senderId, -message.sizeBytes).catch(() => undefined);
+    }
+  }
+
+  const messageRef = doc(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION, message.id);
   await updateDoc(messageRef, { deletedFor: arrayUnion(myUid) });
 }
 
