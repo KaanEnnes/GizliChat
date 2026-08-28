@@ -15,7 +15,7 @@ import {
 import { launchImageLibrary } from 'react-native-image-picker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { addContact, Contact, removeContact, setContactFavorite, subscribeToContacts } from '../services/contactService';
-import { ChatMessage, getRoomId, subscribeToLatestMessage } from '../services/chatService';
+import { ChatMessage, getRoomId, searchMessagesInRoom, subscribeToLatestMessage } from '../services/chatService';
 import { getLastReadAt, markRoomRead } from '../services/readStatusService';
 import {
   Account,
@@ -38,6 +38,10 @@ const WEEKDAYS_TR = ['Paz', 'Pzt', 'Sal', 'Çar', 'Per', 'Cum', 'Cmt'];
 const PRESENCE_RECHECK_MS = 20_000;
 const MAX_ONLINE_SHOWN = 8;
 const MAX_RECENT_CALLS_SHOWN = 5;
+// How long to wait after the user stops typing before firing the (per-contact) search queries.
+const GLOBAL_SEARCH_DEBOUNCE_MS = 350;
+// Hard cap on how many matches the global search shows across all contacts, newest first.
+const MAX_GLOBAL_SEARCH_RESULTS = 50;
 
 function formatListTimestamp(timestamp: number): string {
   const date = new Date(timestamp);
@@ -95,9 +99,14 @@ function formatCallDetail(message: ChatMessage): string {
 
 interface Props {
   account: Account;
-  onOpenRoom: (contact: Contact) => void;
+  onOpenRoom: (contact: Contact, messageIdToJumpTo?: string) => void;
   onOpenGames: () => void;
   onLogout: () => void;
+}
+
+interface GlobalSearchResult {
+  contact: Contact;
+  message: ChatMessage;
 }
 
 function ContactsScreen({ account, onOpenRoom, onOpenGames, onLogout }: Props): React.JSX.Element {
@@ -126,6 +135,11 @@ function ContactsScreen({ account, onOpenRoom, onOpenGames, onLogout }: Props): 
   const [adding, setAdding] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
 
+  const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
+  const [globalSearchQuery, setGlobalSearchQuery] = useState('');
+  const [globalSearchResults, setGlobalSearchResults] = useState<GlobalSearchResult[]>([]);
+  const [globalSearching, setGlobalSearching] = useState(false);
+
   useEffect(() => {
     const interval = setInterval(() => setNowTick(Date.now()), PRESENCE_RECHECK_MS);
     return () => clearInterval(interval);
@@ -149,7 +163,7 @@ function ContactsScreen({ account, onOpenRoom, onOpenGames, onLogout }: Props): 
           getLastReadAt(roomId).then(readAt => {
             setLastReadMap(prev => (prev[contact.uid] === readAt ? prev : { ...prev, [contact.uid]: readAt }));
           });
-          return subscribeToLatestMessage(roomId, message => {
+          return subscribeToLatestMessage(roomId, account.uid, message => {
             setLatestMessages(prev => ({ ...prev, [contact.uid]: message }));
           });
         });
@@ -214,6 +228,64 @@ function ContactsScreen({ account, onOpenRoom, onOpenGames, onLogout }: Props): 
     },
     [account.uid, onOpenRoom],
   );
+
+  const handleOpenSearchResult = useCallback(
+    (result: GlobalSearchResult) => {
+      const roomId = getRoomId(account.uid, result.contact.uid);
+      const now = Date.now();
+      markRoomRead(roomId, now);
+      setLastReadMap(prev => ({ ...prev, [result.contact.uid]: now }));
+      setGlobalSearchOpen(false);
+      setGlobalSearchQuery('');
+      onOpenRoom(result.contact, result.message.id);
+    },
+    [account.uid, onOpenRoom],
+  );
+
+  const handleCloseGlobalSearch = useCallback(() => {
+    setGlobalSearchOpen(false);
+    setGlobalSearchQuery('');
+  }, []);
+
+  // Debounced: waits for a pause in typing, then searches every contact's
+  // room in parallel (one-off queries, not live) and merges the results.
+  useEffect(() => {
+    const needle = globalSearchQuery.trim();
+    if (!needle) {
+      setGlobalSearchResults([]);
+      setGlobalSearching(false);
+      return undefined;
+    }
+    setGlobalSearching(true);
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      Promise.all(
+        contacts.map(async contact => {
+          const matches = await searchMessagesInRoom(getRoomId(account.uid, contact.uid), account.uid, needle);
+          return matches.map(message => ({ contact, message }));
+        }),
+      )
+        .then(perContact => {
+          if (cancelled) {
+            return;
+          }
+          const merged = perContact
+            .flat()
+            .sort((a, b) => b.message.createdAt - a.message.createdAt)
+            .slice(0, MAX_GLOBAL_SEARCH_RESULTS);
+          setGlobalSearchResults(merged);
+        })
+        .finally(() => {
+          if (!cancelled) {
+            setGlobalSearching(false);
+          }
+        });
+    }, GLOBAL_SEARCH_DEBOUNCE_MS);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [globalSearchQuery, contacts, account.uid]);
 
   const handleToggleFavorite = useCallback(
     (contact: Contact) => {
@@ -428,11 +500,71 @@ function ContactsScreen({ account, onOpenRoom, onOpenGames, onLogout }: Props): 
               <Text style={[styles.headerSubtitle, { color: theme.textFaint }]}>@{account.username}</Text>
             </View>
           </View>
+          <Pressable
+            onPress={() => setGlobalSearchOpen(v => !v)}
+            hitSlop={8}
+            style={styles.headerSearchButton}
+            accessibilityRole="button"
+            accessibilityLabel="Tüm sohbetlerde ara">
+            <Text style={styles.headerSearchIcon}>🔍</Text>
+          </Pressable>
           <Pressable onPress={onLogout} hitSlop={8} accessibilityRole="button" accessibilityLabel="Çıkış yap">
             <Text style={[styles.logoutText, { color: theme.danger }]}>Çıkış</Text>
           </Pressable>
         </View>
 
+        {globalSearchOpen && (
+          <View style={[styles.globalSearchBar, { backgroundColor: theme.surface, borderBottomColor: theme.border }]}>
+            <TextInput
+              value={globalSearchQuery}
+              onChangeText={setGlobalSearchQuery}
+              placeholder="Tüm sohbetlerde ara..."
+              placeholderTextColor={theme.textFaint}
+              style={[styles.globalSearchInput, { color: theme.text }]}
+              autoFocus
+            />
+            <Pressable onPress={handleCloseGlobalSearch} hitSlop={8} accessibilityRole="button" accessibilityLabel="Aramayı kapat">
+              <Text style={[styles.searchNavIcon, { color: theme.text }]}>✕</Text>
+            </Pressable>
+          </View>
+        )}
+
+        {globalSearchOpen && globalSearchQuery.trim() ? (
+          <FlatList
+            data={globalSearchResults}
+            keyExtractor={item => `${item.contact.uid}_${item.message.id}`}
+            contentContainerStyle={styles.listContent}
+            ListEmptyComponent={
+              <Text style={[styles.emptyText, { color: theme.textFaint }]}>
+                {globalSearching ? 'Aranıyor...' : 'Sonuç bulunamadı'}
+              </Text>
+            }
+            renderItem={({ item }) => (
+              <Pressable
+                style={({ pressed }) => [
+                  styles.contactRow,
+                  { backgroundColor: theme.surface, borderColor: theme.border },
+                  pressed && styles.contactRowPressed,
+                ]}
+                onPress={() => handleOpenSearchResult(item)}>
+                <Avatar name={item.contact.name} size={44} photoUrl={contactPhotos[item.contact.uid]} />
+                <View style={styles.contactBody}>
+                  <Text style={[styles.contactName, { color: theme.text }]} numberOfLines={1}>
+                    {item.contact.name}
+                  </Text>
+                  <Text style={[styles.contactPreview, { color: theme.textMuted }]} numberOfLines={1}>
+                    {item.message.senderId === account.uid ? 'Sen: ' : ''}
+                    {item.message.text}
+                  </Text>
+                </View>
+                <View style={styles.contactMeta}>
+                  <Text style={[styles.contactTime, { color: theme.textFaint }]}>{formatListTimestamp(item.message.createdAt)}</Text>
+                </View>
+              </Pressable>
+            )}
+          />
+        ) : (
+          <>
         <StorageQuotaBanner usedBytes={ownProfile.videoBytesUsed} variant="card" />
         <UpdateBanner />
 
@@ -535,6 +667,8 @@ function ContactsScreen({ account, onOpenRoom, onOpenGames, onLogout }: Props): 
           accessibilityLabel="Yeni kişi ekle">
           <Text style={[styles.addButtonText, { color: theme.accentText }]}>+ Kişi Ekle</Text>
         </Pressable>
+          </>
+        )}
       </View>
 
       <Modal
@@ -635,6 +769,31 @@ const styles = StyleSheet.create({
     fontSize: 14,
     minHeight: 22,
     paddingVertical: 4,
+  },
+  headerSearchButton: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    marginRight: 4,
+  },
+  headerSearchIcon: {
+    fontSize: 20,
+  },
+  globalSearchBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderBottomWidth: 1,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    gap: 8,
+  },
+  globalSearchInput: {
+    flex: 1,
+    fontSize: 15,
+    paddingVertical: 4,
+  },
+  searchNavIcon: {
+    fontSize: 18,
+    fontWeight: '700',
   },
   errorBanner: {
     marginHorizontal: 16,

@@ -1,9 +1,11 @@
 import {
   addDoc,
+  arrayUnion,
   collection,
   deleteField,
   doc,
   getDoc,
+  getDocs,
   limit,
   onSnapshot,
   orderBy,
@@ -36,6 +38,7 @@ export interface ChatMessage {
   readAt?: number;
   editedAt?: number;
   deleted?: boolean;
+  deletedFor?: string[];
   replyTo?: {
     messageId: string;
     text: string;
@@ -82,6 +85,7 @@ function docToMessage(docSnap: {
     readAt: data.readAt instanceof Timestamp ? data.readAt.toMillis() : undefined,
     editedAt: data.editedAt instanceof Timestamp ? data.editedAt.toMillis() : undefined,
     deleted: data.deleted === true,
+    deletedFor: Array.isArray(data.deletedFor) ? (data.deletedFor as string[]) : undefined,
     replyTo: typeof data.replyTo === 'object' && data.replyTo !== null ? (data.replyTo as ChatMessage['replyTo']) : undefined,
   };
 }
@@ -89,6 +93,7 @@ function docToMessage(docSnap: {
 export function subscribeToMessages(
   roomId: string,
   limitCount: number,
+  myUid: string,
   onMessages: (messages: ChatMessage[]) => void,
   onError: (error: Error) => void,
 ): Unsubscribe {
@@ -99,18 +104,25 @@ export function subscribeToMessages(
   );
   return onSnapshot(
     messagesQuery,
-    snapshot => onMessages(snapshot.docs.map(docToMessage).reverse()),
+    snapshot =>
+      onMessages(
+        snapshot.docs
+          .map(docToMessage)
+          .filter(message => !message.deletedFor?.includes(myUid))
+          .reverse(),
+      ),
     error => onError(error as Error),
   );
 }
 
-export function subscribeToLatestMessage(roomId: string, onMessage: (message: ChatMessage | null) => void): Unsubscribe {
-  const latestQuery = query(collection(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION), orderBy('createdAt', 'desc'), limit(1));
+export function subscribeToLatestMessage(roomId: string, myUid: string, onMessage: (message: ChatMessage | null) => void): Unsubscribe {
+  // Widened past 1 so a message deleted-for-me can be skipped client-side.
+  const latestQuery = query(collection(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION), orderBy('createdAt', 'desc'), limit(20));
   return onSnapshot(
     latestQuery,
     snapshot => {
-      const docSnap = snapshot.docs[0];
-      onMessage(docSnap ? docToMessage(docSnap) : null);
+      const found = snapshot.docs.map(docToMessage).find(message => !message.deletedFor?.includes(myUid));
+      onMessage(found ?? null);
     },
     () => onMessage(null),
   );
@@ -188,15 +200,9 @@ export async function editMessage(roomId: string, messageId: string, newText: st
   await updateDoc(messageRef, { text: trimmed, editedAt: serverTimestamp() });
 }
 
-export async function deleteMessage(roomId: string, messageId: string): Promise<void> {
+export async function deleteMessage(roomId: string, messageId: string, myUid: string): Promise<void> {
   const messageRef = doc(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION, messageId);
-  await updateDoc(messageRef, {
-    deleted: true,
-    text: '',
-    mediaUrl: deleteField(),
-    fileName: deleteField(),
-    fileSize: deleteField(),
-  });
+  await updateDoc(messageRef, { deletedFor: arrayUnion(myUid) });
 }
 
 function roomDocRef(roomId: string) {
@@ -225,4 +231,18 @@ export async function unpinMessage(roomId: string): Promise<void> {
 export async function fetchMessageById(roomId: string, messageId: string): Promise<ChatMessage | null> {
   const snap = await getDoc(doc(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION, messageId));
   return snap.exists() ? docToMessage(snap) : null;
+}
+
+/** One-off (non-live) text search over a room's message history — see the mobile chatService.ts for the full rationale (no Firestore full-text search, client-side substring match over up to MAX_MESSAGE_LIMIT messages, deleted-for-me excluded). Used by both in-chat search and cross-contact global search. */
+export async function searchMessagesInRoom(roomId: string, myUid: string, queryText: string): Promise<ChatMessage[]> {
+  const needle = queryText.trim().toLowerCase();
+  if (!needle) {
+    return [];
+  }
+  const snapshot = await getDocs(
+    query(collection(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION), orderBy('createdAt', 'desc'), limit(MAX_MESSAGE_LIMIT)),
+  );
+  return snapshot.docs
+    .map(docToMessage)
+    .filter(message => !message.deletedFor?.includes(myUid) && message.type === 'text' && message.text.toLowerCase().includes(needle));
 }

@@ -1,5 +1,201 @@
 # Değişiklik Günlüğü
 
+## 2026-08-27 — Sohbette birden fazla fotoğraf/video/dosya tek seferde gönderilebiliyor
+
+Hem mobil hem web-client'ta medya seçici tek dosyayla sınırlıydı (`result.assets[0]` /
+`e.target.files[0]`). Artık galeriden/dosya seçiciden birden fazla öğe seçilip hepsi ayrı
+mesajlar olarak sırayla gönderilebiliyor:
+
+- Mobil (`src/screens/ChatRoomScreen.tsx`): `handlePickMedia`'daki `launchImageLibrary`/
+  `launchCamera` çağrısına `selectionLimit: 0` eklendi (0 = sınırsız, sadece galeri seçimini
+  etkiliyor — kamerada zaten tek çekim var). Tek-asset gönderme mantığı `sendPickedAsset`
+  adlı ayrı bir fonksiyona çıkarıldı, `handlePickMedia` artık `result.assets` dizisinin
+  tamamı üzerinde `for...of` ile sırayla (paralel değil — aynı anda birden çok büyük video
+  yüklemesi başlayıp bant genişliğini/depolama kotası sayacını karıştırmasın diye) gönderim
+  yapıyor.
+- Web (`web-client/src/screens/ChatRoomScreen.tsx`): gizli `<input type="file">`'a `multiple`
+  eklendi. Tekil dosya gönderme mantığı `sendPickedFile`'a çıkarıldı, `handleFileChange`
+  artık `e.target.files`'ın tamamını sırayla gönderiyor ve birden fazla dosya seçildiğinde
+  "Gönderiliyor… (n/toplam)" ilerleme metni gösteriyor. Bir dosya başarısız olursa hata
+  gösterilip diğer dosyalara devam ediliyor (tek dosyalık akışta olduğu gibi tamamen durmuyor).
+
+Storage kotası, 1 MiB inline data URI sınırı gibi mevcut kurallar değişmedi; her dosya kendi
+başına aynı kontrollerden geçiyor, sadece artık tek bir seçimde birden fazla dosya bu döngüden
+geçebiliyor.
+
+## 2026-08-27 — Web'e gerçek tarayıcı push bildirimi eklendi
+
+`web-client`'ta hiç bildirim sistemi yoktu (mobildeki `fcmService.ts` +
+`NotificationCenter`'ın karşılığı hiç yazılmamıştı) — sunucu tarafı
+(`functions/index.js`'teki `onNewMessage`) zaten her yeni mesajda
+`users/{uid}.fcmToken`'a data-only FCM push atıyordu ama alıcı taraf eksikti.
+Eklenenler:
+
+- `web-client/public/firebase-messaging-sw.js` — arka plan/kapalı sekme için
+  service worker (Firebase compat CDN scriptleri ile), mobildeki gibi
+  sahte-oyun temalı, mesaj içeriği/gönderen ismi içermeyen bildirim gösteriyor.
+- `web-client/src/services/notificationService.ts` — mobildeki aynı isimli
+  dosyanın web portu (localStorage tabanlı on/off flag, sahte bildirim
+  metinleri, `activeChatUid` takibi).
+- `web-client/src/services/fcmService.ts` — `initFcm(uid)`: bildirim izni
+  ister, service worker'ı kaydeder, VAPID key ile token alıp
+  `users/{uid}.fcmToken`'a yazar, foreground `onMessage` dinleyicisiyle sekme
+  açıkken de bildirim gösterir.
+- `web-client/src/config/messagingConfig.ts` — Firebase Console → Cloud
+  Messaging → Web configuration'dan alınan VAPID key.
+- `App.tsx`: login sonrası `initFcm` çağrılıyor, `activeContact` değiştikçe
+  `setActiveChatUid` ile senkron tutuluyor (açık olan sohbetten gelen mesaj
+  bildirim göstermiyor).
+
+Not: Tarayıcı ilk ziyarette bildirim izni istiyor — kullanıcı reddederse
+push çalışmaz (mesajın kendisi yine Firestore'da güvenle duruyor, sadece
+push gösterilmiyor).
+
+## 2026-08-27 — Web sekme başlığı düzeltildi
+
+`web-client/index.html`'deki `<title>` etiketi "GizliChat — Web" idi; sitenin gizleme amacını
+(sohbet, "BLOK ÇILGINLIĞI" oyunu kılığında saklanıyor) bozduğu için "Blok Çılgınlığı" olarak
+değiştirildi ve `firebase deploy --only hosting` ile canlıya alındı.
+
+## 2026-08-25 — Mesaj arama özelliği (sohbet içi + tüm sohbetler genelinde) + APK 1.4.0
+
+WhatsApp benzeri iki arama modu eklendi, hem mobil hem web-client'ta:
+
+- **Sohbet içi arama** (`ChatRoomScreen.tsx`): header'a 🔍 ikonu eklendi, açılınca bir arama çubuğu
+  çıkıyor. `messages` dizisi üzerinden (arama açıkken `messageLimit` `MAX_MESSAGE_LIMIT`'e
+  genişletiliyor ki geçmişin tamamına yakını taransın) case-insensitive substring eşleşmesi
+  yapılıyor, eşleşmeler en yeniden en eskiye sıralanıyor. Yukarı/aşağı ok butonlarıyla sonuçlar
+  arasında gezilebiliyor (`X/Y` sayaç), mevcut sonuç mesaj balonunun etrafına renkli bir
+  outline/border ile vurgulanıyor (mobil: `MessageBubble`'a yeni `highlighted` prop; web:
+  `outline` stili) ve otomatik olarak o mesaja kaydırılıyor.
+- **Tüm sohbetler genelinde arama** (`ContactsScreen.tsx`): kişi listesi header'ına 🔍 ikonu
+  eklendi. Firestore'da tam metin arama olmadığı için `chatService.ts`'e yeni bir one-off
+  (canlı olmayan) `searchMessagesInRoom(roomId, myUid, queryText)` fonksiyonu eklendi — her oda
+  için en son `MAX_MESSAGE_LIMIT` mesajı çekip client-side filtreliyor (silinmiş-benden mesajlar
+  hariç). Yazarken 350ms debounce sonrası tüm kişilerin odalarında paralel arama yapılıyor,
+  sonuçlar `createdAt`'e göre birleştirilip en fazla 50 tanesi gösteriliyor. Bir sonuca
+  dokunmak ilgili sohbeti açıp doğrudan o mesaja atlıyor ve kısaca vurguluyor.
+- **Navigasyon zinciri**: arama sonucundan bir sohbeti "belirli bir mesaja atlayarak" açabilmek
+  için `onOpenRoom`/`openRoom`'a opsiyonel bir `messageIdToJumpTo` parametresi eklendi (mobil:
+  `AppNavigator.tsx`'te yeni `jumpMessageId` state'i; web: `App.tsx`'teki `NavState`'e yeni
+  `jumpMessageId` alanı, tarayıcı geçmişine de push ediliyor). `ChatRoomScreen` yeni
+  `initialJumpMessageId` prop'unu alınca `messageLimit`'i baştan `MAX_MESSAGE_LIMIT`'e açıyor ve
+  hedef mesaj yüklenene kadar her `messages` güncellemesinde tekrar deneyip bulunca kaydırıp
+  vurguluyor.
+
+Her iki client de `npm run build` + `firebase deploy --only hosting` ile deploy edildi
+(web-client → `kaanchatmercan.web.app`). Mobil: `versionCode` 13→14, `versionName`
+"1.3.5"→"1.4.0" (minor bump — yeni bir özellik, patch değil), `apk-release-deploy/public/
+gizlichat-1.4.0.apk` olarak derlenip `gizlichat-android-updates` sitesine deploy edildi.
+Firestore `app_config/android` dokümanı bu kez kullanıcı tarafından Console'dan elle
+güncellendi (`versionCode: 14`, `versionName: "1.4.0"`, `apkUrl: ".../gizlichat-1.4.0.apk"`) —
+bu oturumda Chrome hesap bağlantısı yanlış Google hesabına düştüğü için otomasyon yerine
+kullanıcı kendisi girdi.
+
+## 2026-08-25 — Yanıt alıntısına tıklayınca orijinal mesaja atlama + APK 1.3.5
+
+Bir mesajın içindeki "yanıtlanan mesaj" alıntısı (`message.replyTo`, swipe-to-reply ile
+gönderilen mesajlara eklenen küçük önizleme kutusu) artık tıklanabilir — WhatsApp'taki gibi,
+tıklayınca liste orijinal mesaja kaydırılıyor. Hem mobil hem web-client'ta:
+- `ChatRoomScreen.tsx`'teki eski `handleJumpToPinned` (sabitlenmiş mesaja atlama) mantığı
+  paylaşılan bir `scrollToMessageId`/`handleJumpToReply` fonksiyonuna çıkarıldı — pin atlama da
+  artık aynı fonksiyonu kullanıyor.
+- Mobil: `MessageBubble.tsx`'e yeni `onJumpToReply: (messageId: string) => void` prop'u eklendi,
+  `replyQuote` artık `View` yerine `Pressable`; `FlatList`'in `listRef.current.scrollToItem(...)`
+  metoduyla kaydırıyor (sabit mesaj atlamasıyla birebir aynı mekanizma).
+- Web-client: `MessageBubble.tsx`'in kök `.msg-row` div'ine `id={msg-${message.id}}` eklendi,
+  reply alıntısı `onClick`'te `document.getElementById(...).scrollIntoView({behavior:'smooth',
+  block:'center'})` çağırıyor.
+- **Bilinen sınır:** Hedef mesaj o an yüklü pencerenin (mobil `messageLimit`/sayfalama, web
+  `messageLimit`) dışındaysa sessizce hiçbir şey olmuyor — sabit mesaj atlamasında da aynı sınır
+  zaten vardı, kapsam dışı bırakıldı.
+
+Web-client `npm run build` + `firebase deploy --only hosting` ile `kaanchatmercan.web.app`'e
+deploy edildi. Mobil: `versionCode` 12→13, `versionName` "1.3.4"→"1.3.5", `apk-release-deploy/
+public/gizlichat-1.3.5.apk` olarak derlenip `gizlichat-android-updates` sitesine deploy edildi
+(`https://gizlichat-android-updates.web.app/gizlichat-1.3.5.apk`).
+
+`app_config/android` Firestore dokümanı da güncellendi — `firestore.rules`'ta bu path bilerek
+`allow write: if false` (programatik/CLI yazma yolu yok), o yüzden kullanıcının isteğiyle
+Firebase Console'a onun ikinci Chrome profilinden (`claude-in-chrome` MCP, `switch_browser` ile
+doğru hesaba bağlanılarak) girilip alanlar elle dolduruldu: `versionCode: 13`,
+`versionName: "1.3.5"`, `apkUrl: "https://gizlichat-android-updates.web.app/gizlichat-1.3.5.apk"`,
+`notes: "Mesaj silme tek taraflı hale getirildi, yanıt alıntısına tıklayınca orijinal mesaja
+atlama eklendi"`. Bu bilerek Admin SDK/REST API ile OAuth token'ı çıkarıp kuralı bypass ederek
+değil, Console'un kendi (IAM yetkili) arayüzü üzerinden yapıldı.
+
+## 2026-08-25 — Mobil release APK 1.3.4 (versionCode 12) — tek taraflı silme
+
+`android/app/build.gradle`: `versionCode` 11→12, `versionName` "1.3.3"→"1.3.4" (aşağıdaki
+"Mesaj silme tek taraflı..." kaydındaki tüm mobil değişiklikleri içeriyor). `cd android &&
+./gradlew.bat assembleRelease --no-daemon` ile derlendi, çıktı `apk-release-deploy/public/
+gizlichat-1.3.4.apk` olarak kopyalanıp o klasörün kendi `firebase.json`'ı (`site:
+"gizlichat-android-updates"`) üzerinden `firebase deploy --only hosting` ile
+`https://gizlichat-android-updates.web.app/gizlichat-1.3.4.apk` adresine deploy edildi.
+**Kalan tek elle adım (Console-only, `firestore.rules`'ta bilerek `allow write: if false`):**
+Firebase Console → `kaanchatmercan` → Firestore Database → `app_config` → `android` dokümanı →
+`versionCode: 12`, `versionName: "1.3.4"`, `apkUrl: "https://gizlichat-android-updates.web.app/
+gizlichat-1.3.4.apk"` olarak güncellenip kaydedilmeli — yoksa telefonlardaki uygulama içi
+güncelleme banner'ı ya hiç çıkmaz ya da eski sürümü işaret eder (bkz. [[05-Build-Deployment]]
+"Uygulama içi güncelleme (APK) yayınlama").
+
+## 2026-08-25 — Mesaj silme tek taraflı ("benden sil") hale getirildi
+
+Eskiden `deleteMessage()` paylaşılan mesaj dokümanının `text`/`mediaUrl`'ini sunucu tarafında
+temizleyip `deleted: true` bayrağını flip ediyordu — bu, gönderen mesajı sildiğinde **her iki**
+tarafta da "Bu mesaj silindi" placeholder'ı olarak görünmesine yol açıyordu. Artık davranış
+WhatsApp'ın "benden sil"ine benziyor: `deletedFor: string[]` alanına (hem mobil hem web-client
+`chatService.ts`) silen kullanıcının uid'i `arrayUnion` ile ekleniyor, mesajın kendisi (metin/
+medya) hiç değişmiyor. `subscribeToMessages(roomId, limitCount, myUid, onMessages, onError)`
+artık ek bir `myUid` parametresi alıyor ve döndürdüğü listeden `deletedFor` kendi uid'ini
+içeren mesajları tamamen filtreliyor (placeholder yok, mesaj sanki hiç yokmuş gibi kayboluyor) —
+karşı taraf hiçbir değişiklik görmez, mesaj onun ekranında aynen kalır. Pinlenmiş bir mesaj
+kendinden silinirse `fetchMessageById` fallback'i (canlı `messages` listesinin dışında kaldığı
+için) bunu bypass etmesin diye `ChatRoomScreen.tsx`'teki pin-preview efekti de `deletedFor`
+kontrolü yapıyor. `firestore.rules`'taki eski "sadece gönderen `deleted`'ı true'ya çevirebilir"
+carve-out'u, "herhangi bir oda üyesi `deletedFor`'a sadece kendi uid'ini ekleyebilir" kuralıyla
+değiştirildi. Eski `deleted`/placeholder alanı ve UI'ı (`MessageBubble.tsx`'teki "Bu mesaj
+silindi" render'ı) geriye dönük uyumluluk için dokunulmadan bırakıldı (eski verilerde hâlâ var)
+ama artık hiçbir kod tarafından yazılmıyor. Mobil `MessageBubble.tsx`'e uzun-basma menüsüne
+🗑️ "Sil" satırı eklendi (önceden mekanizma vardı ama UI'dan erişilemiyordu — bkz. eski yorum);
+web-client'ta zaten var olan "Sil" butonu aynı mekanizmayı kullanmaya devam ediyor, sadece
+onay metni güncellendi. `firestore.rules` değişikliği `firebase deploy --only firestore:rules` ile `kaanchatmercan`
+projesine deploy edildi, canlıda aktif. Ayrıca `web-client` için `npm run build` +
+(`web-client/firebase.json` üzerinden) `firebase deploy --only hosting` ile
+`https://kaanchatmercan.web.app` üzerine de deploy edildi — web-client kendi `firebase.json`'ına
+sahip ayrı bir hosting hedefi, kök dizindeki `firebase.json`'ın `hosting` alanı ona değil
+`gizlichat-android-updates` APK sitesine ait, bu yüzden web tarafında bir kod değişikliği canlıya
+yansımadan önce mutlaka `web-client/` içinden ayrıca build+deploy edilmesi gerekiyor.
+
+**Ek: "benden silindi" göstergesi.** Kullanıcı testten sonra karşı tarafın, kendi sildiği bir
+mesajın yanında küçük bir ikon görmesini istedi — yani tek taraflı silme "sessiz" kalmayacak,
+silen tarafın kimliği ifşa edilmeden ("kim sildi" değil, sadece "biri sildi" bilgisi) karşı
+tarafa görsel bir işaret verilecek. `MessageBubble.tsx`'te (hem mobil hem web-client) ortak
+`metaRow`'a (saat/tik satırı — tüm mesaj tiplerinde, metin/resim/video/ses/dosya fark etmeksizin
+render ediliyor) `message.deletedFor?.length > 0` ise 🗑️ ikonu eklendi. Bu koşul güvenli:
+`subscribeToMessages` zaten izleyicinin kendi uid'ini `deletedFor` içeren mesajları tamamen
+filtreliyor, yani bir mesaj hâlâ listede görünüyorsa ve `deletedFor` doluysa, o mutlaka karşı
+tarafın (1-1 oda olduğu için tek olası diğer üye) sildiği anlamına geliyor. Web-client tekrar
+build+deploy edildi.
+
+**Bug: web-client'ta Sil butonu sadece kendi mesajlarda görünüyordu.** Mobil `MessageBubble.tsx`
+Sil satırını `isMine` kontrolü olmadan (her mesaj için) gösterirken, `web-client/src/components/
+MessageBubble.tsx`'teki karşılığı hâlâ `{isMine && (...)}` içine sarılıydı — yani web'de karşı
+tarafın mesajını kendinden silmek mümkün değildi, mekanizma (`deleteMessage`/Firestore kuralı)
+zaten her iki yönde de çalışıyordu ama buton görünmüyordu. `isMine` şartı kaldırıldı, tekrar
+build+deploy edildi.
+
+**Bug: sohbet listesindeki son mesaj önizlemesi silinen mesajı göstermeye devam ediyordu.**
+`ContactsScreen.tsx`'teki "SOHBETLER" listesi son mesajı `subscribeToLatestMessage(roomId, ...)`
+ile alıyor (`chatService.ts`, hem mobil hem web-client) — bu fonksiyon `deletedFor` filtresi
+uygulamıyordu, sadece `orderBy('createdAt','desc').limit(1)` ile ham en son dokümanı çekiyordu.
+Sonuç: bir mesajı kendinden silsen bile soldaki liste önizlemesi (`Sen: 📷 ...` gibi) o mesajı
+göstermeye devam ediyordu. Düzeltme: sorgu `limit(20)`'ye genişletildi ve fonksiyon artık bir
+`myUid` parametresi alıp `deletedFor` içinde bu uid'i taşımayan ilk (en yeni) mesajı client-side
+seçiyor — aynı mantık `subscribeToMessages`'takiyle tutarlı. Üç çağıran nokta güncellendi:
+mobil `ContactsScreen.tsx`, mobil `NotificationCenter.tsx` (bildirim/delivered-mark mantığı için)
+ve web-client `ContactsScreen.tsx`. Web-client tekrar build+deploy edildi.
+
 ## 2026-08-25 — Sohbet silme, unicode satranç taşları, web geri tuşu ve mobil düzeltmeler
 
 - **Sohbet silme (web + mobil)**: `contactService.ts`'e `removeContact(myUid, contactUid)`

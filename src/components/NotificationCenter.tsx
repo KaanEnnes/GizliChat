@@ -106,7 +106,7 @@ function NotificationCenter({ myUid, activeContactUid, onOpenRoom, children }: P
         roomUnsubscribesRef.current.forEach(unsub => unsub());
         roomUnsubscribesRef.current = contacts.map(contact => {
           const roomId = getRoomId(myUid, contact.uid);
-          return subscribeToLatestMessage(roomId, message => {
+          return subscribeToLatestMessage(roomId, myUid, message => {
             if (!message || message.type === 'call' || message.senderId === myUid) {
               return;
             }

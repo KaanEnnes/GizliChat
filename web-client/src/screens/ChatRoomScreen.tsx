@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   deleteMessage,
   editMessage,
@@ -7,6 +7,7 @@ import {
   INITIAL_MESSAGE_LIMIT,
   markMessageDelivered,
   markMessageRead,
+  MAX_MESSAGE_LIMIT,
   MESSAGE_LIMIT_STEP,
   pinMessage,
   sendFileMessage,
@@ -25,6 +26,7 @@ import { useTheme } from '../theme/ThemeContext';
 import type { Contact } from '../services/contactService';
 import Avatar from '../components/Avatar';
 import MessageBubble, { replyPreviewLabel } from '../components/MessageBubble';
+import ImageGalleryModal from '../components/ImageGalleryModal';
 import GamesModal from '../components/GamesModal';
 import GifPickerModal from '../components/GifPickerModal';
 import type { GifResult } from '../services/gifService';
@@ -35,13 +37,15 @@ interface Props {
   account: Account;
   contact: Contact;
   onBack: () => void;
+  /** Set when this room was opened from a global search result — jumps to and highlights that message once its page of history is loaded. */
+  initialJumpMessageId?: string;
 }
 
-function ChatRoomScreen({ account, contact, onBack }: Props): React.JSX.Element {
+function ChatRoomScreen({ account, contact, onBack, initialJumpMessageId }: Props): React.JSX.Element {
   const { theme } = useTheme();
   const roomId = getRoomId(account.uid, contact.uid);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [messageLimit, setMessageLimit] = useState(INITIAL_MESSAGE_LIMIT);
+  const [messageLimit, setMessageLimit] = useState(initialJumpMessageId ? MAX_MESSAGE_LIMIT : INITIAL_MESSAGE_LIMIT);
   const [pinnedMessageId, setPinnedMessageId] = useState<string | null>(null);
   const [pinnedMessage, setPinnedMessage] = useState<ChatMessage | null>(null);
   const [text, setText] = useState('');
@@ -53,10 +57,16 @@ function ChatRoomScreen({ account, contact, onBack }: Props): React.JSX.Element 
   const [gifPickerOpen, setGifPickerOpen] = useState(false);
   const [contactPhotoUrl, setContactPhotoUrl] = useState<string | undefined>(undefined);
   const [showJumpToBottom, setShowJumpToBottom] = useState(false);
+  const [galleryMessageId, setGalleryMessageId] = useState<string | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchIndex, setSearchIndex] = useState(0);
+  const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const seenReadRef = useRef<Set<string>>(new Set());
   const nearBottomRef = useRef(true);
+  const consumedInitialJumpRef = useRef<string | null>(null);
 
   useEffect(() => {
     return subscribeToUserProfile(contact.uid, profile => setContactPhotoUrl(profile.photoUrl));
@@ -67,6 +77,7 @@ function ChatRoomScreen({ account, contact, onBack }: Props): React.JSX.Element 
     const unsubscribe = subscribeToMessages(
       roomId,
       messageLimit,
+      account.uid,
       nextMessages => {
         // Measure proximity to the bottom against the DOM as it stood right before this
         // update lands — waiting for the next scroll event to update nearBottomRef is too
@@ -105,8 +116,10 @@ function ChatRoomScreen({ account, contact, onBack }: Props): React.JSX.Element 
       setPinnedMessage(fromLoaded);
       return;
     }
-    fetchMessageById(roomId, pinnedMessageId).then(setPinnedMessage);
-  }, [pinnedMessageId, messages, roomId]);
+    fetchMessageById(roomId, pinnedMessageId).then(msg =>
+      setPinnedMessage(msg && !msg.deletedFor?.includes(account.uid) ? msg : null),
+    );
+  }, [pinnedMessageId, messages, roomId, account.uid]);
 
   const lastMessage = messages.length ? messages[messages.length - 1] : null;
   const lastMessageId = lastMessage?.id ?? null;
@@ -194,52 +207,66 @@ function ChatRoomScreen({ account, contact, onBack }: Props): React.JSX.Element 
 
   const handlePickFile = () => fileInputRef.current?.click();
 
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file) return;
+  const sendPickedFile = async (file: File) => {
     const isImage = file.type.startsWith('image/');
     const isGif = file.type === 'image/gif';
     const isVideo = file.type.startsWith('video/');
-    setUploading('Gönderiliyor…');
-    try {
-      if (isVideo) {
-        const { url, sizeBytes } = await uploadRoomMedia(roomId, 'video', file);
-        await sendMediaMessage(roomId, account.uid, 'video', url);
-        await addVideoBytesUsed(account.uid, sizeBytes);
-      } else if (isGif) {
-        // GIFs must never go through the JPEG canvas resize below — drawing
-        // a GIF onto a <canvas> flattens it to a single static frame,
-        // silently killing the animation. Sent as-is (inline if small enough
-        // for a Firestore doc, otherwise uploaded to Storage like video).
-        if (file.size <= IMAGE_DATA_URI_LIMIT) {
-          const dataUri = await fileToDataUri(file);
-          await sendMediaMessage(roomId, account.uid, 'image', dataUri);
-        } else {
-          const { url, sizeBytes } = await uploadRoomMedia(roomId, 'image', file);
-          await sendMediaMessage(roomId, account.uid, 'image', url);
-          await addVideoBytesUsed(account.uid, sizeBytes);
-        }
-      } else if (isImage) {
-        const dataUri = await resizeImageToDataUri(file, 1280, 0.7);
-        if (dataUri.length > IMAGE_DATA_URI_LIMIT) {
-          setError('Fotoğraf çok büyük, daha düşük çözünürlüklü bir fotoğraf seç.');
-        } else {
-          await sendMediaMessage(roomId, account.uid, 'image', dataUri);
-        }
+    if (isVideo) {
+      const { url, sizeBytes } = await uploadRoomMedia(roomId, 'video', file);
+      await sendMediaMessage(roomId, account.uid, 'video', url);
+      await addVideoBytesUsed(account.uid, sizeBytes);
+    } else if (isGif) {
+      // GIFs must never go through the JPEG canvas resize below — drawing
+      // a GIF onto a <canvas> flattens it to a single static frame,
+      // silently killing the animation. Sent as-is (inline if small enough
+      // for a Firestore doc, otherwise uploaded to Storage like video).
+      if (file.size <= IMAGE_DATA_URI_LIMIT) {
+        const dataUri = await fileToDataUri(file);
+        await sendMediaMessage(roomId, account.uid, 'image', dataUri);
       } else {
-        // Generic file: small files inline, larger ones go to Storage.
-        if (file.size <= IMAGE_DATA_URI_LIMIT) {
-          const dataUri = await fileToDataUri(file);
-          await sendFileMessage(roomId, account.uid, dataUri, file.name, file.size);
-        } else {
-          const { url, sizeBytes } = await uploadRoomMedia(roomId, 'file', file);
-          await sendFileMessage(roomId, account.uid, url, file.name, sizeBytes);
-          await addVideoBytesUsed(account.uid, sizeBytes);
+        const { url, sizeBytes } = await uploadRoomMedia(roomId, 'image', file);
+        await sendMediaMessage(roomId, account.uid, 'image', url);
+        await addVideoBytesUsed(account.uid, sizeBytes);
+      }
+    } else if (isImage) {
+      const dataUri = await resizeImageToDataUri(file, 1280, 0.7);
+      if (dataUri.length > IMAGE_DATA_URI_LIMIT) {
+        setError('Fotoğraf çok büyük, daha düşük çözünürlüklü bir fotoğraf seç.');
+      } else {
+        await sendMediaMessage(roomId, account.uid, 'image', dataUri);
+      }
+    } else {
+      // Generic file: small files inline, larger ones go to Storage.
+      if (file.size <= IMAGE_DATA_URI_LIMIT) {
+        const dataUri = await fileToDataUri(file);
+        await sendFileMessage(roomId, account.uid, dataUri, file.name, file.size);
+      } else {
+        const { url, sizeBytes } = await uploadRoomMedia(roomId, 'file', file);
+        await sendFileMessage(roomId, account.uid, url, file.name, sizeBytes);
+        await addVideoBytesUsed(account.uid, sizeBytes);
+      }
+    }
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []);
+    e.target.value = '';
+    if (files.length === 0) return;
+    setUploading(files.length > 1 ? `Gönderiliyor… (0/${files.length})` : 'Gönderiliyor…');
+    try {
+      // Sırayla gönderiliyor (paralel değil) ki mesajlar Firestore'a seçim
+      // sırasıyla düşsün ve aynı anda birden çok büyük dosya yüklemesi
+      // başlayıp bant genişliğini/bar kotasını tıkamasın.
+      for (let i = 0; i < files.length; i++) {
+        try {
+          await sendPickedFile(files[i]);
+        } catch (err) {
+          setError(`Medya gönderilemedi: ${(err as Error).message}`);
+        }
+        if (files.length > 1) {
+          setUploading(`Gönderiliyor… (${i + 1}/${files.length})`);
         }
       }
-    } catch (err) {
-      setError(`Medya gönderilemedi: ${(err as Error).message}`);
     } finally {
       setUploading(null);
     }
@@ -258,13 +285,76 @@ function ChatRoomScreen({ account, contact, onBack }: Props): React.JSX.Element 
     setText(message.text);
   };
   const handleDelete = (message: ChatMessage) => {
-    if (window.confirm('Bu mesajı silmek istediğine emin misin?')) {
-      deleteMessage(roomId, message.id).catch(() => undefined);
+    if (window.confirm('Bu mesaj sadece sende silinecek, karşı taraf görmeye devam edecek. Emin misin?')) {
+      deleteMessage(roomId, message.id, account.uid).catch(() => undefined);
     }
   };
   const handleReply = (message: ChatMessage) => {
     setReplyTarget(message);
     setEditTarget(null);
+  };
+  const handleJumpToReply = (messageId: string) => {
+    document.getElementById(`msg-${messageId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  };
+
+  const galleryImages = useMemo(
+    () => messages.filter(m => m.type === 'image' && m.mediaUrl),
+    [messages],
+  );
+
+  // Global-search entry point: once the widened history (messageLimit was
+  // seeded to MAX_MESSAGE_LIMIT above when initialJumpMessageId is set) has
+  // loaded far enough back to include the target message, scroll to it and
+  // flash-highlight it — retried on every `messages` update until found.
+  useEffect(() => {
+    if (!initialJumpMessageId || consumedInitialJumpRef.current === initialJumpMessageId) {
+      return;
+    }
+    const el = document.getElementById(`msg-${initialJumpMessageId}`);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      consumedInitialJumpRef.current = initialJumpMessageId;
+      setHighlightedMessageId(initialJumpMessageId);
+      const timer = setTimeout(() => setHighlightedMessageId(null), 2500);
+      return () => clearTimeout(timer);
+    }
+    return undefined;
+  }, [initialJumpMessageId, messages]);
+
+  // In-chat search: matches computed over `messages` (widened to
+  // MAX_MESSAGE_LIMIT while search is open), newest match first.
+  const searchMatches = useMemo(() => {
+    const needle = searchQuery.trim().toLowerCase();
+    if (!needle) return [];
+    return messages.filter(m => m.type === 'text' && m.text.toLowerCase().includes(needle)).reverse();
+  }, [messages, searchQuery]);
+
+  useEffect(() => {
+    if (searchOpen) {
+      setMessageLimit(MAX_MESSAGE_LIMIT);
+    }
+  }, [searchOpen]);
+
+  useEffect(() => {
+    setSearchIndex(0);
+  }, [searchQuery]);
+
+  useEffect(() => {
+    const current = searchMatches[searchIndex];
+    if (current) {
+      document.getElementById(`msg-${current.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      setHighlightedMessageId(current.id);
+    } else {
+      setHighlightedMessageId(null);
+    }
+  }, [searchMatches, searchIndex]);
+
+  const handleSearchPrev = () => setSearchIndex(i => (searchMatches.length ? (i + 1) % searchMatches.length : 0));
+  const handleSearchNext = () => setSearchIndex(i => (searchMatches.length ? (i - 1 + searchMatches.length) % searchMatches.length : 0));
+  const handleCloseSearch = () => {
+    setSearchOpen(false);
+    setSearchQuery('');
+    setHighlightedMessageId(null);
   };
 
   return (
@@ -275,10 +365,44 @@ function ChatRoomScreen({ account, contact, onBack }: Props): React.JSX.Element 
         </button>
         <Avatar name={contact.name} size={36} photoUrl={contactPhotoUrl} />
         <div className="chat-room-title" style={{ color: theme.text, flex: 1 }}>{contact.name}</div>
+        <button className="icon-btn" style={{ background: theme.surfaceAlt, color: theme.text }} onClick={() => setSearchOpen(v => !v)} title="Sohbette ara">
+          🔍
+        </button>
         <button className="icon-btn" style={{ background: theme.surfaceAlt, color: theme.text }} onClick={() => setGamesOpen(true)} title="Oyun oyna">
           🎮
         </button>
       </div>
+
+      {searchOpen && (
+        <div className="contacts-search-bar" style={{ background: theme.surface, borderColor: theme.border }}>
+          <input
+            className="contacts-search-input"
+            style={{ color: theme.text }}
+            placeholder="Sohbette ara..."
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            autoFocus
+          />
+          {!!searchQuery.trim() && (
+            <span style={{ fontSize: 13, color: theme.textMuted }}>
+              {searchMatches.length ? `${searchIndex + 1}/${searchMatches.length}` : '0/0'}
+            </span>
+          )}
+          <span
+            style={{ cursor: searchMatches.length ? 'pointer' : 'default', color: searchMatches.length ? theme.text : theme.textFaint, fontSize: 16, fontWeight: 700 }}
+            onClick={handleSearchPrev}>
+            ↑
+          </span>
+          <span
+            style={{ cursor: searchMatches.length ? 'pointer' : 'default', color: searchMatches.length ? theme.text : theme.textFaint, fontSize: 16, fontWeight: 700 }}
+            onClick={handleSearchNext}>
+            ↓
+          </span>
+          <span style={{ cursor: 'pointer', color: theme.textFaint, fontSize: 16 }} onClick={handleCloseSearch}>
+            ✕
+          </span>
+        </div>
+      )}
 
       {gamesOpen && (
         <GamesModal
@@ -302,6 +426,10 @@ function ChatRoomScreen({ account, contact, onBack }: Props): React.JSX.Element 
         />
       )}
 
+      {galleryMessageId && (
+        <ImageGalleryModal images={galleryImages} initialMessageId={galleryMessageId} onClose={() => setGalleryMessageId(null)} />
+      )}
+
       {pinnedMessage && (
         <div className="chat-pinned-bar" style={{ background: theme.surfaceAlt, borderColor: theme.border }}>
           <span style={{ color: theme.textMuted, fontSize: 12 }}>📌 {replyPreviewLabel(pinnedMessage)}</span>
@@ -323,12 +451,15 @@ function ChatRoomScreen({ account, contact, onBack }: Props): React.JSX.Element 
             isMine={message.senderId === account.uid}
             myUid={account.uid}
             isPinned={message.id === pinnedMessageId}
+            highlighted={message.id === highlightedMessageId}
             onToggleReaction={handleToggleReaction}
             onPin={handlePin}
             onUnpin={handleUnpin}
             onEdit={handleEdit}
             onDelete={handleDelete}
             onReply={handleReply}
+            onJumpToReply={handleJumpToReply}
+            onImagePress={setGalleryMessageId}
           />
         ))}
       </div>
@@ -372,7 +503,7 @@ function ChatRoomScreen({ account, contact, onBack }: Props): React.JSX.Element 
         <button type="button" className="icon-btn" style={{ background: theme.surfaceAlt, color: theme.text, fontSize: 11, fontWeight: 800 }} onClick={() => setGifPickerOpen(true)} title="GIF gönder">
           GIF
         </button>
-        <input ref={fileInputRef} type="file" accept="image/*,video/*,.pdf,.zip,.doc,.docx" style={{ display: 'none' }} onChange={handleFileChange} />
+        <input ref={fileInputRef} type="file" accept="image/*,video/*,.pdf,.zip,.doc,.docx" multiple style={{ display: 'none' }} onChange={handleFileChange} />
         <input
           className="chat-composer-input"
           style={{ background: theme.inputBackground, color: theme.text, borderColor: theme.border }}

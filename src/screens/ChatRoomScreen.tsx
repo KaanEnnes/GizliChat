@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -20,6 +20,7 @@ import { pick, isErrorWithCode, errorCodes } from '@react-native-documents/picke
 import Sound from 'react-native-nitro-sound';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import MessageBubble, { replyPreviewLabel } from '../components/MessageBubble';
+import ImageGalleryModal from '../components/ImageGalleryModal';
 import AttachMenuModal from '../components/AttachMenuModal';
 import GifPickerModal from '../components/GifPickerModal';
 import RecordingWaveform from '../components/RecordingWaveform';
@@ -64,6 +65,8 @@ interface Props {
   myUsername: string;
   contact: Contact;
   onBack: () => void;
+  /** Set when this room was opened from a global search result — jumps to and highlights that message once its page of history is loaded. */
+  initialJumpMessageId?: string;
 }
 
 // Firestore'un tek doküman limiti 1 MiB — base64 encoding ham veriyi ~%33
@@ -78,7 +81,7 @@ const MIN_RECORDING_MS = 600;
 // mid-scroll through history, generous enough to survive minor list jitter.
 const NEAR_BOTTOM_THRESHOLD_PX = 120;
 
-function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JSX.Element {
+function ChatRoomScreen({ myUid, myUsername, contact, onBack, initialJumpMessageId }: Props): React.JSX.Element {
   const insets = useSafeAreaInsets();
   const { theme } = useTheme();
   const isOnline = useNetworkStatus();
@@ -106,6 +109,12 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
   const [pinnedMessagePreview, setPinnedMessagePreview] = useState<ChatMessage | null>(null);
   const [editingMessage, setEditingMessage] = useState<ChatMessage | null>(null);
   const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
+  const [galleryMessageId, setGalleryMessageId] = useState<string | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchIndex, setSearchIndex] = useState(0);
+  const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
+  const consumedInitialJumpRef = useRef<string | null>(null);
   const listRef = useRef<FlatList<ChatMessage>>(null);
   const recordingStartedAtRef = useRef<number | null>(null);
   const lastMessageIdRef = useRef<string | null>(null);
@@ -155,12 +164,16 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
   // Opening a different contact's room starts back at the most recent 20
   // messages rather than carrying over how far the previous room was paged.
   useEffect(() => {
-    setMessageLimit(INITIAL_MESSAGE_LIMIT);
+    setMessageLimit(initialJumpMessageId ? MAX_MESSAGE_LIMIT : INITIAL_MESSAGE_LIMIT);
     setReachedStart(false);
     lastMessageIdRef.current = null;
     markedReadIdsRef.current.clear();
     isNearBottomRef.current = true;
     setNewMessagesBelow(false);
+    setSearchOpen(false);
+    setSearchQuery('');
+    setHighlightedMessageId(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roomId]);
 
   useEffect(() => subscribeToPinnedMessageId(roomId, setPinnedMessageId), [roomId]);
@@ -182,13 +195,15 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
     let cancelled = false;
     fetchMessageById(roomId, pinnedMessageId).then(msg => {
       if (!cancelled) {
-        setPinnedMessagePreview(msg);
+        // Deleted-for-me: keep it out of the pin banner even though the
+        // fallback fetch (unlike subscribeToMessages) doesn't filter it.
+        setPinnedMessagePreview(msg && !msg.deletedFor?.includes(myUid) ? msg : null);
       }
     });
     return () => {
       cancelled = true;
     };
-  }, [pinnedMessageId, messages, roomId]);
+  }, [pinnedMessageId, messages, roomId, myUid]);
 
   useEffect(() => subscribeToUserProfile(contact.uid, profile => setContactPhotoUrl(profile.photoUrl)), [contact.uid]);
   useEffect(() => subscribeToUserProfile(myUid, profile => setMyVideoBytesUsed(profile.videoBytesUsed)), [myUid]);
@@ -254,6 +269,7 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
     const unsubscribe = subscribeToMessages(
       roomId,
       messageLimit,
+      myUid,
       nextMessages => {
         setMessages(nextMessages);
         setConnectionError(null);
@@ -269,7 +285,7 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
     );
 
     return unsubscribe;
-  }, [roomId, messageLimit]);
+  }, [roomId, messageLimit, myUid]);
 
   const handleLoadMore = useCallback(() => {
     if (loadingMore || reachedStart || messageLimit >= MAX_MESSAGE_LIMIT) {
@@ -429,6 +445,46 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
     });
   }, [draft, roomId, myUid, editingMessage, replyingTo]);
 
+  const sendPickedAsset = useCallback(
+    async (asset: { uri?: string; type?: string; base64?: string }, hidden?: boolean) => {
+      if (!asset.uri) {
+        return;
+      }
+      const isVideo = (asset.type || '').startsWith('video');
+
+      // Fotoğraflar Firebase Storage'a hiç dokunmadan, sıkıştırılmış
+      // base64 data URI olarak doğrudan Firestore mesaj dokümanına
+      // yazılıyor (Blaze plana geçmeye gerek kalmadan çalışsın diye).
+      // Video için bu mümkün değil (Firestore doküman limiti 1 MiB),
+      // o yüzden video hâlâ Storage üzerinden yükleniyor.
+      if (!isVideo && asset.base64) {
+        const dataUri = `data:${asset.type || 'image/jpeg'};base64,${asset.base64}`;
+        if (dataUri.length > MAX_INLINE_MEDIA_DATA_URI_LENGTH) {
+          setConnectionError('Fotoğraf çok büyük, daha düşük çözünürlüklü bir fotoğraf seç.');
+          return;
+        }
+        try {
+          await sendMediaMessage(roomId, myUid, 'image', dataUri, undefined, hidden);
+        } catch (error) {
+          setConnectionError(`Fotoğraf gönderilemedi: ${(error as Error).message}`);
+        }
+        return;
+      }
+
+      const extension = isVideo ? 'mp4' : 'jpg';
+      try {
+        const { url, sizeBytes } = await uploadRoomMedia(roomId, isVideo ? 'video' : 'image', asset.uri, extension);
+        await sendMediaMessage(roomId, myUid, isVideo ? 'video' : 'image', url, undefined, hidden);
+        if (isVideo) {
+          addVideoBytesUsed(myUid, sizeBytes).catch(() => undefined);
+        }
+      } catch (error) {
+        setConnectionError(`Medya gönderilemedi: ${(error as Error).message}`);
+      }
+    },
+    [roomId, myUid],
+  );
+
   const handlePickMedia = useCallback(
     (source: 'library' | 'camera', hidden?: boolean) => {
       const pickerFn = source === 'library' ? launchImageLibrary : launchCamera;
@@ -439,6 +495,10 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
           maxWidth: 1280,
           maxHeight: 1280,
           includeBase64: true,
+          // Galeriden birden fazla fotoğraf/video seçilebilsin diye
+          // (0 = sınırsız); kamerada tek çekim olduğu için bu alan
+          // yok sayılır, davranışı etkilemez.
+          selectionLimit: 0,
           // Videolar cihazda seçilir seçilmez düşük kalitede yeniden
           // kodlanır (OS seviyesinde) — sunucuya çok daha küçük dosya
           // gidiyor, ekstra bir sıkıştırma kütüphanesine gerek kalmadan.
@@ -449,52 +509,44 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
           if (result.didCancel || !result.assets || result.assets.length === 0) {
             return;
           }
-          const asset = result.assets[0];
-          if (!asset.uri) {
-            return;
-          }
-          const isVideo = (asset.type || '').startsWith('video');
-
-          // Fotoğraflar Firebase Storage'a hiç dokunmadan, sıkıştırılmış
-          // base64 data URI olarak doğrudan Firestore mesaj dokümanına
-          // yazılıyor (Blaze plana geçmeye gerek kalmadan çalışsın diye).
-          // Video için bu mümkün değil (Firestore doküman limiti 1 MiB),
-          // o yüzden video hâlâ Storage üzerinden yükleniyor.
-          if (!isVideo && asset.base64) {
-            const dataUri = `data:${asset.type || 'image/jpeg'};base64,${asset.base64}`;
-            if (dataUri.length > MAX_INLINE_MEDIA_DATA_URI_LENGTH) {
-              setConnectionError('Fotoğraf çok büyük, daha düşük çözünürlüklü bir fotoğraf seç.');
-              return;
-            }
-            setUploadingMedia(true);
-            try {
-              await sendMediaMessage(roomId, myUid, 'image', dataUri, undefined, hidden);
-            } catch (error) {
-              setConnectionError(`Fotoğraf gönderilemedi: ${(error as Error).message}`);
-            } finally {
-              setUploadingMedia(false);
-            }
-            return;
-          }
-
-          const extension = isVideo ? 'mp4' : 'jpg';
           setUploadingMedia(true);
           try {
-            const { url, sizeBytes } = await uploadRoomMedia(roomId, isVideo ? 'video' : 'image', asset.uri, extension);
-            await sendMediaMessage(roomId, myUid, isVideo ? 'video' : 'image', url, undefined, hidden);
-            if (isVideo) {
-              addVideoBytesUsed(myUid, sizeBytes).catch(() => undefined);
+            // Sırayla gönderiliyor (paralel değil) ki mesajlar Firestore'a
+            // seçim sırasıyla düşsün ve aynı anda birden çok büyük video
+            // yüklemesi başlayıp bant genişliğini/bar kotasını tıkamasın.
+            for (const asset of result.assets) {
+              await sendPickedAsset(asset, hidden);
             }
-          } catch (error) {
-            setConnectionError(`Medya gönderilemedi: ${(error as Error).message}`);
           } finally {
             setUploadingMedia(false);
           }
         },
       );
     },
-    [roomId, myUid],
+    [sendPickedAsset],
   );
+
+  const handleImagePress = useCallback((messageId: string) => {
+    setGalleryMessageId(messageId);
+  }, []);
+
+  // Hidden ("gizli") photos are excluded from the shared swipe-through gallery — each one
+  // must still be revealed individually on its own bubble before it can be viewed at all, so
+  // letting the gallery page past a still-hidden photo would leak its content. If the tapped
+  // photo is itself hidden (i.e. the user just revealed it), it's shown alone with no swiping.
+  const galleryImages = useMemo(() => {
+    if (!galleryMessageId) {
+      return [];
+    }
+    const tapped = messages.find(m => m.id === galleryMessageId);
+    if (!tapped) {
+      return [];
+    }
+    if (tapped.hidden) {
+      return [tapped];
+    }
+    return messages.filter(m => m.type === 'image' && m.mediaUrl && !m.hidden);
+  }, [galleryMessageId, messages]);
 
   const handlePickFile = useCallback(async () => {
     let picked;
@@ -658,41 +710,115 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
     setDraft(message.text);
   }, []);
 
-  // Kept wired even though MessageBubble no longer exposes a "Sil" button —
-  // the deletion system itself stays intact (not ripped out), just not
-  // user-reachable from the UI for now.
+  // "Delete for me" — hides the message from this device only, the other
+  // side keeps seeing it untouched (see deleteMessage() in chatService.ts).
   const handleDeleteMessage = useCallback(
     (message: ChatMessage) => {
-      Alert.alert('Mesajı sil', 'Bu mesaj herkes için silinecek.', [
+      Alert.alert('Mesajı sil', 'Bu mesaj sadece sende silinecek, karşı taraf görmeye devam edecek.', [
         { text: 'Vazgeç', style: 'cancel' },
         {
           text: 'Sil',
           style: 'destructive',
           onPress: () => {
-            deleteMessage(roomId, message.id).catch(error => {
+            deleteMessage(roomId, message.id, myUid).catch(error => {
               setConnectionError(`Silinemedi: ${(error as Error).message}`);
             });
           },
         },
       ]);
     },
-    [roomId],
+    [roomId, myUid],
+  );
+
+  const scrollToMessageId = useCallback(
+    (messageId: string) => {
+      const target = messages.find(m => m.id === messageId);
+      if (!target) {
+        return false;
+      }
+      try {
+        listRef.current?.scrollToItem({ item: target, animated: true, viewPosition: 0.3 });
+      } catch {
+        // Item not in the currently-rendered window — nothing reasonable to do without getItemLayout.
+      }
+      return true;
+    },
+    [messages],
   );
 
   const handleJumpToPinned = useCallback(() => {
-    if (!pinnedMessagePreview) {
+    if (pinnedMessagePreview) {
+      scrollToMessageId(pinnedMessagePreview.id);
+    }
+  }, [pinnedMessagePreview, scrollToMessageId]);
+
+  // Global-search entry point: once the widened history (see the messageLimit
+  // reset above) has loaded far enough back to include the target message,
+  // scroll to it and flash-highlight it — retried on every `messages` update
+  // until found, since Firestore may deliver the page over more than one
+  // snapshot.
+  useEffect(() => {
+    if (!initialJumpMessageId || consumedInitialJumpRef.current === initialJumpMessageId) {
       return;
     }
-    const target = messages.find(m => m.id === pinnedMessagePreview.id);
-    if (!target) {
+    if (scrollToMessageId(initialJumpMessageId)) {
+      consumedInitialJumpRef.current = initialJumpMessageId;
+      setHighlightedMessageId(initialJumpMessageId);
+      const timer = setTimeout(() => setHighlightedMessageId(null), 2500);
+      return () => clearTimeout(timer);
+    }
+    return undefined;
+  }, [initialJumpMessageId, messages, scrollToMessageId]);
+
+  // In-chat search: matches are computed over whatever's currently loaded in
+  // `messages` (widened to MAX_MESSAGE_LIMIT below while search is open),
+  // newest match first to match how someone typically searches — "find the
+  // last time we talked about X".
+  const searchMatches = useMemo(() => {
+    const needle = searchQuery.trim().toLowerCase();
+    if (!needle) {
+      return [];
+    }
+    return messages.filter(m => m.type === 'text' && m.text.toLowerCase().includes(needle)).reverse();
+  }, [messages, searchQuery]);
+
+  useEffect(() => {
+    if (!searchOpen) {
       return;
     }
-    try {
-      listRef.current?.scrollToItem({ item: target, animated: true, viewPosition: 0.3 });
-    } catch {
-      // Item not in the currently-rendered window — nothing reasonable to do without getItemLayout.
+    // Widen the live query so search can reach further back than the normal
+    // scroll-triggered pagination would have loaded by itself.
+    setMessageLimit(MAX_MESSAGE_LIMIT);
+  }, [searchOpen]);
+
+  useEffect(() => {
+    setSearchIndex(0);
+  }, [searchQuery]);
+
+  useEffect(() => {
+    const current = searchMatches[searchIndex];
+    if (current) {
+      scrollToMessageId(current.id);
+      setHighlightedMessageId(current.id);
+    } else {
+      setHighlightedMessageId(null);
     }
-  }, [pinnedMessagePreview, messages]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchMatches, searchIndex]);
+
+  const handleSearchPrev = useCallback(() => {
+    setSearchIndex(i => (searchMatches.length ? (i + 1) % searchMatches.length : 0));
+  }, [searchMatches.length]);
+
+  const handleSearchNext = useCallback(() => {
+    setSearchIndex(i => (searchMatches.length ? (i - 1 + searchMatches.length) % searchMatches.length : 0));
+  }, [searchMatches.length]);
+
+  const handleCloseSearch = useCallback(() => {
+    setSearchOpen(false);
+    setSearchQuery('');
+    setHighlightedMessageId(null);
+  }, []);
 
   const canSend = draft.trim().length > 0;
 
@@ -715,6 +841,14 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
         <Text style={[styles.headerTitle, { color: theme.text }]} numberOfLines={1}>
           {contact.name}
         </Text>
+        <Pressable
+          onPress={() => setSearchOpen(v => !v)}
+          hitSlop={8}
+          style={styles.headerIconButton}
+          accessibilityRole="button"
+          accessibilityLabel="Sohbette ara">
+          <Text style={styles.headerIconText}>🔍</Text>
+        </Pressable>
         <Pressable
           onPress={handleChangeBackground}
           hitSlop={8}
@@ -770,6 +904,45 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
         </Pressable>
       </View>
 
+      {searchOpen && (
+        <View style={[styles.searchBar, { backgroundColor: theme.surface, borderBottomColor: theme.border }]}>
+          <TextInput
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            placeholder="Sohbette ara..."
+            placeholderTextColor={theme.textFaint}
+            style={[styles.searchInput, { color: theme.text }]}
+            autoFocus
+          />
+          {!!searchQuery.trim() && (
+            <Text style={[styles.searchCount, { color: theme.textMuted }]}>
+              {searchMatches.length ? `${searchIndex + 1}/${searchMatches.length}` : '0/0'}
+            </Text>
+          )}
+          <Pressable
+            onPress={handleSearchPrev}
+            disabled={!searchMatches.length}
+            hitSlop={8}
+            style={styles.searchNavButton}
+            accessibilityRole="button"
+            accessibilityLabel="Önceki sonuç">
+            <Text style={[styles.searchNavIcon, { color: searchMatches.length ? theme.text : theme.textFaint }]}>↑</Text>
+          </Pressable>
+          <Pressable
+            onPress={handleSearchNext}
+            disabled={!searchMatches.length}
+            hitSlop={8}
+            style={styles.searchNavButton}
+            accessibilityRole="button"
+            accessibilityLabel="Sonraki sonuç">
+            <Text style={[styles.searchNavIcon, { color: searchMatches.length ? theme.text : theme.textFaint }]}>↓</Text>
+          </Pressable>
+          <Pressable onPress={handleCloseSearch} hitSlop={8} style={styles.searchNavButton} accessibilityRole="button" accessibilityLabel="Aramayı kapat">
+            <Text style={[styles.searchNavIcon, { color: theme.text }]}>✕</Text>
+          </Pressable>
+        </View>
+      )}
+
       <StorageQuotaBanner usedBytes={myVideoBytesUsed} variant="strip" />
 
       <OnlineTicTacToeModal
@@ -809,6 +982,10 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
           );
         }}
       />
+
+      {galleryMessageId && (
+        <ImageGalleryModal images={galleryImages} initialMessageId={galleryMessageId} onClose={() => setGalleryMessageId(null)} />
+      )}
 
       {pinnedMessagePreview && (
         <Pressable
@@ -866,12 +1043,15 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack }: Props): React.JS
               isMine={item.senderId === myUid}
               myUid={myUid}
               isPinned={item.id === pinnedMessageId}
+              highlighted={item.id === highlightedMessageId}
               onToggleReaction={handleToggleReaction}
               onPin={handlePinMessage}
               onUnpin={handleUnpinMessage}
               onEdit={handleEditRequest}
               onDelete={handleDeleteMessage}
               onReply={handleReplyRequest}
+              onJumpToReply={scrollToMessageId}
+              onImagePress={handleImagePress}
             />
           )}
           contentContainerStyle={styles.listContent}
@@ -1046,6 +1226,30 @@ const styles = StyleSheet.create({
   },
   headerIconButtonDisabled: {
     opacity: 0.4,
+  },
+  searchBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderBottomWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    gap: 8,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 15,
+    paddingVertical: 4,
+  },
+  searchCount: {
+    fontSize: 13,
+  },
+  searchNavButton: {
+    paddingHorizontal: 6,
+    paddingVertical: 4,
+  },
+  searchNavIcon: {
+    fontSize: 18,
+    fontWeight: '700',
   },
   errorBanner: {
     borderBottomWidth: 1,

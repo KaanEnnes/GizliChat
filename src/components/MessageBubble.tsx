@@ -81,13 +81,18 @@ interface Props {
   isMine: boolean;
   myUid: string;
   isPinned: boolean;
+  /** True while this is the currently-active search result (in-chat search) or the target of a jump from global search — briefly tints the bubble so the user can spot it. */
+  highlighted?: boolean;
   onToggleReaction: (message: ChatMessage, emoji: string) => void;
   onPin: (message: ChatMessage) => void;
   onUnpin: () => void;
   onEdit: (message: ChatMessage) => void;
-  /** Deletion system stays wired end-to-end — just not exposed as a button in the long-press menu right now. */
   onDelete: (message: ChatMessage) => void;
   onReply: (message: ChatMessage) => void;
+  /** Scrolls the list to the original message a reply quote points at, when it's in the currently-loaded window. */
+  onJumpToReply: (messageId: string) => void;
+  /** Opens the room-wide swipeable image gallery starting at this message, instead of the single-image modal below. Only wired up for non-hidden images. */
+  onImagePress?: (messageId: string) => void;
 }
 
 const QUICK_EMOJIS = ['❤️', '🤍', '😂', '😮', '😢', '🙏', '👍'];
@@ -166,12 +171,15 @@ function MessageBubble({
   isMine,
   myUid,
   isPinned,
+  highlighted,
   onToggleReaction,
   onPin,
   onUnpin,
   onEdit,
   onDelete,
   onReply,
+  onJumpToReply,
+  onImagePress,
 }: Props): React.JSX.Element {
   const { theme } = useTheme();
   const [viewerOpen, setViewerOpen] = useState(false);
@@ -235,6 +243,11 @@ function MessageBubble({
   const handleReply = () => {
     setPickerOpen(false);
     onReply(message);
+  };
+
+  const handleDelete = () => {
+    setPickerOpen(false);
+    onDelete(message);
   };
 
   // Swipe-left-or-right-to-reply, WhatsApp style: the bubble follows the
@@ -351,17 +364,21 @@ function MessageBubble({
               styles.bubble,
               { backgroundColor: bubbleColor },
               isMine ? styles.bubbleMine : styles.bubbleOther,
+              highlighted && { borderWidth: 2, borderColor: theme.identity },
             ]}>
             {message.replyTo && (
-              <View
+              <Pressable
+                onPress={() => onJumpToReply(message.replyTo!.messageId)}
                 style={[
                   styles.replyQuote,
                   { borderLeftColor: theme.identity, backgroundColor: theme.overlay },
-                ]}>
+                ]}
+                accessibilityRole="button"
+                accessibilityLabel="Yanıtlanan mesaja git">
                 <Text style={[styles.replyQuoteText, { color: bubbleTextColor }]} numberOfLines={1}>
                   {replyPreviewLabel({ ...message.replyTo, id: '', createdAt: 0 } as ChatMessage)}
                 </Text>
-              </View>
+              </Pressable>
             )}
         {(message.type === 'image' || message.type === 'video') && message.mediaUrl && showHiddenOverlay && (
           <Pressable
@@ -378,7 +395,7 @@ function MessageBubble({
         )}
 
         {message.type === 'image' && message.mediaUrl && !showHiddenOverlay && (
-          <Pressable onPress={() => setViewerOpen(true)}>
+          <Pressable onPress={() => (onImagePress ? onImagePress(message.id) : setViewerOpen(true))}>
             <Image source={{ uri: message.mediaUrl }} style={styles.mediaImage} resizeMode="cover" />
           </Pressable>
         )}
@@ -459,6 +476,13 @@ function MessageBubble({
         })()}
 
         <View style={styles.metaRow}>
+          {!!message.deletedFor?.length && (
+            <Text
+              style={[styles.timeText, styles.mutedMeta, { color: bubbleTextColor }]}
+              accessibilityLabel="Karşı taraf bu mesajı kendi tarafından sildi">
+              🗑️{' '}
+            </Text>
+          )}
           {!!message.editedAt && (
             <Text style={[styles.timeText, styles.mutedMeta, { color: bubbleTextColor }]}>düzenlendi · </Text>
           )}
@@ -552,6 +576,13 @@ function MessageBubble({
                 <Text style={[styles.actionRowText, { color: theme.text }]}>✏️  Düzenle</Text>
               </Pressable>
             )}
+            <Pressable
+              style={styles.actionRow}
+              onPress={handleDelete}
+              accessibilityRole="button"
+              accessibilityLabel="Mesajı benden sil">
+              <Text style={[styles.actionRowText, { color: theme.danger }]}>🗑️  Sil</Text>
+            </Pressable>
           </View>
         </Pressable>
       </Modal>

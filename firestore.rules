@@ -52,8 +52,9 @@ service cloud.firestore {
       //    driving the sender's WhatsApp-style tick icons.
       // 3) edit: only the sender, only a text message, only while it hasn't
       //    been soft-deleted, may rewrite `text` and stamp `editedAt`.
-      // 4) delete: only the sender may flip `deleted` to true, which must be
-      //    paired with clearing `text`/`mediaUrl` (see deleteMessage()).
+      // 4) delete-for-me: any room member may append only their own uid to
+      //    `deletedFor` — the message content itself is never touched, so
+      //    the other member keeps seeing it normally (see deleteMessage()).
       allow update: if isRoomMember(roomId) && (
         (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reactions']) &&
           request.resource.data.reactions.diff(resource.data.get('reactions', {})).affectedKeys().hasOnly([request.auth.uid])) ||
@@ -63,9 +64,8 @@ service cloud.firestore {
           resource.data.senderId == request.auth.uid &&
           resource.data.type == 'text' &&
           resource.data.get('deleted', false) == false) ||
-        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['deleted', 'text', 'mediaUrl', 'fileName', 'fileSize']) &&
-          resource.data.senderId == request.auth.uid &&
-          request.resource.data.deleted == true)
+        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['deletedFor']) &&
+          request.resource.data.deletedFor == resource.data.get('deletedFor', []).concat([request.auth.uid]))
       );
       allow delete: if false;
     }

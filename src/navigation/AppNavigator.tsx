@@ -22,6 +22,7 @@ function AppNavigator(): React.JSX.Element {
   const [screen, setScreen] = useState<Screen>('HOME');
   const [account, setAccount] = useState<Account | null>(null);
   const [activeContact, setActiveContact] = useState<Contact | null>(null);
+  const [jumpMessageId, setJumpMessageId] = useState<string | undefined>(undefined);
 
   useEffect(() => {
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
@@ -76,8 +77,9 @@ function AppNavigator(): React.JSX.Element {
     return () => setActiveChatUid(null);
   }, [screen, activeContact]);
 
-  const openRoom = (contact: Contact) => {
+  const openRoom = (contact: Contact, messageIdToJumpTo?: string) => {
     setActiveContact(contact);
+    setJumpMessageId(messageIdToJumpTo);
     setScreen('CHAT_ROOM');
   };
 
@@ -113,6 +115,7 @@ function AppNavigator(): React.JSX.Element {
         myUsername={account.username}
         contact={activeContact}
         onBack={() => setScreen('CONTACTS')}
+        initialJumpMessageId={jumpMessageId}
       />
     );
   } else {

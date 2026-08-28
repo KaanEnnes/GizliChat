@@ -36,18 +36,23 @@ interface Props {
   isMine: boolean;
   myUid: string;
   isPinned: boolean;
+  /** True while this is the currently-active search result (in-chat search) or the target of a jump from global search — briefly tints the bubble so the user can spot it. */
+  highlighted?: boolean;
   onToggleReaction: (message: ChatMessage, emoji: string) => void;
   onPin: (message: ChatMessage) => void;
   onUnpin: () => void;
   onEdit: (message: ChatMessage) => void;
   onDelete: (message: ChatMessage) => void;
   onReply: (message: ChatMessage) => void;
+  /** Scrolls the list to the original message a reply quote points at, when it's in the currently-loaded window. */
+  onJumpToReply: (messageId: string) => void;
+  /** Opens the room-wide swipeable image gallery starting at this message, instead of the single-image overlay below. */
+  onImagePress: (messageId: string) => void;
 }
 
-function MessageBubble({ message, isMine, myUid, isPinned, onToggleReaction, onPin, onUnpin, onEdit, onDelete, onReply }: Props): React.JSX.Element {
+function MessageBubble({ message, isMine, myUid, isPinned, highlighted, onToggleReaction, onPin, onUnpin, onEdit, onDelete, onReply, onJumpToReply, onImagePress }: Props): React.JSX.Element {
   const { theme } = useTheme();
   const [menuOpen, setMenuOpen] = useState(false);
-  const [viewerOpen, setViewerOpen] = useState(false);
   const [textExpanded, setTextExpanded] = useState(false);
 
   const bubbleColor = isMine ? theme.bubbleMine : theme.bubbleOther;
@@ -88,24 +93,36 @@ function MessageBubble({ message, isMine, myUid, isPinned, onToggleReaction, onP
   }
 
   return (
-    <div className={`msg-row ${isMine ? 'mine' : 'other'} ${hasReactions ? 'with-reactions' : ''}`}>
+    <div id={`msg-${message.id}`} className={`msg-row ${isMine ? 'mine' : 'other'} ${hasReactions ? 'with-reactions' : ''}`}>
       {isPinned && <div className="msg-pinned-tag" style={{ color: theme.textFaint }}>📌 Sabitlendi</div>}
       <div
         className="msg-bubble"
-        style={{ background: bubbleColor, color: bubbleTextColor, position: 'relative' }}
+        style={{
+          background: bubbleColor,
+          color: bubbleTextColor,
+          position: 'relative',
+          ...(highlighted ? { outline: `2px solid ${theme.identity}`, outlineOffset: 1 } : {}),
+        }}
         onContextMenu={e => {
           e.preventDefault();
           setMenuOpen(true);
         }}
         onDoubleClick={() => setMenuOpen(true)}>
         {message.replyTo && (
-          <div className="msg-reply-quote" style={{ borderLeftColor: theme.identity, background: theme.overlay }}>
+          <div
+            className="msg-reply-quote"
+            style={{ borderLeftColor: theme.identity, background: theme.overlay, cursor: 'pointer' }}
+            onClick={e => {
+              e.stopPropagation();
+              onJumpToReply(message.replyTo!.messageId);
+            }}
+            title="Yanıtlanan mesaja git">
             {replyPreviewLabel(message.replyTo)}
           </div>
         )}
 
         {message.type === 'image' && message.mediaUrl && (
-          <img src={message.mediaUrl} className="msg-media" onClick={() => setViewerOpen(true)} alt="" />
+          <img src={message.mediaUrl} className="msg-media" onClick={() => onImagePress(message.id)} alt="" />
         )}
 
         {message.type === 'video' && message.mediaUrl && (
@@ -144,6 +161,11 @@ function MessageBubble({ message, isMine, myUid, isPinned, onToggleReaction, onP
         })()}
 
         <div className="msg-meta-row">
+          {!!message.deletedFor?.length && (
+            <span style={{ opacity: 0.6, fontSize: 11 }} title="Karşı taraf bu mesajı kendi tarafından sildi">
+              🗑️{' '}
+            </span>
+          )}
           {!!message.editedAt && <span style={{ opacity: 0.6, fontSize: 11 }}>düzenlendi · </span>}
           <span style={{ opacity: 0.6, fontSize: 11 }}>{formatTime(message.createdAt)}</span>
           {isMine && (
@@ -211,26 +233,19 @@ function MessageBubble({ message, isMine, myUid, isPinned, onToggleReaction, onP
                 ✏️ Düzenle
               </button>
             )}
-            {isMine && (
-              <button
-                className="msg-menu-action"
-                style={{ color: theme.danger }}
-                onClick={() => {
-                  setMenuOpen(false);
-                  onDelete(message);
-                }}>
-                🗑️ Sil
-              </button>
-            )}
+            <button
+              className="msg-menu-action"
+              style={{ color: theme.danger }}
+              onClick={() => {
+                setMenuOpen(false);
+                onDelete(message);
+              }}>
+              🗑️ Sil
+            </button>
           </div>
         </div>
       )}
 
-      {viewerOpen && message.type === 'image' && message.mediaUrl && (
-        <div className="msg-viewer-overlay" onClick={() => setViewerOpen(false)}>
-          <img src={message.mediaUrl} className="msg-viewer-image" alt="" />
-        </div>
-      )}
     </div>
   );
 }

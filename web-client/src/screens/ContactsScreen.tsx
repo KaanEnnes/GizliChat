@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { addContact, removeContact, setContactFavorite, subscribeToContacts, type Contact } from '../services/contactService';
-import { getRoomId, subscribeToLatestMessage, type ChatMessage } from '../services/chatService';
+import { getRoomId, searchMessagesInRoom, subscribeToLatestMessage, type ChatMessage } from '../services/chatService';
 import { getLastReadAt, markRoomRead } from '../services/readStatusService';
 import {
   findUserByUsername,
@@ -17,6 +17,8 @@ import Avatar from '../components/Avatar';
 const WEEKDAYS_TR = ['Paz', 'Pzt', 'Sal', 'Çar', 'Per', 'Cum', 'Cmt'];
 const PRESENCE_RECHECK_MS = 20_000;
 const MAX_ONLINE_SHOWN = 8;
+const GLOBAL_SEARCH_DEBOUNCE_MS = 350;
+const MAX_GLOBAL_SEARCH_RESULTS = 50;
 
 function formatListTimestamp(timestamp: number): string {
   const date = new Date(timestamp);
@@ -42,9 +44,14 @@ function formatPreview(message: ChatMessage | null | undefined, myUid: string): 
 
 interface Props {
   account: Account;
-  onOpenRoom: (contact: Contact) => void;
+  onOpenRoom: (contact: Contact, messageIdToJumpTo?: string) => void;
   onLogout: () => void;
   onGoHome: () => void;
+}
+
+interface GlobalSearchResult {
+  contact: Contact;
+  message: ChatMessage;
 }
 
 function ContactsScreen({ account, onOpenRoom, onLogout, onGoHome }: Props): React.JSX.Element {
@@ -69,6 +76,11 @@ function ContactsScreen({ account, onOpenRoom, onLogout, onGoHome }: Props): Rea
   const [adding, setAdding] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
 
+  const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
+  const [globalSearchQuery, setGlobalSearchQuery] = useState('');
+  const [globalSearchResults, setGlobalSearchResults] = useState<GlobalSearchResult[]>([]);
+  const [globalSearching, setGlobalSearching] = useState(false);
+
   useEffect(() => {
     const interval = setInterval(() => setNowTick(Date.now()), PRESENCE_RECHECK_MS);
     return () => clearInterval(interval);
@@ -86,7 +98,7 @@ function ContactsScreen({ account, onOpenRoom, onLogout, onGoHome }: Props): Rea
         roomUnsubsRef.current = nextContacts.map(contact => {
           const roomId = getRoomId(account.uid, contact.uid);
           setLastReadMap(prev => ({ ...prev, [contact.uid]: getLastReadAt(roomId) }));
-          return subscribeToLatestMessage(roomId, message => {
+          return subscribeToLatestMessage(roomId, account.uid, message => {
             setLatestMessages(prev => ({ ...prev, [contact.uid]: message }));
           });
         });
@@ -143,6 +155,58 @@ function ContactsScreen({ account, onOpenRoom, onLogout, onGoHome }: Props): Rea
     },
     [account.uid, onOpenRoom],
   );
+
+  const handleOpenSearchResult = useCallback(
+    (result: GlobalSearchResult) => {
+      const roomId = getRoomId(account.uid, result.contact.uid);
+      const now = Date.now();
+      markRoomRead(roomId, now);
+      setLastReadMap(prev => ({ ...prev, [result.contact.uid]: now }));
+      setGlobalSearchOpen(false);
+      setGlobalSearchQuery('');
+      onOpenRoom(result.contact, result.message.id);
+    },
+    [account.uid, onOpenRoom],
+  );
+
+  const handleCloseGlobalSearch = useCallback(() => {
+    setGlobalSearchOpen(false);
+    setGlobalSearchQuery('');
+  }, []);
+
+  useEffect(() => {
+    const needle = globalSearchQuery.trim();
+    if (!needle) {
+      setGlobalSearchResults([]);
+      setGlobalSearching(false);
+      return undefined;
+    }
+    setGlobalSearching(true);
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      Promise.all(
+        contacts.map(async contact => {
+          const matches = await searchMessagesInRoom(getRoomId(account.uid, contact.uid), account.uid, needle);
+          return matches.map(message => ({ contact, message }));
+        }),
+      )
+        .then(perContact => {
+          if (cancelled) return;
+          const merged = perContact
+            .flat()
+            .sort((a, b) => b.message.createdAt - a.message.createdAt)
+            .slice(0, MAX_GLOBAL_SEARCH_RESULTS);
+          setGlobalSearchResults(merged);
+        })
+        .finally(() => {
+          if (!cancelled) setGlobalSearching(false);
+        });
+    }, GLOBAL_SEARCH_DEBOUNCE_MS);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [globalSearchQuery, contacts, account.uid]);
 
   const handleToggleFavorite = useCallback(
     (e: React.MouseEvent, contact: Contact) => {
@@ -234,6 +298,13 @@ function ContactsScreen({ account, onOpenRoom, onLogout, onGoHome }: Props): Rea
           </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+          <button
+            className="icon-btn"
+            style={{ background: theme.surfaceAlt, color: theme.text }}
+            onClick={() => setGlobalSearchOpen(v => !v)}
+            title="Tüm sohbetlerde ara">
+            🔍
+          </button>
           <button className="icon-btn" style={{ background: theme.surfaceAlt, color: theme.text }} onClick={onGoHome} title="Ana sayfaya dön">
             🏠
           </button>
@@ -246,12 +317,56 @@ function ContactsScreen({ account, onOpenRoom, onLogout, onGoHome }: Props): Rea
         </div>
       </div>
 
+      {globalSearchOpen && (
+        <div className="contacts-search-bar" style={{ background: theme.surface, borderColor: theme.border }}>
+          <input
+            className="contacts-search-input"
+            style={{ color: theme.text }}
+            placeholder="Tüm sohbetlerde ara..."
+            value={globalSearchQuery}
+            onChange={e => setGlobalSearchQuery(e.target.value)}
+            autoFocus
+          />
+          <span style={{ cursor: 'pointer', color: theme.textFaint, fontSize: 16 }} onClick={handleCloseGlobalSearch}>
+            ✕
+          </span>
+        </div>
+      )}
+
       {loadError && (
         <div className="contacts-banner" style={{ background: theme.dangerSoft, color: theme.danger }}>
           {loadError}
         </div>
       )}
 
+      {globalSearchOpen && globalSearchQuery.trim() ? (
+        <div className="contacts-scroll">
+          {globalSearchResults.length === 0 && (
+            <div style={{ textAlign: 'center', marginTop: 40, fontSize: 13, color: theme.textFaint }}>
+              {globalSearching ? 'Aranıyor...' : 'Sonuç bulunamadı'}
+            </div>
+          )}
+          {globalSearchResults.map(item => (
+            <div
+              key={`${item.contact.uid}_${item.message.id}`}
+              className="contact-row"
+              style={{ background: theme.surface, borderColor: theme.border }}
+              onClick={() => handleOpenSearchResult(item)}>
+              <Avatar name={item.contact.name} size={44} photoUrl={contactPhotos[item.contact.uid]} />
+              <div className="contact-body">
+                <div className="contact-name" style={{ color: theme.text }}>{item.contact.name}</div>
+                <div className="contact-preview" style={{ color: theme.textMuted }}>
+                  {item.message.senderId === account.uid ? 'Sen: ' : ''}
+                  {item.message.text}
+                </div>
+              </div>
+              <div className="contact-meta">
+                <div style={{ fontSize: 11.5, color: theme.textFaint }}>{formatListTimestamp(item.message.createdAt)}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
       <div className="contacts-scroll">
         {favoriteContacts.length > 0 && (
           <div className="contacts-section">
@@ -324,7 +439,9 @@ function ContactsScreen({ account, onOpenRoom, onLogout, onGoHome }: Props): Rea
           );
         })}
       </div>
+      )}
 
+      {!(globalSearchOpen && globalSearchQuery.trim()) && (
       <button
         className="add-contact-btn"
         style={{ background: theme.accent, color: theme.accentText }}
@@ -336,6 +453,7 @@ function ContactsScreen({ account, onOpenRoom, onLogout, onGoHome }: Props): Rea
         }}>
         + Kişi Ekle
       </button>
+      )}
 
       {addModalOpen && (
         <div className="modal-overlay" style={{ background: theme.overlay }} onClick={() => setAddModalOpen(false)}>

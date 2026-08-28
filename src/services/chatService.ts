@@ -1,9 +1,11 @@
 import {
   addDoc,
+  arrayUnion,
   collection,
   deleteField,
   doc,
   getDoc,
+  getDocs,
   limit,
   onSnapshot,
   orderBy,
@@ -54,8 +56,10 @@ export interface ChatMessage {
   readAt?: number;
   /** Set when the sender edits a text message's content after sending — drives the "(düzenlendi)" tag. */
   editedAt?: number;
-  /** Soft-delete flag — the sender's own message, `text`/`mediaUrl` are cleared server-side and the bubble renders a "message deleted" placeholder instead of the original content. */
+  /** Soft-delete flag — the sender's own message, `text`/`mediaUrl` are cleared server-side and the bubble renders a "message deleted" placeholder instead of the original content. Legacy: no longer written by deleteMessage(), kept so old already-deleted messages still render their placeholder. */
   deleted?: boolean;
+  /** "Delete for me": uids of room members who have hidden this message from their own view. The message and its content are untouched for everyone else — see deleteMessage(). */
+  deletedFor?: string[];
   /** Present for image/video messages sent as "gizli" (hidden) — the bubble shows a reveal button instead of the media until tapped. */
   hidden?: boolean;
   /** Set when this message was sent as a reply (swipe-to-reply) — a snapshot of the original message, not a live reference, so it still renders correctly if the original is later edited/deleted. */
@@ -97,6 +101,7 @@ export function getRoomId(uidA: string, uidB: string): string {
 export function subscribeToMessages(
   roomId: string,
   limitCount: number,
+  myUid: string,
   onMessages: (messages: ChatMessage[]) => void,
   onError: (error: Error) => void,
 ): Unsubscribe {
@@ -109,7 +114,12 @@ export function subscribeToMessages(
   return onSnapshot(
     messagesQuery,
     snapshot => {
-      onMessages(snapshot.docs.map(docToMessage).reverse());
+      onMessages(
+        snapshot.docs
+          .map(docToMessage)
+          .filter(message => !message.deletedFor?.includes(myUid))
+          .reverse(),
+      );
     },
     error => onError(error as Error),
   );
@@ -152,6 +162,7 @@ function docToMessage(docSnap: {
     readAt: data.readAt instanceof Timestamp ? data.readAt.toMillis() : undefined,
     editedAt: data.editedAt instanceof Timestamp ? data.editedAt.toMillis() : undefined,
     deleted: data.deleted === true,
+    deletedFor: Array.isArray(data.deletedFor) ? (data.deletedFor as string[]) : undefined,
     hidden: data.hidden === true,
     replyTo:
       typeof data.replyTo === 'object' && data.replyTo !== null
@@ -167,18 +178,21 @@ function docToMessage(docSnap: {
  */
 export function subscribeToLatestMessage(
   roomId: string,
+  myUid: string,
   onMessage: (message: ChatMessage | null) => void,
 ): Unsubscribe {
+  // Widened past 1 so a message deleted-for-me can be skipped client-side —
+  // still cheap, and comfortably covers "deleted the last few messages".
   const latestQuery = query(
     collection(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION),
     orderBy('createdAt', 'desc'),
-    limit(1),
+    limit(20),
   );
   return onSnapshot(
     latestQuery,
     snapshot => {
-      const docSnap = snapshot.docs[0];
-      onMessage(docSnap ? docToMessage(docSnap) : null);
+      const docSnap = snapshot.docs.map(docToMessage).find(message => !message.deletedFor?.includes(myUid));
+      onMessage(docSnap ?? null);
     },
     () => onMessage(null),
   );
@@ -306,16 +320,10 @@ export async function editMessage(roomId: string, messageId: string, newText: st
   await updateDoc(messageRef, { text: trimmed, editedAt: serverTimestamp() });
 }
 
-/** Soft-deletes a message: clears its content but keeps the doc (and its position in history) so the other side sees a "message deleted" placeholder — sender-only (enforced by firestore.rules). */
-export async function deleteMessage(roomId: string, messageId: string): Promise<void> {
+/** "Delete for me": hides a message from only the caller's own view — the doc and its content are untouched, so the other room member keeps seeing it normally. Works on any message (yours or theirs), enforced by firestore.rules to only ever add the caller's own uid. */
+export async function deleteMessage(roomId: string, messageId: string, myUid: string): Promise<void> {
   const messageRef = doc(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION, messageId);
-  await updateDoc(messageRef, {
-    deleted: true,
-    text: '',
-    mediaUrl: deleteField(),
-    fileName: deleteField(),
-    fileSize: deleteField(),
-  });
+  await updateDoc(messageRef, { deletedFor: arrayUnion(myUid) });
 }
 
 // ---- Pinned message: one per room, stored on the room doc itself ----
@@ -347,4 +355,38 @@ export async function unpinMessage(roomId: string): Promise<void> {
 export async function fetchMessageById(roomId: string, messageId: string): Promise<ChatMessage | null> {
   const snap = await getDoc(doc(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION, messageId));
   return snap.exists() ? docToMessage(snap) : null;
+}
+
+/**
+ * One-off (non-live) text search over a room's message history, newest-first
+ * — used by both in-chat search and the cross-contact global search, neither
+ * of which need a live subscription. Firestore has no full-text search, so
+ * this pulls up to `MAX_MESSAGE_LIMIT` messages and does a plain
+ * case-insensitive substring match client-side; deleted-for-me messages are
+ * excluded, same as subscribeToMessages.
+ */
+export async function searchMessagesInRoom(
+  roomId: string,
+  myUid: string,
+  queryText: string,
+): Promise<ChatMessage[]> {
+  const needle = queryText.trim().toLowerCase();
+  if (!needle) {
+    return [];
+  }
+  const snapshot = await getDocs(
+    query(
+      collection(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION),
+      orderBy('createdAt', 'desc'),
+      limit(MAX_MESSAGE_LIMIT),
+    ),
+  );
+  return snapshot.docs
+    .map(docToMessage)
+    .filter(
+      message =>
+        !message.deletedFor?.includes(myUid) &&
+        message.type === 'text' &&
+        message.text.toLowerCase().includes(needle),
+    );
 }

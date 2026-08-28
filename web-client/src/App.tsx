@@ -7,6 +7,8 @@ import ChatRoomScreen from './screens/ChatRoomScreen';
 import GameHubScreen from './screens/GameHubScreen';
 import { fetchAccountUsername, logoutAccount, updatePresenceHeartbeat, watchAuthState, type Account } from './services/userService';
 import type { Contact } from './services/contactService';
+import { initFcm } from './services/fcmService';
+import { setActiveChatUid } from './services/notificationService';
 
 const PRESENCE_HEARTBEAT_MS = 25_000;
 
@@ -26,9 +28,11 @@ interface NavState {
   revealed: boolean;
   hubOverride: boolean;
   activeContact: ContactStub | null;
+  /** Set when the room was opened from a global search result — passed through to ChatRoomScreen to jump to and highlight that message. */
+  jumpMessageId: string | null;
 }
 
-const INITIAL_NAV_STATE: NavState = { revealed: false, hubOverride: false, activeContact: null };
+const INITIAL_NAV_STATE: NavState = { revealed: false, hubOverride: false, activeContact: null, jumpMessageId: null };
 
 function pushNavState(next: NavState): void {
   window.history.pushState(next, '');
@@ -39,6 +43,7 @@ function AppShell(): React.JSX.Element {
   const isMobileLayout = useIsMobileLayout();
   const [account, setAccount] = useState<Account | null | undefined>(undefined); // undefined = auth state still resolving
   const [activeContact, setActiveContactState] = useState<Contact | null>(null);
+  const [jumpMessageId, setJumpMessageIdState] = useState<string | null>(null);
   // Whether the hidden gesture on the games hub has revealed the real login —
   // mirrors the mobile app's disguise: an anonymous session (created just for
   // leaderboard score submission) must never auto-reveal the real chat UI.
@@ -57,10 +62,12 @@ function AppShell(): React.JSX.Element {
       revealed: next.revealed ?? revealed,
       hubOverride: next.hubOverride ?? hubOverride,
       activeContact: next.activeContact !== undefined ? next.activeContact : activeContact,
+      jumpMessageId: next.jumpMessageId !== undefined ? next.jumpMessageId : jumpMessageId,
     };
     setRevealedState(merged.revealed);
     setHubOverrideState(merged.hubOverride);
     setActiveContactState(merged.activeContact as Contact | null);
+    setJumpMessageIdState(merged.jumpMessageId);
     pushNavState(merged);
   };
 
@@ -73,12 +80,14 @@ function AppShell(): React.JSX.Element {
       setRevealedState(state.revealed);
       setHubOverrideState(state.hubOverride);
       setActiveContactState(state.activeContact as Contact | null);
+      setJumpMessageIdState(state.jumpMessageId ?? null);
     };
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
-  const setActiveContact = (contact: Contact | null) => navigate({ activeContact: contact });
+  const setActiveContact = (contact: Contact | null, messageIdToJumpTo?: string) =>
+    navigate({ activeContact: contact, jumpMessageId: messageIdToJumpTo ?? null });
   const setRevealed = (value: boolean) => navigate({ revealed: value });
   const setHubOverride = (value: boolean) => navigate({ hubOverride: value });
 
@@ -99,6 +108,15 @@ function AppShell(): React.JSX.Element {
     const interval = setInterval(() => updatePresenceHeartbeat(account.uid).catch(() => undefined), PRESENCE_HEARTBEAT_MS);
     return () => clearInterval(interval);
   }, [account]);
+
+  useEffect(() => {
+    if (!account) return;
+    initFcm(account.uid).catch(() => undefined);
+  }, [account]);
+
+  useEffect(() => {
+    setActiveChatUid(activeContact?.uid ?? null);
+  }, [activeContact]);
 
   if (account === undefined) {
     return (
@@ -122,7 +140,7 @@ function AppShell(): React.JSX.Element {
       // behavior — instead of the (now-meaningless) pre-login reveal state,
       // which renders identically to Contacts once account is set and so
       // would make the back button look like it does nothing.
-      pushNavState({ revealed: true, hubOverride: true, activeContact: null });
+      pushNavState({ revealed: true, hubOverride: true, activeContact: null, jumpMessageId: null });
       setAccount(loggedInAccount);
       navigate({ revealed: true, hubOverride: false, activeContact: null });
     };
@@ -154,7 +172,7 @@ function AppShell(): React.JSX.Element {
         </div>
         <div className="split-main">
           {activeContact ? (
-            <ChatRoomScreen account={account} contact={activeContact} onBack={() => setActiveContact(null)} />
+            <ChatRoomScreen account={account} contact={activeContact} onBack={() => setActiveContact(null)} initialJumpMessageId={jumpMessageId ?? undefined} />
           ) : (
             <div className="split-empty" style={{ color: theme.textFaint }}>Sohbet açmak için soldan bir kişi seç.</div>
           )}
@@ -164,7 +182,7 @@ function AppShell(): React.JSX.Element {
   }
 
   return activeContact ? (
-    <ChatRoomScreen account={account} contact={activeContact} onBack={() => setActiveContact(null)} />
+    <ChatRoomScreen account={account} contact={activeContact} onBack={() => setActiveContact(null)} initialJumpMessageId={jumpMessageId ?? undefined} />
   ) : (
     <ContactsScreen account={account} onOpenRoom={setActiveContact} onLogout={handleLogout} onGoHome={handleGoHome} />
   );
