@@ -97,9 +97,10 @@ export async function loginAccount(username: string, password: string): Promise<
   try {
     const credential = await signInWithEmailAndPassword(auth, usernameToEmail(cleanUsername), password);
     const snap = await getDoc(doc(db, 'users', credential.user.uid));
-    const savedUsername =
-      snap.exists() && typeof snap.data().username === 'string' ? (snap.data().username as string) : cleanUsername;
-    return { uid: credential.user.uid, username: savedUsername };
+    const data = snap.exists() ? snap.data() : undefined;
+    const savedUsername = typeof data?.username === 'string' ? (data.username as string) : cleanUsername;
+    const role = typeof data?.role === 'string' ? (data.role as string) : undefined;
+    return { uid: credential.user.uid, username: savedUsername, role };
   } catch (error) {
     throw new Error(mapAuthError(error));
   }
@@ -119,8 +120,10 @@ export async function loginWithRecoveryToken(token: string): Promise<Account> {
   try {
     const credential = await signInWithCustomToken(auth, token.trim());
     const snap = await getDoc(doc(db, 'users', credential.user.uid));
-    const savedUsername = snap.exists() && typeof snap.data().username === 'string' ? (snap.data().username as string) : credential.user.uid;
-    return { uid: credential.user.uid, username: savedUsername };
+    const data = snap.exists() ? snap.data() : undefined;
+    const savedUsername = typeof data?.username === 'string' ? (data.username as string) : credential.user.uid;
+    const role = typeof data?.role === 'string' ? (data.role as string) : undefined;
+    return { uid: credential.user.uid, username: savedUsername, role };
   } catch (error) {
     throw new Error('Kurtarma kodu geçersiz veya süresi dolmuş.');
   }
