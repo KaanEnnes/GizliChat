@@ -49,13 +49,12 @@ export function getInstalledVersionCode(): number {
 
 /**
  * Downloads the APK from `apkUrl` into the app's cache dir, then hands it to
- * ApkInstallerModule.kt to launch the system package installer. `onProgress`
- * receives a 0–1 fraction for a progress bar.
+ * ApkInstallerModule.kt to launch the system package installer. No progress
+ * callback: for a download this size on a fast connection, RNFS's native
+ * progress events are too coarse/late to drive a meaningful progress bar
+ * (see UpdateBanner.tsx, which just shows an indefinite "İndiriliyor…").
  */
-export async function downloadAndInstallUpdate(
-  info: LatestVersionInfo,
-  onProgress?: (fraction: number) => void,
-): Promise<void> {
+export async function downloadAndInstallUpdate(info: LatestVersionInfo): Promise<void> {
   if (!ApkInstaller) {
     throw new Error('Güncelleme yükleyici bu cihazda kullanılamıyor.');
   }
@@ -70,9 +69,6 @@ export async function downloadAndInstallUpdate(
     toFile: destPath,
     progress: result => {
       lastResult = result;
-      if (onProgress && result.contentLength > 0) {
-        onProgress(result.bytesWritten / result.contentLength);
-      }
     },
     progressDivider: 5,
   }).promise;

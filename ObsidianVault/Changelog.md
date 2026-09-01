@@ -1,5 +1,32 @@
 # Değişiklik Günlüğü
 
+## 2026-09-01 — APK 1.6.1 + yanlış `apkUrl` düzeltildi + güncelleme yüzdesi kaldırıldı
+
+`app_config/android`'deki `apkUrl` yanlışlıkla `https://kaanchatmercan.web.app/app-release-1.6.0.apk`
+gösteriyordu — bu, APK'nın deploy edildiği `gizlichat-android-updates` sitesi değil, web-client'ın
+kendi hosting hedefi; o path'te dosya olmadığından Firebase Hosting'in SPA fallback'i 504 byte'lık
+`index.html`'i 200 OK ile dönüyordu. Telefon bunu APK sanıp indiriyor (küçük olduğu için anında
+biter), gerçek bir APK olmadığı için sistem "paketin ayrıştırılmasında sorun oluştu" hatası veriyordu
+— 3 farklı telefonda da aynı sonucun sebebi buydu (APK'nın kendisi zip/manifest/imza/zipalign
+açısından baştan sona sağlamdı, sorun hep bu yanlış URL'deydi). Düzeltme: Firebase Console'dan
+`apkUrl` `https://gizlichat-android-updates.web.app/gizlichat-1.6.1.apk`'ye, `versionCode` 17'ye,
+`versionName` "1.6.1"'e güncellendi (bu doküman `firestore.rules`'ta bilerek `allow write: if false`,
+programatik yazma yolu yok, Console'dan elle yapıldı).
+
+Ayrıca `versionCode` 16→17, `versionName` "1.6.0"→"1.6.1" (`android/app/build.gradle`) ile yeni bir
+release derlendi (`gizlichat-1.6.1.apk`, 1.6.0'ın yanına, o da hosting'te kalıyor) — bu sürümde kod
+tarafında bir değişiklik yok, sadece bu düzeltmeyi taşıyan bir versionCode artışı.
+
+**Güncelleme banner'ındaki indirme yüzdesi kaldırıldı.** `UpdateBanner.tsx`'teki `%X` göstergesi
+gerçek kullanımda sürekli `%0`'da takılı görünüyordu: 128 MB'lık dosya hızlı bağlantıda saniyeler
+içinde inince RNFS'in native `progress` event'i anlamlı bir ilerleme göstermeye yetecek sıklıkta/
+zamanda tetiklenmiyor, kullanıcı "%0" yazan butonun aniden "Güncelle"ye dönüşmesini görüyordu. Bunu
+düzgün çalışır hale getirmek (native tarafta farklı bir indirme/ilerleme mekanizması gerektirir)
+yerine, proje sahibinin tercihiyle kaldırıldı: `downloadAndInstallUpdate` artık bir `onProgress`
+parametresi almıyor, `UpdateBanner.tsx` indirme sırasında sabit "İndiriliyor…" metni gösteriyor.
+`updateService.ts`'teki `lastResult` (indirme bütünlüğü kontrolü için `contentLength`/`bytesWritten`)
+mekanizması aynen kaldı, sadece UI'ya `onProgress` ile aktarılan kısım silindi.
+
 ## 2026-08-28 — Şifreleme kaldırıldı (bilinçli geri alma) + silme modeli "her ikisinde de gizle, veri kalsın" olarak değişti
 
 Proje sahibinin **doğrudan talebiyle** iki değişiklik: (1) aşağıdaki iki maddede açıklanan

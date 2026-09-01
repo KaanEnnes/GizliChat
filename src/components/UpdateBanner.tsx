@@ -17,7 +17,6 @@ function UpdateBanner(): React.JSX.Element | null {
   const { theme } = useTheme();
   const [update, setUpdate] = useState<LatestVersionInfo | null>(null);
   const [downloading, setDownloading] = useState(false);
-  const [progress, setProgress] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -45,8 +44,7 @@ function UpdateBanner(): React.JSX.Element | null {
       return;
     }
     setDownloading(true);
-    setProgress(0);
-    downloadAndInstallUpdate(update, setProgress)
+    downloadAndInstallUpdate(update)
       .catch(error => {
         Alert.alert('Güncelleme başarısız', (error as Error).message);
       })
@@ -72,7 +70,7 @@ function UpdateBanner(): React.JSX.Element | null {
         accessibilityRole="button"
         accessibilityLabel="Güncellemeyi indir ve kur">
         <Text style={[styles.buttonText, { color: theme.accentText }]}>
-          {downloading ? `%${Math.round(progress * 100)}` : 'Güncelle'}
+          {downloading ? 'İndiriliyor…' : 'Güncelle'}
         </Text>
       </Pressable>
     </View>
