@@ -537,6 +537,11 @@ function ChatRoomScreen({ account, contact, onBack, initialJumpMessageId }: Prop
             setSearchOpen(true);
           }}
           onJumpToMessage={handleJumpToMessage}
+          onOpenMedia={media => {
+            setContactInfoOpen(false);
+            setGalleryFullMedia(media);
+            setGalleryMessageId(media[media.length - 1].id);
+          }}
         />
       )}
 

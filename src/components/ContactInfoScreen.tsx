@@ -18,6 +18,8 @@ interface Props {
   onStartVoiceCall: () => void;
   onStartVideoCall: () => void;
   onJumpToMessage: (messageId: string) => void;
+  /** Opens the shared room-wide gallery already used for tapping an image in the chat, seeded with this room's entire media history. */
+  onOpenMedia: (media: ChatMessage[]) => void;
 }
 
 function formatTime(timestamp: number): string {
@@ -37,6 +39,7 @@ function ContactInfoScreen({
   onStartVoiceCall,
   onStartVideoCall,
   onJumpToMessage,
+  onOpenMedia,
 }: Props): React.JSX.Element {
   const { theme } = useTheme();
   const [view, setView] = useState<'info' | 'starred'>('info');
@@ -44,7 +47,7 @@ function ContactInfoScreen({
   const [username, setUsername] = useState<string | null>(null);
   const [starred, setStarred] = useState<ChatMessage[] | null>(null);
   const [starredError, setStarredError] = useState<string | null>(null);
-  const [mediaCount, setMediaCount] = useState<number | null>(null);
+  const [media, setMedia] = useState<ChatMessage[] | null>(null);
 
   useEffect(() => {
     if (!visible) {
@@ -53,18 +56,20 @@ function ContactInfoScreen({
     return subscribeToPresence(contact.uid, setLastActiveAt);
   }, [visible, contact.uid]);
 
-  // Counts the room's ENTIRE media history, not just whatever page of
+  // Fetches the room's ENTIRE media history, not just whatever page of
   // messages happens to be loaded in the open chat — that was the previous
   // bug here (see fetchAllMedia's doc comment): a room with older photos
   // outside the currently-loaded window showed "0" even when media existed.
+  // Kept in full (not just a count) so tapping the row can open the gallery
+  // on it directly, without a second fetch.
   useEffect(() => {
     if (!visible) {
       return;
     }
-    setMediaCount(null);
+    setMedia(null);
     fetchAllMedia(roomId)
-      .then(list => setMediaCount(list.length))
-      .catch(() => setMediaCount(0));
+      .then(setMedia)
+      .catch(() => setMedia([]));
   }, [visible, roomId]);
 
   useEffect(() => {
@@ -151,10 +156,18 @@ function ContactInfoScreen({
             </View>
 
             <View style={[styles.listSection, { borderTopColor: theme.border }]}>
-              <View style={styles.listRow}>
+              <Pressable
+                style={styles.listRow}
+                disabled={!media || media.length === 0}
+                onPress={() => {
+                  if (media && media.length > 0) {
+                    handleClose();
+                    onOpenMedia(media);
+                  }
+                }}>
                 <Text style={[styles.listRowText, { color: theme.text }]}>📎 Medya, bağlantı ve belgeler</Text>
-                <Text style={[styles.listRowValue, { color: theme.textMuted }]}>{mediaCount ?? '…'}</Text>
-              </View>
+                <Text style={[styles.listRowValue, { color: theme.textMuted }]}>{media?.length ?? '…'}</Text>
+              </Pressable>
               <Pressable style={styles.listRow} onPress={() => setView('starred')}>
                 <Text style={[styles.listRowText, { color: theme.text }]}>⭐ Yıldızlı mesajlar</Text>
                 <Text style={[styles.listRowValue, { color: theme.textMuted }]}>{starred?.length ?? '›'}</Text>

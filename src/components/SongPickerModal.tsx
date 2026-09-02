@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, FlatList, Image, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
-import { WebView } from 'react-native-webview';
+import YoutubeIframe from 'react-native-youtube-iframe';
 import { useTheme } from '../theme/ThemeContext';
 import { searchSongs, type SongSearchResult } from '../services/songService';
 import type { SongClip } from '../services/chatService';
@@ -14,18 +14,6 @@ interface Props {
 const SEARCH_DEBOUNCE_MS = 400;
 const CLIP_DURATION_OPTIONS = [10, 15, 20, 30];
 const DEFAULT_CLIP_DURATION = 15;
-
-/**
- * YouTube's embedded player refuses to play ("Yapılandırma hatası" / config
- * error) when it detects it's running inside an Android System WebView —
- * the default RN WebView user agent string ends in "; wv)", a marker Chrome
- * adds specifically so sites can tell in-app WebViews apart from the real
- * browser, and YouTube blocks playback there on purpose (DRM/policy, not a
- * bug in our code). Overriding the user agent to a normal Chrome-for-Android
- * string (no "wv" token) is the standard workaround.
- */
-const YOUTUBE_EMBED_USER_AGENT =
-  'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36';
 
 function formatSeconds(totalSeconds: number): string {
   const m = Math.floor(totalSeconds / 60);
@@ -173,17 +161,14 @@ function SongPickerModal({ visible, onClose, onSend }: Props): React.JSX.Element
                 {selected.title}
               </Text>
               <View style={styles.playerWrap}>
-                <WebView
+                <YoutubeIframe
                   key={previewKey}
-                  style={styles.player}
-                  source={{
-                    uri: `https://www.youtube.com/embed/${selected.videoId}?start=${startSeconds}&end=${
-                      startSeconds + clipDuration
-                    }&autoplay=1&playsinline=1`,
-                  }}
-                  allowsInlineMediaPlayback
-                  mediaPlaybackRequiresUserAction={false}
-                  userAgent={YOUTUBE_EMBED_USER_AGENT}
+                  height={180}
+                  videoId={selected.videoId}
+                  play
+                  forceAndroidAutoplay
+                  useLocalHTML
+                  initialPlayerParams={{ start: startSeconds, end: startSeconds + clipDuration, controls: true }}
                 />
               </View>
               <Text style={[styles.sliderLabel, { color: theme.textMuted }]}>Başlangıç: {formatSeconds(startSeconds)}</Text>

@@ -34,7 +34,8 @@
     "react-native-sound": "^0.13.0",
     "react-native-svg": "^15.15.5",
     "react-native-video": "^6.19.2",
-    "react-native-webview": "^16.0.0"
+    "react-native-webview": "^16.0.0",
+    "react-native-youtube-iframe": "^2.4.1"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",

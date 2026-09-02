@@ -1,5 +1,33 @@
 # Değişiklik Günlüğü
 
+## 2026-09-02 — v1.7.2: YouTube oynatma hatası gerçekten düzeltildi + kişi bilgisinden medya galerisi açılabiliyor
+
+Bir önceki kayıttaki User-Agent düzeltmesi (`userAgent="...Chrome..."` WebView'a vermek) YouTube'un
+"Yapılandırma hatası"nı **çözmedi** — kullanıcı 1.7.1'i kurup tekrar test edince hata aynen devam
+etti. Kök sebep daha derinmiş: `WebView`'i doğrudan `youtube.com/embed/VIDEO_ID?...` URL'ine
+yönlendirmek, YouTube'un gerçekte beklediği kullanım şekli değil — YouTube'un gömme (embed)
+sistemi, bir web sayfasının İÇİNDE bir `<iframe>` elemanı olarak kullanılmayı bekliyor, WebView'in
+kendisinin doğrudan o URL'e gitmesini değil; User-Agent ne olursa olsun bu fark tespit edilip
+reddediliyordu.
+
+**Gerçek çözüm:** Ham `WebView` + URL yaklaşımı tamamen kaldırıldı, yerine tam bu senaryo için
+yazılmış `react-native-youtube-iframe` kütüphanesi kondu (`SongPickerModal.tsx` ve
+`MessageBubble.tsx`, her ikisi de). Bu kütüphane `useLocalHTML` modunda, içinde YouTube'un resmi
+IFrame API'siyle gerçek bir `<iframe src="youtube.com/embed/...">` barındıran küçük bir HTML
+sayfasını WebView'e `source={{html: ...}}` olarak veriyor — yani WebView artık YouTube'un
+beklediği "gerçek bir sayfanın içine gömülü iframe" modelini taklit ediyor, ham URL navigasyonu
+değil. `start`/`end` klip parametreleri `initialPlayerParams` ile aynı şekilde veriliyor,
+davranış (otomatik durma, kontroller) korundu.
+
+Ayrıca bu turda: **Kişi bilgisi ekranındaki "Medya, bağlantı ve belgeler" satırına dokununca**
+artık zaten var olan galeriyi (sohbetteki bir görsele dokunarak açılan aynı bileşen) o odanın
+**tüm** medya geçmişiyle açıyor (hem mobil hem web) — önceden bu satır sadece bir sayı gösterip
+tıklanınca hiçbir şey yapmıyordu.
+
+`tsc` (her iki platform) temiz. Web deploy edildi. Mobil: `versionCode 19→20`,
+`versionName "1.7.1"→"1.7.2"`; APK derlenip yayınlandı (`gizlichat-android-updates` hosting +
+`app_config/android`).
+
 ## 2026-09-02 — v1.7.1: YouTube oynatma hatası + kişi bilgisi medya sayısı hatası düzeltildi
 
 İki gerçek kullanıcı raporu üzerine:

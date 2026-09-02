@@ -5,7 +5,7 @@ import RNFS from 'react-native-fs';
 import ReactNativeBlobUtil from 'react-native-blob-util';
 import type { ChatMessage } from '../services/chatService';
 import AudioMessagePlayer from './AudioMessagePlayer';
-import { WebView } from 'react-native-webview';
+import YoutubeIframe from 'react-native-youtube-iframe';
 import { useTheme } from '../theme/ThemeContext';
 import { getCachedVideoUri } from '../services/videoCacheService';
 import LinkPreviewCard from './LinkPreviewCard';
@@ -489,20 +489,17 @@ function MessageBubble({
         {message.type === 'song' && message.youtubeVideoId && (
           songPlaying ? (
             <View style={styles.songPlayerWrap}>
-              <WebView
-                style={styles.songPlayer}
-                source={{
-                  uri: `https://www.youtube.com/embed/${message.youtubeVideoId}?start=${message.clipStartSeconds ?? 0}&end=${
-                    (message.clipStartSeconds ?? 0) + (message.clipDurationSeconds ?? 15)
-                  }&autoplay=1&playsinline=1`,
+              <YoutubeIframe
+                height={150}
+                videoId={message.youtubeVideoId}
+                play
+                forceAndroidAutoplay
+                useLocalHTML
+                initialPlayerParams={{
+                  start: message.clipStartSeconds ?? 0,
+                  end: (message.clipStartSeconds ?? 0) + (message.clipDurationSeconds ?? 15),
+                  controls: true,
                 }}
-                allowsInlineMediaPlayback
-                mediaPlaybackRequiresUserAction={false}
-                // Same fix as SongPickerModal.tsx: without a non-WebView user
-                // agent, YouTube's embed detects the "; wv)" marker Chrome adds
-                // for in-app WebViews and refuses playback with "Yapılandırma
-                // hatası" (config error) — a deliberate policy block, not a bug.
-                userAgent="Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
               />
             </View>
           ) : (

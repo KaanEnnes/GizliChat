@@ -1147,6 +1147,10 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack, initialJumpMessage
             .finally(() => setCallStarting(false));
         }}
         onJumpToMessage={scrollToMessageId}
+        onOpenMedia={media => {
+          setGalleryFullMedia(media);
+          setGalleryMessageId(media[media.length - 1].id);
+        }}
       />
 
       {galleryMessageId && (

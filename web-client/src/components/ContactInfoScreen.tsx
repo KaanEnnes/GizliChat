@@ -14,6 +14,8 @@ interface Props {
   onClose: () => void;
   onOpenSearch: () => void;
   onJumpToMessage: (messageId: string) => void;
+  /** Opens the shared room-wide gallery already used for tapping an image in the chat, seeded with this room's entire media history. */
+  onOpenMedia: (media: ChatMessage[]) => void;
 }
 
 function formatTime(timestamp: number): string {
@@ -22,28 +24,30 @@ function formatTime(timestamp: number): string {
 }
 
 /** WhatsApp-style "kişi bilgisi" screen — opened by tapping the contact's name/avatar in the chat header. No phone number exists in this app's data model (username/password auth, not phone-based), so the username stands in for it. */
-function ContactInfoScreen({ contact, contactPhotoUrl, myUid, roomId, onClose, onOpenSearch, onJumpToMessage }: Props): React.JSX.Element {
+function ContactInfoScreen({ contact, contactPhotoUrl, myUid, roomId, onClose, onOpenSearch, onJumpToMessage, onOpenMedia }: Props): React.JSX.Element {
   const { theme } = useTheme();
   const [view, setView] = useState<'info' | 'starred'>('info');
   const [lastActiveAt, setLastActiveAt] = useState<number | null>(null);
   const [username, setUsername] = useState<string | null>(null);
   const [starred, setStarred] = useState<ChatMessage[] | null>(null);
   const [starredError, setStarredError] = useState<string | null>(null);
-  const [mediaCount, setMediaCount] = useState<number | null>(null);
+  const [media, setMedia] = useState<ChatMessage[] | null>(null);
 
   useEffect(() => subscribeToPresence(contact.uid, setLastActiveAt), [contact.uid]);
   useEffect(() => {
     fetchAccountUsername(contact.uid).then(setUsername).catch(() => undefined);
   }, [contact.uid]);
 
-  // Counts the room's ENTIRE media history, not just whatever page of
+  // Fetches the room's ENTIRE media history, not just whatever page of
   // messages happens to be loaded in the open chat — that was the previous
   // bug here (see fetchAllMedia's doc comment): a room with older photos
   // outside the currently-loaded window showed "0" even when media existed.
+  // Kept in full (not just a count) so tapping the row can open the gallery
+  // on it directly, without a second fetch.
   useEffect(() => {
     fetchAllMedia(roomId)
-      .then(list => setMediaCount(list.length))
-      .catch(() => setMediaCount(0));
+      .then(setMedia)
+      .catch(() => setMedia([]));
   }, [roomId]);
 
   useEffect(() => {
@@ -92,9 +96,19 @@ function ContactInfoScreen({ contact, contactPhotoUrl, myUid, roomId, onClose, o
             </div>
 
             <div style={{ borderTop: `1px solid ${theme.border}`, marginTop: 8 }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 4px' }}>
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  padding: '14px 4px',
+                  cursor: media && media.length > 0 ? 'pointer' : 'default',
+                }}
+                onClick={() => {
+                  if (media && media.length > 0) onOpenMedia(media);
+                }}>
                 <span style={{ fontSize: 14, color: theme.text }}>📎 Medya, bağlantı ve belgeler</span>
-                <span style={{ fontSize: 13.5, color: theme.textMuted }}>{mediaCount ?? '…'}</span>
+                <span style={{ fontSize: 13.5, color: theme.textMuted }}>{media?.length ?? '…'}</span>
               </div>
               <div
                 style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 4px', cursor: 'pointer' }}
