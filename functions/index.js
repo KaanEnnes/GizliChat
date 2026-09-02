@@ -1,9 +1,51 @@
 const { onDocumentCreated } = require('firebase-functions/v2/firestore');
+const { onCall, HttpsError } = require('firebase-functions/v2/https');
+const { defineSecret } = require('firebase-functions/params');
 const { initializeApp } = require('firebase-admin/app');
 const { getFirestore } = require('firebase-admin/firestore');
 const { getMessaging } = require('firebase-admin/messaging');
 
 initializeApp();
+
+const youtubeApiKey = defineSecret('YOUTUBE_API_KEY');
+
+/**
+ * Server-side proxy for YouTube's search endpoint, used by the "şarkı gönder"
+ * feature (see src/services/songService.ts / web-client's copy). Kept behind
+ * a callable function instead of calling YouTube directly from the client so
+ * the API key lives in Secret Manager, not in the shipped JS bundle/APK.
+ *
+ * Music-only search: Spotify was the first choice for this feature but its
+ * Web API stopped returning `preview_url` (the 30s audio clip) for apps
+ * created after Nov 2024 — every track came back with an empty preview, so
+ * there was nothing to actually play. YouTube's own embeddable player (with
+ * `start`/`end` params, see MessageBubble/ChatRoomScreen on both clients)
+ * doesn't have that restriction.
+ */
+exports.youtubeSearch = onCall({ secrets: [youtubeApiKey] }, async request => {
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'Sign in required');
+  }
+  const q = typeof request.data?.query === 'string' ? request.data.query.trim() : '';
+  if (!q) {
+    return { tracks: [] };
+  }
+  const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&videoCategoryId=10&maxResults=10&q=${encodeURIComponent(q)}&key=${youtubeApiKey.value()}`;
+  const res = await fetch(url);
+  if (!res.ok) {
+    throw new HttpsError('internal', `YouTube search failed: ${res.status}`);
+  }
+  const data = await res.json();
+  const tracks = (data.items ?? [])
+    .filter(item => item.id?.videoId)
+    .map(item => ({
+      videoId: item.id.videoId,
+      title: item.snippet?.title ?? '',
+      channelTitle: item.snippet?.channelTitle ?? '',
+      thumbnailUrl: item.snippet?.thumbnails?.medium?.url ?? item.snippet?.thumbnails?.default?.url ?? '',
+    }));
+  return { tracks };
+});
 
 /**
  * The server-side half of the push notification system (client half:

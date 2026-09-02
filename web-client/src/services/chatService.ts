@@ -17,7 +17,7 @@ import {
 } from 'firebase/firestore';
 import { db } from './firebase';
 
-export type MessageType = 'text' | 'image' | 'video' | 'audio' | 'file' | 'call';
+export type MessageType = 'text' | 'image' | 'video' | 'audio' | 'file' | 'call' | 'song';
 
 export interface ChatMessage {
   id: string;
@@ -31,6 +31,13 @@ export interface ChatMessage {
   durationSeconds?: number;
   callVideo?: boolean;
   callStatus?: 'completed' | 'missed';
+  /** Present for 'song' messages — a YouTube video id plus the clip window the sender picked (see songService.ts / SongPickerModal). */
+  youtubeVideoId?: string;
+  songTitle?: string;
+  songArtist?: string;
+  songThumbnailUrl?: string;
+  clipStartSeconds?: number;
+  clipDurationSeconds?: number;
   reactions?: Record<string, string>;
   pending?: boolean;
   deliveredAt?: number;
@@ -106,6 +113,12 @@ function docToMessage(docSnap: {
     deletedBy: typeof data.deletedBy === 'string' ? data.deletedBy : undefined,
     deletedAt: data.deletedAt instanceof Timestamp ? data.deletedAt.toMillis() : undefined,
     replyTo,
+    youtubeVideoId: typeof data.youtubeVideoId === 'string' ? data.youtubeVideoId : undefined,
+    songTitle: typeof data.songTitle === 'string' ? data.songTitle : undefined,
+    songArtist: typeof data.songArtist === 'string' ? data.songArtist : undefined,
+    songThumbnailUrl: typeof data.songThumbnailUrl === 'string' ? data.songThumbnailUrl : undefined,
+    clipStartSeconds: typeof data.clipStartSeconds === 'number' ? data.clipStartSeconds : undefined,
+    clipDurationSeconds: typeof data.clipDurationSeconds === 'number' ? data.clipDurationSeconds : undefined,
   };
 }
 
@@ -207,6 +220,30 @@ export async function sendMediaMessage(
     createdAt: serverTimestamp(),
     mediaUrl,
     ...(durationSeconds !== undefined ? { durationSeconds } : {}),
+  });
+}
+
+export interface SongClip {
+  videoId: string;
+  title: string;
+  artist: string;
+  thumbnailUrl: string;
+  startSeconds: number;
+  durationSeconds: number;
+}
+
+export async function sendSongMessage(roomId: string, senderId: string, song: SongClip): Promise<void> {
+  await addDoc(collection(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION), {
+    type: 'song',
+    text: '',
+    senderId,
+    createdAt: serverTimestamp(),
+    youtubeVideoId: song.videoId,
+    songTitle: song.title,
+    songArtist: song.artist,
+    songThumbnailUrl: song.thumbnailUrl,
+    clipStartSeconds: song.startSeconds,
+    clipDurationSeconds: song.durationSeconds,
   });
 }
 

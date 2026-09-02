@@ -1,5 +1,48 @@
 # Değişiklik Günlüğü
 
+## 2026-09-02 — "Şarkı gönder" (Instagram tarzı klip gönderme) eklendi (mobil + web) — YouTube üzerinden, Spotify değil
+
+Kullanıcı Instagram'daki "arkadaşına şarkının bir kısmını gönder" özelliğinin birebir aynısını
+istedi. İlk denenen yol Spotify Web API'ydi (kullanıcı developer.spotify.com'da bir uygulama açıp
+Client ID/Secret üretti) ama **Spotify artık Kasım 2024'ten sonra oluşturulan uygulamalara
+`preview_url` (30sn'lik dinlenebilir klip) vermiyor** — arama çalışıyor, kapak/isim geliyor ama
+`preview_url` her sonuçta boş (test edildi: "Blinding Lights" gibi çok popüler bir şarkıda bile).
+Bu, Spotify tarafında değiştirilemeyen bir kısıtlama olduğundan **YouTube'a geçildi**: YouTube'un
+kendi resmi gömülebilir oynatıcısı `start`/`end` parametreleriyle tam olarak seçilen aralığı
+çalıyor, hiçbir lisans sorunu yok.
+
+**Backend:** `functions/index.js`'e yeni bir `youtubeSearch` callable function eklendi — YouTube
+Data API v3'e (`search`, `videoCategoryId=10` müzik filtresiyle) istek atıp basitleştirilmiş
+sonuç listesi (`videoId`/`title`/`channelTitle`/`thumbnailUrl`) döndürüyor. API anahtarı
+(`YOUTUBE_API_KEY`, Google Cloud Console'da proje `kaanchatmercan` altında oluşturuldu) istemci
+koduna hiç gömülmedi — `defineSecret` ile Secret Manager'a yazılıp fonksiyona sadece runtime'da
+enjekte ediliyor (`firebase functions:secrets:set`). Deploy edildi (`youtubeSearch(us-central1)`),
+artifact cleanup policy da ayarlandı (Docker image birikip depolama ücreti oluşturmasın diye).
+İlgili Firebase projesi bu görev sırasında Blaze plana geçirildi — kullanım seviyesinde (günde
+onlarca arama) pratikte $0 kalması bekleniyor (ücretsiz kota: 2M çağrı, 5GB dış trafik/ay).
+
+**İstemci:** Her iki platformda da `songService.ts` (searchSongs) ve `chatService.ts`'e yeni
+`song` mesaj tipi + `SongClip`/`sendSongMessage` eklendi (`youtubeVideoId`/`songTitle`/
+`songArtist`/`songThumbnailUrl`/`clipStartSeconds`/`clipDurationSeconds` alanları). Yeni
+`SongPickerModal` bileşeni: ara → şarkı seç → küçük bir gömülü YouTube oynatıcıda dinleyerek
+başlangıç saniyesini ayarla (mobilde +/-5sn/+/-10sn butonları, webde bir range slider) → klip
+uzunluğu seç (10/15/20/30sn) → gönder. `MessageBubble.tsx`'te mesaj bir kapak+oynat butonu
+kartı olarak görünüyor, tıklanınca gömülü oynatıcıya dönüşüp otomatik olarak sadece o aralığı
+çalıyor. Mobilde bunun için yeni bir native bağımlılık eklendi: **`react-native-webview`**
+(YouTube'un iframe oynatıcısını göstermek için) — bu native bir modül olduğundan, bir sonraki
+APK build'inde native tarafın da (gradle autolink) yeniden derlenmesi gerekiyor, sade bir JS
+güncellemesiyle yayılamaz.
+
+Web tarafında ayrıca bu görev sırasında bulunan, konuyla ilgisiz bir gözlem: Vite dev sunucusunda
+yeni bir `firebase/*` alt modülü eklendiğinde ilk sayfa yüklemesinde nadiren "Service X is not
+available" hatası görülebiliyor (muhtemelen bu sandbox'taki Vite HMR websocket'inin çalışmaması
+yüzünden normalde otomatik olan yeniden yükleme tetiklenmiyor) — kalıcı önlem olarak
+`getFunctions(app)` çağrısı artık modül yüklenirken değil, ilk gerçek kullanımda (lazy,
+`getFunctionsInstance()`) yapılıyor; ayrıca `vite.config.ts`'e tüm `firebase/*` alt modüllerini
+`optimizeDeps.include`'a ekleyen bir not/önlem eklendi. Uçtan uca test edildi: tarayıcıda anonim
+girişle gerçek `youtubeSearch` fonksiyonu çağrılıp gerçek YouTube sonuçları alındı. Mobil tarafta
+(WebView + APK gerektirdiğinden) sadece `tsc --noEmit` ile doğrulandı, cihazda test edilmedi.
+
 ## 2026-09-02 — "Yazıyor..." göstergesi eklendi (mobil + web)
 
 Karşı taraf sohbette bir şeyler yazarken başlıkta isim altında "yazıyor..." gösteriliyor artık,

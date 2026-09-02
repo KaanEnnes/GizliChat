@@ -23,6 +23,8 @@ export function replyPreviewLabel(message: Pick<ChatMessage, 'type' | 'text' | '
       return '🎥 Video';
     case 'audio':
       return '🎤 Sesli mesaj';
+    case 'song':
+      return '🎵 Şarkı';
     case 'file':
       return `📄 ${message.fileName || 'Dosya'}`;
     default:
@@ -56,6 +58,7 @@ function MessageBubble({ message, isMine, myUid, isPinned, highlighted, onToggle
   const { theme } = useTheme();
   const [menuOpen, setMenuOpen] = useState(false);
   const [textExpanded, setTextExpanded] = useState(false);
+  const [songPlaying, setSongPlaying] = useState(false);
 
   const bubbleColor = isMine ? theme.bubbleMine : theme.bubbleOther;
   const bubbleTextColor = isMine ? theme.bubbleMineText : theme.bubbleOtherText;
@@ -131,6 +134,30 @@ function MessageBubble({ message, isMine, myUid, isPinned, highlighted, onToggle
             <audio src={message.mediaUrl} controls className="msg-audio" />
           ) : (
             <div style={{ fontSize: 13, opacity: 0.7 }}>🎤 Sesli mesaj (çözülemedi)</div>
+          )
+        )}
+
+        {message.type === 'song' && message.youtubeVideoId && (
+          songPlaying ? (
+            <iframe
+              title={message.songTitle || 'Şarkı'}
+              className="msg-song-frame"
+              src={`https://www.youtube.com/embed/${message.youtubeVideoId}?start=${message.clipStartSeconds ?? 0}&end=${(message.clipStartSeconds ?? 0) + (message.clipDurationSeconds ?? 15)}&autoplay=1`}
+              allow="autoplay"
+            />
+          ) : (
+            <div className="msg-song-card" onClick={() => setSongPlaying(true)}>
+              <div className="msg-song-thumb-wrap">
+                {message.songThumbnailUrl && <img src={message.songThumbnailUrl} className="msg-song-thumb" alt="" />}
+                <span className="msg-song-play">▶</span>
+              </div>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontWeight: 700, fontSize: 13.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {message.songTitle || 'Şarkı'}
+                </div>
+                <div style={{ fontSize: 11.5, opacity: 0.7 }}>{message.songArtist} · {message.clipDurationSeconds ?? 15}sn klip</div>
+              </div>
+            </div>
           )
         )}
 

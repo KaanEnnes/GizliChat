@@ -71,6 +71,8 @@ function formatPreview(message: ChatMessage | null | undefined, myUid: string): 
       return `${prefix}🎥 Video`;
     case 'audio':
       return `${prefix}🎤 Sesli mesaj`;
+    case 'song':
+      return `${prefix}🎵 Şarkı`;
     case 'file':
       return `${prefix}📄 Dosya`;
     case 'call': {

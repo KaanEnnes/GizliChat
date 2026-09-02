@@ -37,6 +37,7 @@ function formatPreview(message: ChatMessage | null | undefined, myUid: string): 
     case 'image': return `${prefix}📷 Fotoğraf`;
     case 'video': return `${prefix}🎥 Video`;
     case 'audio': return `${prefix}🎤 Sesli mesaj`;
+    case 'song': return `${prefix}🎵 Şarkı`;
     case 'file': return `${prefix}📄 Dosya`;
     case 'call': return message.callStatus === 'missed' ? 'Cevapsız arama' : `${prefix}📞 Arama`;
     default: return `${prefix}${message.text}`;

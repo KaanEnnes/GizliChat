@@ -13,6 +13,7 @@ import {
   sendFileMessage,
   sendMediaMessage,
   sendMessage,
+  sendSongMessage,
   setMessageReaction,
   setTypingStatus,
   subscribeToMessages,
@@ -33,6 +34,7 @@ import ImageGalleryModal from '../components/ImageGalleryModal';
 import GamesModal from '../components/GamesModal';
 import GifPickerModal from '../components/GifPickerModal';
 import type { GifResult } from '../services/gifService';
+import SongPickerModal from '../components/SongPickerModal';
 import { ADMIN_UID } from '../config/adminConfig';
 
 const IMAGE_DATA_URI_LIMIT = 900_000;
@@ -65,6 +67,7 @@ function ChatRoomScreen({ account, contact, onBack, initialJumpMessageId }: Prop
   const [error, setError] = useState<string | null>(null);
   const [gamesOpen, setGamesOpen] = useState(false);
   const [gifPickerOpen, setGifPickerOpen] = useState(false);
+  const [songPickerOpen, setSongPickerOpen] = useState(false);
   const [contactPhotoUrl, setContactPhotoUrl] = useState<string | undefined>(undefined);
   const [showJumpToBottom, setShowJumpToBottom] = useState(false);
   const [galleryMessageId, setGalleryMessageId] = useState<string | null>(null);
@@ -479,6 +482,18 @@ function ChatRoomScreen({ account, contact, onBack, initialJumpMessageId }: Prop
         />
       )}
 
+      {songPickerOpen && (
+        <SongPickerModal
+          onClose={() => setSongPickerOpen(false)}
+          onSend={clip => {
+            setSongPickerOpen(false);
+            sendSongMessage(roomId, account.uid, clip).catch(err =>
+              setError(`Şarkı gönderilemedi: ${(err as Error).message}`),
+            );
+          }}
+        />
+      )}
+
       {gifPickerOpen && (
         <GifPickerModal
           onClose={() => setGifPickerOpen(false)}
@@ -567,6 +582,9 @@ function ChatRoomScreen({ account, contact, onBack, initialJumpMessageId }: Prop
         </button>
         <button type="button" className="icon-btn" style={{ background: theme.surfaceAlt, color: theme.text, fontSize: 11, fontWeight: 800 }} onClick={() => setGifPickerOpen(true)} title="GIF gönder">
           GIF
+        </button>
+        <button type="button" className="icon-btn" style={{ background: theme.surfaceAlt, color: theme.text }} onClick={() => setSongPickerOpen(true)} title="Şarkı gönder">
+          🎵
         </button>
         <input ref={fileInputRef} type="file" accept="image/*,video/*,.pdf,.zip,.doc,.docx" multiple style={{ display: 'none' }} onChange={handleFileChange} />
         <input

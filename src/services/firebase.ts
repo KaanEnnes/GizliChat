@@ -7,6 +7,7 @@ import { initializeApp } from 'firebase/app';
 import * as FirebaseAuth from '@firebase/auth';
 import { initializeAuth, onAuthStateChanged, Persistence, signInAnonymously, User } from '@firebase/auth';
 import { initializeFirestore } from 'firebase/firestore';
+import { getFunctions, type Functions } from 'firebase/functions';
 import { FIREBASE_CONFIG } from '../config/firebaseConfig';
 
 // getReactNativePersistence is exported by @firebase/auth's "react-native"
@@ -35,6 +36,18 @@ export const auth = initializeAuth(app, {
 export const db = initializeFirestore(app, {
   experimentalAutoDetectLongPolling: true,
 });
+
+// Deferred instead of an eager `getFunctions(app)` at module-eval time — see
+// the web client's firebase.ts for why (a dev-bundler race that can make the
+// 'functions' component unavailable immediately after initializeApp()).
+// Kept the same lazy shape here too so both clients' songService.ts match.
+let _functions: Functions | null = null;
+export function getFunctionsInstance(): Functions {
+  if (!_functions) {
+    _functions = getFunctions(app);
+  }
+  return _functions;
+}
 
 let authReadyPromise: Promise<User> | null = null;
 

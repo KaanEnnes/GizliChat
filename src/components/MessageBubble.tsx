@@ -5,6 +5,7 @@ import RNFS from 'react-native-fs';
 import ReactNativeBlobUtil from 'react-native-blob-util';
 import type { ChatMessage } from '../services/chatService';
 import AudioMessagePlayer from './AudioMessagePlayer';
+import { WebView } from 'react-native-webview';
 import { useTheme } from '../theme/ThemeContext';
 import { getCachedVideoUri } from '../services/videoCacheService';
 import LinkPreviewCard from './LinkPreviewCard';
@@ -114,6 +115,8 @@ export function replyPreviewLabel(
       return '🎥 Video';
     case 'audio':
       return '🎤 Sesli mesaj';
+    case 'song':
+      return '🎵 Şarkı';
     case 'file':
       return `📄 ${message.fileName || 'Dosya'}`;
     case 'call':
@@ -191,6 +194,7 @@ function MessageBubble({
   const [revealed, setRevealed] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [textExpanded, setTextExpanded] = useState(false);
+  const [songPlaying, setSongPlaying] = useState(false);
   const swipeX = useRef(new Animated.Value(0)).current;
   const swipeTriggered = useRef(false);
   const bubbleColor = isMine ? theme.bubbleMine : theme.bubbleOther;
@@ -474,6 +478,38 @@ function MessageBubble({
           />
         )}
 
+        {message.type === 'song' && message.youtubeVideoId && (
+          songPlaying ? (
+            <View style={styles.songPlayerWrap}>
+              <WebView
+                style={styles.songPlayer}
+                source={{
+                  uri: `https://www.youtube.com/embed/${message.youtubeVideoId}?start=${message.clipStartSeconds ?? 0}&end=${
+                    (message.clipStartSeconds ?? 0) + (message.clipDurationSeconds ?? 15)
+                  }&autoplay=1&playsinline=1`,
+                }}
+                allowsInlineMediaPlayback
+                mediaPlaybackRequiresUserAction={false}
+              />
+            </View>
+          ) : (
+            <Pressable style={styles.songCard} onPress={() => setSongPlaying(true)}>
+              {!!message.songThumbnailUrl && <Image source={{ uri: message.songThumbnailUrl }} style={styles.songThumb} />}
+              <View style={styles.songPlayIconWrap}>
+                <Text style={styles.songPlayIcon}>▶</Text>
+              </View>
+              <View style={styles.songTextWrap}>
+                <Text style={[styles.songTitle, { color: bubbleTextColor }]} numberOfLines={1}>
+                  {message.songTitle || 'Şarkı'}
+                </Text>
+                <Text style={[styles.songArtist, { color: bubbleTextColor }]} numberOfLines={1}>
+                  {message.songArtist} · {message.clipDurationSeconds ?? 15}sn klip
+                </Text>
+              </View>
+            </Pressable>
+          )
+        )}
+
         {message.type === 'text' && (() => {
           const isLong = message.text.length > TEXT_TRUNCATE_LENGTH;
           const displayText = isLong && !textExpanded ? `${message.text.slice(0, TEXT_TRUNCATE_LENGTH)}…` : message.text;
@@ -627,6 +663,51 @@ function MessageBubble({
 }
 
 const styles = StyleSheet.create({
+  songCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    maxWidth: 240,
+  },
+  songThumb: {
+    width: 48,
+    height: 48,
+    borderRadius: 8,
+  },
+  songPlayIconWrap: {
+    position: 'absolute',
+    width: 48,
+    height: 48,
+    borderRadius: 8,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  songPlayIcon: {
+    color: '#fff',
+    fontSize: 16,
+  },
+  songTextWrap: {
+    flexShrink: 1,
+    minWidth: 0,
+  },
+  songTitle: {
+    fontSize: 13.5,
+    fontWeight: '700',
+  },
+  songArtist: {
+    fontSize: 11.5,
+    opacity: 0.75,
+  },
+  songPlayerWrap: {
+    width: 260,
+    height: 150,
+    borderRadius: 10,
+    overflow: 'hidden',
+  },
+  songPlayer: {
+    flex: 1,
+  },
   row: {
     width: '100%',
     marginVertical: 3,

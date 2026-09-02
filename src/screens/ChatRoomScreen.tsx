@@ -23,6 +23,7 @@ import MessageBubble, { replyPreviewLabel } from '../components/MessageBubble';
 import ImageGalleryModal from '../components/ImageGalleryModal';
 import AttachMenuModal from '../components/AttachMenuModal';
 import GifPickerModal from '../components/GifPickerModal';
+import SongPickerModal from '../components/SongPickerModal';
 import RecordingWaveform from '../components/RecordingWaveform';
 import Avatar from '../components/Avatar';
 import StorageQuotaBanner from '../components/StorageQuotaBanner';
@@ -47,6 +48,7 @@ import {
   sendFileMessage,
   sendMediaMessage,
   sendMessage,
+  sendSongMessage,
   setMessageReaction,
   setTypingStatus,
   subscribeToMessages,
@@ -98,6 +100,7 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack, initialJumpMessage
   const [uploadingMedia, setUploadingMedia] = useState(false);
   const [attachMenuVisible, setAttachMenuVisible] = useState(false);
   const [gifPickerVisible, setGifPickerVisible] = useState(false);
+  const [songPickerVisible, setSongPickerVisible] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingLevel, setRecordingLevel] = useState(0);
   const [callStarting, setCallStarting] = useState(false);
@@ -1044,6 +1047,7 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack, initialJumpMessage
         onHiddenMedia={() => handlePickMedia('library', true)}
         onFile={() => handlePickFile()}
         onGif={() => setGifPickerVisible(true)}
+        onSong={() => setSongPickerVisible(true)}
       />
 
       <GifPickerModal
@@ -1052,6 +1056,16 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack, initialJumpMessage
         onSelect={gif => {
           sendMediaMessage(roomId, myUid, 'image', gif.fullUrl).catch(error =>
             setConnectionError(`GIF gönderilemedi: ${(error as Error).message}`),
+          );
+        }}
+      />
+
+      <SongPickerModal
+        visible={songPickerVisible}
+        onClose={() => setSongPickerVisible(false)}
+        onSend={clip => {
+          sendSongMessage(roomId, myUid, clip).catch(error =>
+            setConnectionError(`Şarkı gönderilemedi: ${(error as Error).message}`),
           );
         }}
       />

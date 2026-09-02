@@ -17,7 +17,7 @@ import {
 } from 'firebase/firestore';
 import { db } from './firebase';
 
-export type MessageType = 'text' | 'image' | 'video' | 'audio' | 'file' | 'call' | 'chess';
+export type MessageType = 'text' | 'image' | 'video' | 'audio' | 'file' | 'call' | 'chess' | 'song';
 export type CallLogStatus = 'completed' | 'missed';
 
 /** Lightweight snapshot of the message being replied to — stored inline so the quoted preview renders without an extra fetch. */
@@ -75,6 +75,13 @@ export interface ChatMessage {
   replyTo?: ReplyPreview;
   /** Present for video messages (the only type still on Firebase Storage, see `mediaUrl` above) — the uploaded blob's size, so deleteMessage can both remove the Storage object and refund this account's video-storage quota. */
   sizeBytes?: number;
+  /** Present for 'song' messages — a YouTube video id plus the clip window the sender picked (see songService.ts / SongPickerModal). Same fields as the web client's copy. */
+  youtubeVideoId?: string;
+  songTitle?: string;
+  songArtist?: string;
+  songThumbnailUrl?: string;
+  clipStartSeconds?: number;
+  clipDurationSeconds?: number;
 }
 
 // Each 1-1 conversation gets its own room under rooms/{roomId}/messages.
@@ -192,6 +199,12 @@ function docToMessage(docSnap: {
     hidden: data.hidden === true,
     sizeBytes: typeof data.sizeBytes === 'number' ? data.sizeBytes : undefined,
     replyTo,
+    youtubeVideoId: typeof data.youtubeVideoId === 'string' ? data.youtubeVideoId : undefined,
+    songTitle: typeof data.songTitle === 'string' ? data.songTitle : undefined,
+    songArtist: typeof data.songArtist === 'string' ? data.songArtist : undefined,
+    songThumbnailUrl: typeof data.songThumbnailUrl === 'string' ? data.songThumbnailUrl : undefined,
+    clipStartSeconds: typeof data.clipStartSeconds === 'number' ? data.clipStartSeconds : undefined,
+    clipDurationSeconds: typeof data.clipDurationSeconds === 'number' ? data.clipDurationSeconds : undefined,
   };
 }
 
@@ -331,6 +344,30 @@ export async function sendMediaMessage(
     ...(durationSeconds !== undefined ? { durationSeconds } : {}),
     ...(hidden ? { hidden: true } : {}),
     ...(sizeBytes !== undefined ? { sizeBytes } : {}),
+  });
+}
+
+export interface SongClip {
+  videoId: string;
+  title: string;
+  artist: string;
+  thumbnailUrl: string;
+  startSeconds: number;
+  durationSeconds: number;
+}
+
+export async function sendSongMessage(roomId: string, senderId: string, song: SongClip): Promise<void> {
+  await addDoc(collection(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION), {
+    type: 'song',
+    text: '',
+    senderId,
+    createdAt: serverTimestamp(),
+    youtubeVideoId: song.videoId,
+    songTitle: song.title,
+    songArtist: song.artist,
+    songThumbnailUrl: song.thumbnailUrl,
+    clipStartSeconds: song.startSeconds,
+    clipDurationSeconds: song.durationSeconds,
   });
 }
 
