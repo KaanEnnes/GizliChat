@@ -21,6 +21,8 @@ export function replyPreviewLabel(message: Pick<ChatMessage, 'type' | 'text' | '
       return '📷 Fotoğraf';
     case 'video':
       return '🎥 Video';
+    case 'audio':
+      return '🎤 Sesli mesaj';
     case 'file':
       return `📄 ${message.fileName || 'Dosya'}`;
     default:
@@ -122,6 +124,14 @@ function MessageBubble({ message, isMine, myUid, isPinned, highlighted, onToggle
 
         {message.type === 'video' && message.mediaUrl && (
           <video src={message.mediaUrl} className="msg-media" controls />
+        )}
+
+        {message.type === 'audio' && (
+          message.mediaUrl ? (
+            <audio src={message.mediaUrl} controls className="msg-audio" />
+          ) : (
+            <div style={{ fontSize: 13, opacity: 0.7 }}>🎤 Sesli mesaj (çözülemedi)</div>
+          )
         )}
 
         {message.type === 'file' && message.mediaUrl && (

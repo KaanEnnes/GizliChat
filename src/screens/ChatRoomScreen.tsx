@@ -48,8 +48,11 @@ import {
   sendMediaMessage,
   sendMessage,
   setMessageReaction,
+  setTypingStatus,
   subscribeToMessages,
   subscribeToPinnedMessageId,
+  subscribeToTypingTimestamp,
+  TYPING_TIMEOUT_MS,
   unpinMessage,
 } from '../services/chatService';
 import { localFileToDataUri, uploadRoomMedia } from '../services/mediaService';
@@ -115,6 +118,9 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack, initialJumpMessage
   const [searchQuery, setSearchQuery] = useState('');
   const [searchIndex, setSearchIndex] = useState(0);
   const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
+  const [typingTimestamp, setTypingTimestamp] = useState<number | null>(null);
+  const [isContactTyping, setIsContactTyping] = useState(false);
+  const typingClearRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const consumedInitialJumpRef = useRef<string | null>(null);
   const listRef = useRef<FlatList<ChatMessage>>(null);
   const recordingStartedAtRef = useRef<number | null>(null);
@@ -178,6 +184,44 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack, initialJumpMessage
   }, [roomId]);
 
   useEffect(() => subscribeToPinnedMessageId(roomId, setPinnedMessageId), [roomId]);
+
+  useEffect(() => subscribeToTypingTimestamp(roomId, contact.uid, setTypingTimestamp), [roomId, contact.uid]);
+
+  // Firestore only pushes on writes, so a stale timestamp needs its own timer
+  // to flip `isContactTyping` back off once TYPING_TIMEOUT_MS has passed —
+  // otherwise a typer whose app closed mid-type would show "yazıyor..." forever.
+  useEffect(() => {
+    if (typingTimestamp === null) {
+      setIsContactTyping(false);
+      return;
+    }
+    const remaining = TYPING_TIMEOUT_MS - (Date.now() - typingTimestamp);
+    if (remaining <= 0) {
+      setIsContactTyping(false);
+      return;
+    }
+    setIsContactTyping(true);
+    const timer = setTimeout(() => setIsContactTyping(false), remaining);
+    return () => clearTimeout(timer);
+  }, [typingTimestamp]);
+
+  const handleDraftChange = useCallback(
+    (value: string) => {
+      setDraft(value);
+      if (typingClearRef.current) {
+        clearTimeout(typingClearRef.current);
+      }
+      if (value.trim()) {
+        setTypingStatus(roomId, myUid, true).catch(() => undefined);
+        typingClearRef.current = setTimeout(() => {
+          setTypingStatus(roomId, myUid, false).catch(() => undefined);
+        }, TYPING_TIMEOUT_MS);
+      } else {
+        setTypingStatus(roomId, myUid, false).catch(() => undefined);
+      }
+    },
+    [roomId, myUid],
+  );
 
   // Resolves the pinned message's content for the banner preview — first
   // from whatever's already loaded in `messages` (the common case, no extra
@@ -425,6 +469,10 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack, initialJumpMessage
     setDraft('');
     setEditingMessage(null);
     setReplyingTo(null);
+    if (typingClearRef.current) {
+      clearTimeout(typingClearRef.current);
+    }
+    setTypingStatus(roomId, myUid, false).catch(() => undefined);
     // Fired without waiting on any previous send — each message is its own
     // independent Firestore write, so there's no correctness reason to
     // serialize them. Previously a `sendingRef`/`sending` guard blocked the
@@ -848,9 +896,16 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack, initialJumpMessage
           <BackChevronIcon color={theme.textMuted} />
         </Pressable>
         <Avatar name={contact.name} size={34} photoUrl={contactPhotoUrl} />
-        <Text style={[styles.headerTitle, { color: theme.text }]} numberOfLines={1}>
-          {contact.name}
-        </Text>
+        <View style={styles.headerTitleWrap}>
+          <Text style={[styles.headerTitle, { color: theme.text }]} numberOfLines={1}>
+            {contact.name}
+          </Text>
+          {isContactTyping && (
+            <Text style={[styles.headerSubtitle, { color: theme.identity }]} numberOfLines={1}>
+              yazıyor...
+            </Text>
+          )}
+        </View>
         <Pressable
           onPress={() => setSearchOpen(v => !v)}
           hitSlop={8}
@@ -1155,7 +1210,7 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack, initialJumpMessage
           placeholder="Mesaj yaz..."
           placeholderTextColor={theme.textFaint}
           value={draft}
-          onChangeText={setDraft}
+          onChangeText={handleDraftChange}
           multiline
           onSubmitEditing={Platform.OS === 'ios' ? handleSend : undefined}
         />
@@ -1217,12 +1272,18 @@ const styles = StyleSheet.create({
     fontSize: 26,
     fontWeight: '600',
   },
-  headerTitle: {
+  headerTitleWrap: {
     flex: 1,
+    marginLeft: 10,
+  },
+  headerTitle: {
     fontSize: 17,
     fontWeight: '700',
     textAlign: 'left',
-    marginLeft: 10,
+  },
+  headerSubtitle: {
+    fontSize: 12,
+    fontWeight: '500',
   },
   headerIconButton: {
     paddingHorizontal: 8,

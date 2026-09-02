@@ -1,5 +1,32 @@
 # Değişiklik Günlüğü
 
+## 2026-09-02 — "Yazıyor..." göstergesi eklendi (mobil + web)
+
+Karşı taraf sohbette bir şeyler yazarken başlıkta isim altında "yazıyor..." gösteriliyor artık,
+her iki platformda da. Oda dokümanına (`rooms/{roomId}`) `pinnedMessageId` ile aynı desende
+yeni bir `typing: { [uid]: serverTimestamp }` alanı eklendi — `chatService.ts`'e
+`setTypingStatus`/`subscribeToTypingTimestamp`/`TYPING_TIMEOUT_MS` (4sn) eklendi (hem
+`src/services/chatService.ts` hem `web-client/src/services/chatService.ts`, aynı isim/mantık).
+Metin kutusuna her karakter girildiğinde `typing.{uid}` timestamp'i yazılıyor, 4sn boyunca yeni
+karakter gelmezse veya mesaj gönderilince `deleteField()` ile temizleniyor. Okuyan taraf,
+Firestore'un sadece yazma anında push ettiğini (saatin ilerlemesiyle tetiklenmediğini) hesaba
+katıp kendi `setTimeout`'uyla eski (4sn'den yaşlı) bir timestamp'i "artık yazmıyor" sayıyor —
+bu, karşı tarafın uygulaması yazarken kapanıp `false`/`deleteField()` hiç yazamadığı durumda
+göstergenin sonsuza dek takılı kalmasını önlüyor. `firestore.rules`'ta `rooms/{roomId}` zaten
+oda üyesine serbest yazma izni verdiğinden kural değişikliği gerekmedi. Mobil: `tsc --noEmit`,
+Web: `tsc -b` temiz. Uçtan uca (iki hesapla eşzamanlı) manuel test yapılmadı — sadece derleme ve
+kod-yolu incelemesiyle doğrulandı.
+
+## 2026-09-02 — Web-client'ta sesli mesajlar görünmüyordu — düzeltildi
+
+`web-client/src/components/MessageBubble.tsx` `image`/`video`/`file`/`text` mesaj tiplerini
+render ediyordu ama `audio` hiç ele alınmıyordu — mobilden gönderilen sesli mesaj Firestore
+üzerinden web'e ulaşıyordu ama hiçbir şey basılmıyordu (boş görünüyordu). Mobildeki
+`AudioMessagePlayer`'ın karşılığı olarak basit bir HTML5 `<audio controls>` eklendi
+(`.msg-audio` stiliyle `index.css`'e). Ayrıca `replyPreviewLabel` (yanıt alıntısı) ve
+`ContactsScreen.tsx`'teki son mesaj önizlemesi de `audio` case'i eksik olduğundan boş metin
+gösteriyordu, ikisi de "🎤 Sesli mesaj" etiketiyle düzeltildi. `tsc -b` temiz.
+
 ## 2026-09-01 — APK 1.6.1 + yanlış `apkUrl` düzeltildi + güncelleme yüzdesi kaldırıldı
 
 `app_config/android`'deki `apkUrl` yanlışlıkla `https://kaanchatmercan.web.app/app-release-1.6.0.apk`

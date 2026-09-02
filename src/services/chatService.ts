@@ -406,6 +406,28 @@ export async function unpinMessage(roomId: string): Promise<void> {
   await setDoc(roomDocRef(roomId), { pinnedMessageId: deleteField() }, { merge: true });
 }
 
+// ---- Typing indicator: shared per-room map, one timestamp per uid ----
+
+/** How stale a `typing` timestamp can be before the reader should treat it as "no longer typing" — covers the case where the typer's app closes/crashes without ever writing the `false`/deleteField() clear. Same value as the web client's chatService.ts. */
+export const TYPING_TIMEOUT_MS = 4000;
+
+/** Stamps (or clears) this room's shared "who's typing" pointer for `uid`, keyed by uid so both members can have independent state on the same room doc — same relaxed, room-member-write model as `pinnedMessageId`. */
+export async function setTypingStatus(roomId: string, uid: string, isTyping: boolean): Promise<void> {
+  await setDoc(roomDocRef(roomId), { typing: { [uid]: isTyping ? serverTimestamp() : deleteField() } }, { merge: true });
+}
+
+/** Live timestamp (ms) of `otherUid`'s last typing stamp in this room, or null if they've never typed / it was cleared. The caller decides staleness against TYPING_TIMEOUT_MS on its own timer, since Firestore only pushes on writes, not on the clock ticking. */
+export function subscribeToTypingTimestamp(roomId: string, otherUid: string, onTimestamp: (timestampMs: number | null) => void): Unsubscribe {
+  return onSnapshot(
+    roomDocRef(roomId),
+    snap => {
+      const raw = (snap.data()?.typing as Record<string, unknown> | undefined)?.[otherUid];
+      onTimestamp(raw instanceof Timestamp ? raw.toMillis() : null);
+    },
+    () => onTimestamp(null),
+  );
+}
+
 /** One-off lookup used when the pinned message has scrolled out of the currently-loaded page — falls back to fetching just that doc instead of widening the whole live query. */
 export async function fetchMessageById(roomId: string, messageId: string, myUid: string): Promise<ChatMessage | null> {
   const snap = await getDoc(doc(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION, messageId));

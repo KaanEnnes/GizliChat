@@ -14,8 +14,11 @@ import {
   sendMediaMessage,
   sendMessage,
   setMessageReaction,
+  setTypingStatus,
   subscribeToMessages,
   subscribeToPinnedMessageId,
+  subscribeToTypingTimestamp,
+  TYPING_TIMEOUT_MS,
   unpinMessage,
   type ChatMessage,
 } from '../services/chatService';
@@ -69,15 +72,55 @@ function ChatRoomScreen({ account, contact, onBack, initialJumpMessageId }: Prop
   const [searchQuery, setSearchQuery] = useState('');
   const [searchIndex, setSearchIndex] = useState(0);
   const [highlightedMessageId, setHighlightedMessageId] = useState<string | null>(null);
+  const [typingTimestamp, setTypingTimestamp] = useState<number | null>(null);
+  const [isContactTyping, setIsContactTyping] = useState(false);
   const listRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const seenReadRef = useRef<Set<string>>(new Set());
   const nearBottomRef = useRef(true);
   const consumedInitialJumpRef = useRef<string | null>(null);
+  const typingClearRef = useRef<number | null>(null);
 
   useEffect(() => {
     return subscribeToUserProfile(contact.uid, profile => setContactPhotoUrl(profile.photoUrl));
   }, [contact.uid]);
+
+  useEffect(() => {
+    return subscribeToTypingTimestamp(roomId, contact.uid, setTypingTimestamp);
+  }, [roomId, contact.uid]);
+
+  // Firestore only pushes on writes, so a stale timestamp needs its own timer
+  // to flip `isContactTyping` back off once TYPING_TIMEOUT_MS has passed —
+  // otherwise a typer whose tab closed mid-type would show "yazıyor..." forever.
+  useEffect(() => {
+    if (typingTimestamp === null) {
+      setIsContactTyping(false);
+      return;
+    }
+    const remaining = TYPING_TIMEOUT_MS - (Date.now() - typingTimestamp);
+    if (remaining <= 0) {
+      setIsContactTyping(false);
+      return;
+    }
+    setIsContactTyping(true);
+    const timer = window.setTimeout(() => setIsContactTyping(false), remaining);
+    return () => window.clearTimeout(timer);
+  }, [typingTimestamp]);
+
+  const handleTextInputChange = (value: string) => {
+    setText(value);
+    if (typingClearRef.current) {
+      window.clearTimeout(typingClearRef.current);
+    }
+    if (value.trim()) {
+      setTypingStatus(roomId, account.uid, true).catch(() => {});
+      typingClearRef.current = window.setTimeout(() => {
+        setTypingStatus(roomId, account.uid, false).catch(() => {});
+      }, TYPING_TIMEOUT_MS);
+    } else {
+      setTypingStatus(roomId, account.uid, false).catch(() => {});
+    }
+  };
 
   useEffect(() => {
     markRoomRead(roomId);
@@ -199,6 +242,10 @@ function ChatRoomScreen({ account, contact, onBack, initialJumpMessageId }: Prop
     const trimmed = text.trim();
     if (!trimmed) return;
     setText('');
+    if (typingClearRef.current) {
+      window.clearTimeout(typingClearRef.current);
+    }
+    setTypingStatus(roomId, account.uid, false).catch(() => {});
     try {
       if (editTarget) {
         await editMessage(roomId, editTarget.id, trimmed, account.uid);
@@ -371,7 +418,12 @@ function ChatRoomScreen({ account, contact, onBack, initialJumpMessageId }: Prop
           ←
         </button>
         <Avatar name={contact.name} size={36} photoUrl={contactPhotoUrl} />
-        <div className="chat-room-title" style={{ color: theme.text, flex: 1 }}>{contact.name}</div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div className="chat-room-title" style={{ color: theme.text }}>{contact.name}</div>
+          {isContactTyping && (
+            <div style={{ fontSize: 12, color: theme.accent }}>yazıyor...</div>
+          )}
+        </div>
         <button className="icon-btn" style={{ background: theme.surfaceAlt, color: theme.text }} onClick={() => setSearchOpen(v => !v)} title="Sohbette ara">
           🔍
         </button>
@@ -523,7 +575,7 @@ function ChatRoomScreen({ account, contact, onBack, initialJumpMessageId }: Prop
           type="text"
           placeholder="Mesaj yaz..."
           value={text}
-          onChange={e => setText(e.target.value)}
+          onChange={e => handleTextInputChange(e.target.value)}
         />
         <button className="chat-send-btn" style={{ background: theme.accent, color: theme.accentText }} type="submit">
           {editTarget ? 'Kaydet' : 'Gönder'}
