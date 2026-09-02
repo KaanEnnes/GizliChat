@@ -39,6 +39,8 @@ export interface ChatMessage {
   clipStartSeconds?: number;
   clipDurationSeconds?: number;
   reactions?: Record<string, string>;
+  /** Per-user star (WhatsApp-style "yıldızla") — keyed by uid, independent of the other member's own stars. Unlike `deleted`/pinnedMessageId, this is personal: starring a message never affects what the other room member sees. */
+  starredBy?: Record<string, boolean>;
   pending?: boolean;
   deliveredAt?: number;
   readAt?: number;
@@ -105,6 +107,7 @@ function docToMessage(docSnap: {
     callStatus:
       data.callStatus === 'completed' || data.callStatus === 'missed' ? (data.callStatus as 'completed' | 'missed') : undefined,
     reactions: typeof data.reactions === 'object' && data.reactions !== null ? (data.reactions as Record<string, string>) : undefined,
+    starredBy: typeof data.starredBy === 'object' && data.starredBy !== null ? (data.starredBy as Record<string, boolean>) : undefined,
     pending: docSnap.metadata.hasPendingWrites,
     deliveredAt: data.deliveredAt instanceof Timestamp ? data.deliveredAt.toMillis() : undefined,
     readAt: data.readAt instanceof Timestamp ? data.readAt.toMillis() : undefined,
@@ -175,6 +178,19 @@ export function subscribeToLatestMessage(roomId: string, myUid: string, onMessag
 export async function setMessageReaction(roomId: string, messageId: string, uid: string, emoji: string | null): Promise<void> {
   const messageRef = doc(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION, messageId);
   await updateDoc(messageRef, { [`reactions.${uid}`]: emoji === null ? deleteField() : emoji });
+}
+
+export async function toggleStarMessage(roomId: string, messageId: string, uid: string, starred: boolean): Promise<void> {
+  const messageRef = doc(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION, messageId);
+  await updateDoc(messageRef, { [`starredBy.${uid}`]: starred ? true : deleteField() });
+}
+
+/** One-off (non-live) fetch of every message `uid` has starred in this room — same "re-query up to MAX_MESSAGE_LIMIT, filter client-side" approach as searchMessagesInRoom (no Firestore full-text/nested-map index set up for this). */
+export async function fetchStarredMessages(roomId: string, uid: string): Promise<ChatMessage[]> {
+  const snapshot = await getDocs(
+    query(collection(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION), orderBy('createdAt', 'desc'), limit(MAX_MESSAGE_LIMIT)),
+  );
+  return snapshot.docs.map(d => docToMessage(d)).filter(message => !message.deleted && message.starredBy?.[uid] === true);
 }
 
 export async function markMessageDelivered(roomId: string, messageId: string): Promise<void> {

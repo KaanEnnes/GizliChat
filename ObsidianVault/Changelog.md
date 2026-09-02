@@ -1,5 +1,31 @@
 # Değişiklik Günlüğü
 
+## 2026-09-02 — "Kişi bilgisi" ekranı + gerçek "yıldızlı mesajlar" özelliği eklendi (mobil + web)
+
+Sohbet başlığındaki isme/avatara dokununca artık WhatsApp'taki gibi bir "Kişi bilgisi" ekranı
+açılıyor (`src/components/ContactInfoScreen.tsx` / `web-client/src/components/ContactInfoScreen.tsx`,
+navigasyon kütüphanesi olmadığından mevcut projedeki gibi tam ekran bir Modal/overlay olarak).
+Projede telefon numarası hiç tutulmadığından (kullanıcı adı/şifre ile giriş, phone-based değil)
+ekranda telefon yerine gerçek kullanıcı adı (`fetchAccountUsername`) gösteriliyor. İçerik: büyük
+avatar, isim, kullanıcı adı, çevrimiçi/çevrimdışı durumu (`subscribeToPresence`); mobilde
+Sesli/Görüntülü/Ara butonları (mevcut `startVoiceCall`/`startVideoCall`/arama açma ile aynı
+mantık), webde sadece Ara (web-client'ta hiç arama özelliği yok, bilerek atlandı); "Medya,
+bağlantı ve belgeler" satırı (şu an yüklü mesajlardan sayılan bir sayaç — tam geçmiş taraması
+henüz yapılmıyor, bkz. arama/galeri ile ilgili bilinen aynı sınırlama); "Yıldızlı mesajlar" satırı.
+
+**Yeni özellik — gerçek yıldızlama:** Kullanıcı önce bu bölümü atlamayı önerdi ama sonra fikrini
+değiştirip gerçek bir özellik istedi. Mevcut tekli "sabitlenmiş mesaj"dan (odada bir tane, ikisi de
+görür) farklı olarak, her kullanıcı bağımsız ve sınırsız sayıda mesajı yıldızlayabiliyor —
+`ChatMessage.starredBy?: Record<uid, true>`, `toggleStarMessage`/`fetchStarredMessages`
+(`chatService.ts`, her iki platform). `firestore.rules`'a `reactions` carve-out'una benzer 5.
+bir istisna eklendi: bir oda üyesi `starredBy` altında sadece kendi anahtarını değiştirebilir
+(deploy edildi). Mesaj menüsüne "⭐ Yıldızla/Yıldızı Kaldır" eklendi, yıldızlanan mesajın
+üzerinde küçük bir ⭐ rozeti görünüyor. Kişi bilgisi ekranındaki "Yıldızlı mesajlar" satırına
+dokununca `fetchStarredMessages` ile liste çekilip gösteriliyor, bir mesaja dokununca sohbette o
+mesaja atlanıyor (mevcut `scrollToMessageId`/`handleJumpToReply` mantığı yeniden kullanıldı).
+`tsc` (her iki platform) temiz; web-client tekrar build edilip **https://kaanchatmercan.web.app**'e
+deploy edildi.
+
 ## 2026-09-02 — Sohbet içinde animasyonlu "yazıyor..." baloncuğu + web-client production'a deploy edildi
 
 Önceki kayıttaki "yazıyor..." göstergesi sadece başlıkta bir metin etiketiydi; kullanıcı bunun

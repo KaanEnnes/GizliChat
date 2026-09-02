@@ -55,6 +55,8 @@ export interface ChatMessage {
   callStatus?: CallLogStatus;
   /** Emoji reactions keyed by the reacting user's uid — each user has at most one reaction per message. */
   reactions?: Record<string, string>;
+  /** Per-user star (WhatsApp-style "yıldızla") — keyed by uid, independent of the other member's own stars. Unlike `deleted`/pinnedMessageId, this is personal: starring a message never affects what the other room member sees. */
+  starredBy?: Record<string, boolean>;
   /** True while this doc only exists in the local write cache and hasn't been acknowledged by the server yet — drives the "sending" clock icon. */
   pending?: boolean;
   /** Set by the recipient's device once it has received this message (room open or not). */
@@ -189,6 +191,10 @@ function docToMessage(docSnap: {
       typeof data.reactions === 'object' && data.reactions !== null
         ? (data.reactions as Record<string, string>)
         : undefined,
+    starredBy:
+      typeof data.starredBy === 'object' && data.starredBy !== null
+        ? (data.starredBy as Record<string, boolean>)
+        : undefined,
     pending: docSnap.metadata.hasPendingWrites,
     deliveredAt: data.deliveredAt instanceof Timestamp ? data.deliveredAt.toMillis() : undefined,
     readAt: data.readAt instanceof Timestamp ? data.readAt.toMillis() : undefined,
@@ -246,6 +252,19 @@ export async function setMessageReaction(
   await updateDoc(messageRef, {
     [`reactions.${uid}`]: emoji === null ? deleteField() : emoji,
   });
+}
+
+export async function toggleStarMessage(roomId: string, messageId: string, uid: string, starred: boolean): Promise<void> {
+  const messageRef = doc(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION, messageId);
+  await updateDoc(messageRef, { [`starredBy.${uid}`]: starred ? true : deleteField() });
+}
+
+/** One-off (non-live) fetch of every message `uid` has starred in this room — same "re-query up to MAX_MESSAGE_LIMIT, filter client-side" approach as the in-chat search (no Firestore full-text/nested-map index set up for this). */
+export async function fetchStarredMessages(roomId: string, uid: string): Promise<ChatMessage[]> {
+  const snapshot = await getDocs(
+    query(collection(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION), orderBy('createdAt', 'desc'), limit(MAX_MESSAGE_LIMIT)),
+  );
+  return snapshot.docs.map(d => docToMessage(d)).filter(message => !message.deleted && message.starredBy?.[uid] === true);
 }
 
 /** Recipient-side: marks a message as having reached this device (WhatsApp-style gray double tick), regardless of whether its room is currently open. */

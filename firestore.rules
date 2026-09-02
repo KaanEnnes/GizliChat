@@ -81,6 +81,11 @@ service cloud.firestore {
       allow update: if isRoomMember(roomId) && (
         (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reactions']) &&
           request.resource.data.reactions.diff(resource.data.get('reactions', {})).affectedKeys().hasOnly([request.auth.uid])) ||
+        // 5) star: a room member may set/clear only their own single key under
+        //    `starredBy` — personal, unlike `deleted`/pinnedMessageId, so it
+        //    never touches anything the other member's own view depends on.
+        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['starredBy']) &&
+          request.resource.data.starredBy.diff(resource.data.get('starredBy', {})).affectedKeys().hasOnly([request.auth.uid])) ||
         (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['deliveredAt', 'readAt']) &&
           resource.data.senderId != request.auth.uid) ||
         (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['text', 'editedAt']) &&

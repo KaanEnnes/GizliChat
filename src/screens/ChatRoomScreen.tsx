@@ -25,6 +25,7 @@ import AttachMenuModal from '../components/AttachMenuModal';
 import GifPickerModal from '../components/GifPickerModal';
 import SongPickerModal from '../components/SongPickerModal';
 import TypingBubble from '../components/TypingBubble';
+import ContactInfoScreen from '../components/ContactInfoScreen';
 import RecordingWaveform from '../components/RecordingWaveform';
 import Avatar from '../components/Avatar';
 import StorageQuotaBanner from '../components/StorageQuotaBanner';
@@ -55,6 +56,7 @@ import {
   subscribeToMessages,
   subscribeToPinnedMessageId,
   subscribeToTypingTimestamp,
+  toggleStarMessage,
   TYPING_TIMEOUT_MS,
   unpinMessage,
 } from '../services/chatService';
@@ -102,6 +104,7 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack, initialJumpMessage
   const [attachMenuVisible, setAttachMenuVisible] = useState(false);
   const [gifPickerVisible, setGifPickerVisible] = useState(false);
   const [songPickerVisible, setSongPickerVisible] = useState(false);
+  const [contactInfoVisible, setContactInfoVisible] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingLevel, setRecordingLevel] = useState(0);
   const [callStarting, setCallStarting] = useState(false);
@@ -611,6 +614,11 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack, initialJumpMessage
     return messages.filter(m => m.type === 'image' && m.mediaUrl && !m.hidden);
   }, [galleryMessageId, messages]);
 
+  const mediaCount = useMemo(
+    () => messages.filter(m => (m.type === 'image' || m.type === 'video' || m.type === 'file') && m.mediaUrl).length,
+    [messages],
+  );
+
   const handlePickFile = useCallback(async () => {
     let picked;
     try {
@@ -767,6 +775,16 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack, initialJumpMessage
     });
   }, [roomId]);
 
+  const handleToggleStar = useCallback(
+    (message: ChatMessage) => {
+      const isStarred = message.starredBy?.[myUid] === true;
+      toggleStarMessage(roomId, message.id, myUid, !isStarred).catch(error => {
+        setConnectionError(`Yıldızlanamadı: ${(error as Error).message}`);
+      });
+    },
+    [roomId, myUid],
+  );
+
   const handleEditRequest = useCallback((message: ChatMessage) => {
     setReplyingTo(null);
     setEditingMessage(message);
@@ -907,17 +925,23 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack, initialJumpMessage
         <Pressable onPress={onBack} hitSlop={8} style={styles.backButton}>
           <BackChevronIcon color={theme.textMuted} />
         </Pressable>
-        <Avatar name={contact.name} size={34} photoUrl={contactPhotoUrl} />
-        <View style={styles.headerTitleWrap}>
-          <Text style={[styles.headerTitle, { color: theme.text }]} numberOfLines={1}>
-            {contact.name}
-          </Text>
-          {isContactTyping && (
-            <Text style={[styles.headerSubtitle, { color: theme.identity }]} numberOfLines={1}>
-              yazıyor...
+        <Pressable
+          style={styles.headerTitlePressable}
+          onPress={() => setContactInfoVisible(true)}
+          accessibilityRole="button"
+          accessibilityLabel={`${contact.name} kişi bilgisi`}>
+          <Avatar name={contact.name} size={34} photoUrl={contactPhotoUrl} />
+          <View style={styles.headerTitleWrap}>
+            <Text style={[styles.headerTitle, { color: theme.text }]} numberOfLines={1}>
+              {contact.name}
             </Text>
-          )}
-        </View>
+            {isContactTyping && (
+              <Text style={[styles.headerSubtitle, { color: theme.identity }]} numberOfLines={1}>
+                yazıyor...
+              </Text>
+            )}
+          </View>
+        </Pressable>
         <Pressable
           onPress={() => setSearchOpen(v => !v)}
           hitSlop={8}
@@ -1079,6 +1103,36 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack, initialJumpMessage
         }}
       />
 
+      <ContactInfoScreen
+        visible={contactInfoVisible}
+        contact={contact}
+        contactPhotoUrl={contactPhotoUrl}
+        myUid={myUid}
+        roomId={roomId}
+        mediaCount={mediaCount}
+        onClose={() => setContactInfoVisible(false)}
+        onOpenSearch={() => setSearchOpen(true)}
+        onStartVoiceCall={() => {
+          if (callStarting) {
+            return;
+          }
+          setCallStarting(true);
+          startVoiceCall(myUid, myUsername, contact)
+            .catch(error => setConnectionError(`Arama başlatılamadı: ${(error as Error).message}`))
+            .finally(() => setCallStarting(false));
+        }}
+        onStartVideoCall={() => {
+          if (callStarting) {
+            return;
+          }
+          setCallStarting(true);
+          startVideoCall(myUid, myUsername, contact)
+            .catch(error => setConnectionError(`Arama başlatılamadı: ${(error as Error).message}`))
+            .finally(() => setCallStarting(false));
+        }}
+        onJumpToMessage={scrollToMessageId}
+      />
+
       {galleryMessageId && (
         <ImageGalleryModal images={galleryImages} initialMessageId={galleryMessageId} onClose={() => setGalleryMessageId(null)} />
       )}
@@ -1141,6 +1195,7 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack, initialJumpMessage
               onToggleReaction={handleToggleReaction}
               onPin={handlePinMessage}
               onUnpin={handleUnpinMessage}
+              onToggleStar={handleToggleStar}
               onEdit={handleEditRequest}
               onDelete={handleDeleteMessage}
               onReply={handleReplyRequest}
@@ -1296,8 +1351,15 @@ const styles = StyleSheet.create({
     fontSize: 26,
     fontWeight: '600',
   },
+  headerTitlePressable: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    minWidth: 0,
+  },
   headerTitleWrap: {
     flex: 1,
+    minWidth: 0,
     marginLeft: 10,
   },
   headerTitle: {

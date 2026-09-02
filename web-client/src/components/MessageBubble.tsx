@@ -45,6 +45,7 @@ interface Props {
   onToggleReaction: (message: ChatMessage, emoji: string) => void;
   onPin: (message: ChatMessage) => void;
   onUnpin: () => void;
+  onToggleStar: (message: ChatMessage) => void;
   onEdit: (message: ChatMessage) => void;
   onDelete: (message: ChatMessage) => void;
   onReply: (message: ChatMessage) => void;
@@ -54,7 +55,7 @@ interface Props {
   onImagePress: (messageId: string) => void;
 }
 
-function MessageBubble({ message, isMine, myUid, isPinned, highlighted, onToggleReaction, onPin, onUnpin, onEdit, onDelete, onReply, onJumpToReply, onImagePress }: Props): React.JSX.Element {
+function MessageBubble({ message, isMine, myUid, isPinned, highlighted, onToggleReaction, onPin, onUnpin, onToggleStar, onEdit, onDelete, onReply, onJumpToReply, onImagePress }: Props): React.JSX.Element {
   const { theme } = useTheme();
   const [menuOpen, setMenuOpen] = useState(false);
   const [textExpanded, setTextExpanded] = useState(false);
@@ -62,6 +63,7 @@ function MessageBubble({ message, isMine, myUid, isPinned, highlighted, onToggle
 
   const bubbleColor = isMine ? theme.bubbleMine : theme.bubbleOther;
   const bubbleTextColor = isMine ? theme.bubbleMineText : theme.bubbleOtherText;
+  const isStarred = message.starredBy?.[myUid] === true;
   const myReaction = message.reactions?.[myUid];
   const reactionCounts = Object.values(message.reactions ?? {}).reduce<Record<string, number>>((acc, emoji) => {
     acc[emoji] = (acc[emoji] ?? 0) + 1;
@@ -193,6 +195,7 @@ function MessageBubble({ message, isMine, myUid, isPinned, highlighted, onToggle
         })()}
 
         <div className="msg-meta-row">
+          {isStarred && <span style={{ fontSize: 11, marginRight: 4 }}>⭐</span>}
           {!!message.editedAt && <span style={{ opacity: 0.6, fontSize: 11 }}>düzenlendi · </span>}
           <span style={{ opacity: 0.6, fontSize: 11 }}>{formatTime(message.createdAt)}</span>
           {isMine && (
@@ -248,6 +251,15 @@ function MessageBubble({ message, isMine, myUid, isPinned, highlighted, onToggle
                 isPinned ? onUnpin() : onPin(message);
               }}>
               {isPinned ? '📌 Sabiti Kaldır' : '📌 Sabitle'}
+            </button>
+            <button
+              className="msg-menu-action"
+              style={{ color: theme.text }}
+              onClick={() => {
+                setMenuOpen(false);
+                onToggleStar(message);
+              }}>
+              {isStarred ? '⭐ Yıldızı Kaldır' : '⭐ Yıldızla'}
             </button>
             {isMine && message.type === 'text' && (
               <button

@@ -87,6 +87,7 @@ interface Props {
   onToggleReaction: (message: ChatMessage, emoji: string) => void;
   onPin: (message: ChatMessage) => void;
   onUnpin: () => void;
+  onToggleStar: (message: ChatMessage) => void;
   onEdit: (message: ChatMessage) => void;
   onDelete: (message: ChatMessage) => void;
   onReply: (message: ChatMessage) => void;
@@ -182,6 +183,7 @@ function MessageBubble({
   onToggleReaction,
   onPin,
   onUnpin,
+  onToggleStar,
   onEdit,
   onDelete,
   onReply,
@@ -200,6 +202,7 @@ function MessageBubble({
   const bubbleColor = isMine ? theme.bubbleMine : theme.bubbleOther;
   const bubbleTextColor = isMine ? theme.bubbleMineText : theme.bubbleOtherText;
   const myReaction = message.reactions?.[myUid];
+  const isStarred = message.starredBy?.[myUid] === true;
   const reactionCounts = Object.values(message.reactions ?? {}).reduce<Record<string, number>>(
     (acc, emoji) => {
       acc[emoji] = (acc[emoji] ?? 0) + 1;
@@ -233,6 +236,11 @@ function MessageBubble({
     } else {
       onPin(message);
     }
+  };
+
+  const handleToggleStar = () => {
+    setPickerOpen(false);
+    onToggleStar(message);
   };
 
   const handleEdit = () => {
@@ -536,6 +544,7 @@ function MessageBubble({
         })()}
 
         <View style={styles.metaRow}>
+          {isStarred && <Text style={[styles.timeText, { marginRight: 4 }]}>⭐</Text>}
           {!!message.editedAt && (
             <Text style={[styles.timeText, styles.mutedMeta, { color: bubbleTextColor }]}>düzenlendi · </Text>
           )}
@@ -609,6 +618,15 @@ function MessageBubble({
               accessibilityLabel={isPinned ? 'Sabiti kaldır' : 'Mesajı sabitle'}>
               <Text style={[styles.actionRowText, { color: theme.text }]}>
                 {isPinned ? '📌  Sabiti Kaldır' : '📌  Sabitle'}
+              </Text>
+            </Pressable>
+            <Pressable
+              style={styles.actionRow}
+              onPress={handleToggleStar}
+              accessibilityRole="button"
+              accessibilityLabel={isStarred ? 'Yıldızı kaldır' : 'Mesajı yıldızla'}>
+              <Text style={[styles.actionRowText, { color: theme.text }]}>
+                {isStarred ? '⭐  Yıldızı Kaldır' : '⭐  Yıldızla'}
               </Text>
             </Pressable>
             {message.type === 'text' && (

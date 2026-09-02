@@ -19,6 +19,7 @@ import {
   subscribeToMessages,
   subscribeToPinnedMessageId,
   subscribeToTypingTimestamp,
+  toggleStarMessage,
   TYPING_TIMEOUT_MS,
   unpinMessage,
   type ChatMessage,
@@ -35,6 +36,7 @@ import GamesModal from '../components/GamesModal';
 import GifPickerModal from '../components/GifPickerModal';
 import type { GifResult } from '../services/gifService';
 import SongPickerModal from '../components/SongPickerModal';
+import ContactInfoScreen from '../components/ContactInfoScreen';
 import { ADMIN_UID } from '../config/adminConfig';
 
 const IMAGE_DATA_URI_LIMIT = 900_000;
@@ -68,6 +70,7 @@ function ChatRoomScreen({ account, contact, onBack, initialJumpMessageId }: Prop
   const [gamesOpen, setGamesOpen] = useState(false);
   const [gifPickerOpen, setGifPickerOpen] = useState(false);
   const [songPickerOpen, setSongPickerOpen] = useState(false);
+  const [contactInfoOpen, setContactInfoOpen] = useState(false);
   const [contactPhotoUrl, setContactPhotoUrl] = useState<string | undefined>(undefined);
   const [showJumpToBottom, setShowJumpToBottom] = useState(false);
   const [galleryMessageId, setGalleryMessageId] = useState<string | null>(null);
@@ -342,6 +345,10 @@ function ChatRoomScreen({ account, contact, onBack, initialJumpMessageId }: Prop
 
   const handlePin = (message: ChatMessage) => pinMessage(roomId, message.id).catch(() => undefined);
   const handleUnpin = () => unpinMessage(roomId).catch(() => undefined);
+  const handleToggleStar = (message: ChatMessage) => {
+    const isStarred = message.starredBy?.[account.uid] === true;
+    toggleStarMessage(roomId, message.id, account.uid, !isStarred).catch(() => undefined);
+  };
   const handleEdit = (message: ChatMessage) => {
     setEditTarget(message);
     setReplyTarget(null);
@@ -364,6 +371,17 @@ function ChatRoomScreen({ account, contact, onBack, initialJumpMessageId }: Prop
     () => messages.filter(m => m.type === 'image' && m.mediaUrl),
     [messages],
   );
+
+  const mediaCount = useMemo(
+    () => messages.filter(m => (m.type === 'image' || m.type === 'video' || m.type === 'file') && m.mediaUrl).length,
+    [messages],
+  );
+
+  const handleJumpToMessage = (messageId: string) => {
+    setHighlightedMessageId(messageId);
+    requestAnimationFrame(() => handleJumpToReply(messageId));
+    setTimeout(() => setHighlightedMessageId(null), 2500);
+  };
 
   // Global-search entry point: once the widened history (messageLimit was
   // seeded to MAX_MESSAGE_LIMIT above when initialJumpMessageId is set) has
@@ -426,12 +444,16 @@ function ChatRoomScreen({ account, contact, onBack, initialJumpMessageId }: Prop
         <button className="icon-btn back-btn" style={{ background: theme.surfaceAlt, color: theme.text }} onClick={onBack}>
           ←
         </button>
-        <Avatar name={contact.name} size={36} photoUrl={contactPhotoUrl} />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div className="chat-room-title" style={{ color: theme.text }}>{contact.name}</div>
-          {isContactTyping && (
-            <div style={{ fontSize: 12, color: theme.accent }}>yazıyor...</div>
-          )}
+        <div
+          style={{ display: 'flex', alignItems: 'center', flex: 1, minWidth: 0, gap: 10, cursor: 'pointer' }}
+          onClick={() => setContactInfoOpen(true)}>
+          <Avatar name={contact.name} size={36} photoUrl={contactPhotoUrl} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div className="chat-room-title" style={{ color: theme.text }}>{contact.name}</div>
+            {isContactTyping && (
+              <div style={{ fontSize: 12, color: theme.accent }}>yazıyor...</div>
+            )}
+          </div>
         </div>
         <button className="icon-btn" style={{ background: theme.surfaceAlt, color: theme.text }} onClick={() => setSearchOpen(v => !v)} title="Sohbette ara">
           🔍
@@ -488,6 +510,22 @@ function ChatRoomScreen({ account, contact, onBack, initialJumpMessageId }: Prop
         />
       )}
 
+      {contactInfoOpen && (
+        <ContactInfoScreen
+          contact={contact}
+          contactPhotoUrl={contactPhotoUrl}
+          myUid={account.uid}
+          roomId={roomId}
+          mediaCount={mediaCount}
+          onClose={() => setContactInfoOpen(false)}
+          onOpenSearch={() => {
+            setContactInfoOpen(false);
+            setSearchOpen(true);
+          }}
+          onJumpToMessage={handleJumpToMessage}
+        />
+      )}
+
       {songPickerOpen && (
         <SongPickerModal
           onClose={() => setSongPickerOpen(false)}
@@ -541,6 +579,7 @@ function ChatRoomScreen({ account, contact, onBack, initialJumpMessageId }: Prop
             onToggleReaction={handleToggleReaction}
             onPin={handlePin}
             onUnpin={handleUnpin}
+            onToggleStar={handleToggleStar}
             onEdit={handleEdit}
             onDelete={handleDelete}
             onReply={handleReply}
