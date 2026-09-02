@@ -1,5 +1,38 @@
 # Değişiklik Günlüğü
 
+## 2026-09-02 — v1.7.4: YouTube "Hata 152/153" asıl kök sebebi bulunup düzeltildi (baseUrlOverride youtube.com OLMAMALI)
+
+1.7.3'teki `baseUrlOverride="https://www.youtube.com"` düzeltmesi **yanlış yöndeymiş** — kullanıcı
+gerçek cihazda "Hata kodu: 152 - 4" ile karşılaştı, ben de emülatörde en popüler videolardan biri
+olan "The Weeknd - Blinding Lights" ile bile "Hata 152 - 15" alarak bunun video bazlı bir kısıtlama
+olmadığını, sistemik olduğunu doğruladım.
+
+**Asıl kök sebep:** `baseUrlOverride` olarak **YouTube'un kendi alan adını** vermek, WebView'i sanki
+`youtube.com` üzerinde çalışıyormuş gibi gösteriyor — yani bir YouTube sayfası kendi kendini gömüyor
+gibi bir durum oluşuyor. Bunu emülatörde şöyle doğrudan kanıtladım: gerçek Chrome tarayıcısında
+`https://www.youtube.com/embed/dQw4w9WgXcQ` adresine DOĞRUDAN gidildiğinde (üst pencere = iframe'in
+kendi domaini) YouTube "Error 153" gösteriyor — react-native koduyla hiç ilgisi olmayan, salt tarayıcı
+davranışı. Aynı videoyu kendi kontrolümdeki başka bir origin'den (`localhost` üzerinden basit bir
+`<iframe>` ile) gömünce hiçbir hata olmadan oynatma ekranı geliyor. Yani YouTube, gömülü oynatıcının
+üst sayfa origin'i `youtube.com`'un KENDİSİ olduğunda bunu reddediyor; başka herhangi gerçek bir
+origin olduğunda kabul ediyor.
+
+**Düzeltme:** `baseUrlOverride`, `"https://www.youtube.com"` yerine bizim kendi kontrolümüzdeki
+gerçek bir alan adına (`"https://kaanchatmercan.web.app"`) çevrildi (`SongPickerModal.tsx` ve
+`MessageBubble.tsx`). Emülatörde gerçek bir kanala ("dassam") "The Weeknd - Blinding Lights" şarkısı
+gönderilip oynatma denendi — video kontrolleri, ilerleme çubuğu ve ses ikonuyla birlikte normal
+şekilde oynadı, hiçbir hata ekranı çıkmadı.
+
+**Ders:** "Hata 153" mesajı önceki oturumda "kaynaksız (origin'siz) sayfa" sorunu sanılmıştı ama asıl
+sorun kaynağın YOUTUBE.COM'UN KENDİSİ olmasıydı — rastgele/taklit bir origin vermek yetmiyor, o
+origin'in youtube.com'dan farklı gerçek bir domain olması gerekiyor. Ayrıca bu sefer iddiayı öne
+sürmeden önce hem gerçek Chrome'da doğrudan URL testi hem de gerçek kanalda uçtan uca oynatma testi
+yapılarak kanıtlandı.
+
+Mobil: `versionCode 21→22`, `versionName "1.7.3"→"1.7.4"`; APK derlenip
+`gizlichat-android-updates.web.app` üzerinden yayınlandı, `app_config/android` Firestore dokümanı
+güncellendi.
+
 ## 2026-09-02 — v1.7.3: YouTube "Hata 153" düzeltildi (react-native-youtube-iframe'e baseUrlOverride)
 
 1.7.2'deki `react-native-youtube-iframe` + `useLocalHTML` geçişi cihazda test edilince gerçek,

@@ -168,12 +168,14 @@ function SongPickerModal({ visible, onClose, onSend }: Props): React.JSX.Element
                   play
                   forceAndroidAutoplay
                   useLocalHTML
-                  // Without a real base URL, the local HTML has no origin at
-                  // all and YouTube's embed rejects it ("Hata 153" — seen live
-                  // on-device). Pointing it at YouTube's own domain gives the
-                  // page a legitimate-looking origin without depending on any
-                  // third-party server.
-                  baseUrlOverride="https://www.youtube.com"
+                  // Confirmed by direct emulator testing: using youtube.com
+                  // itself as the fake origin makes this a self-referential
+                  // embed (top frame === iframe origin), which YouTube blocks
+                  // with "Error 153" — reproduced by navigating a real browser
+                  // straight to a youtube.com/embed/... URL. Embedding the
+                  // same video from any OTHER real origin works fine, so we
+                  // use our own Firebase Hosting domain instead.
+                  baseUrlOverride="https://kaanchatmercan.web.app"
                   initialPlayerParams={{ start: startSeconds, end: startSeconds + clipDuration, controls: true }}
                 />
               </View>
