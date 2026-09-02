@@ -495,6 +495,10 @@ function MessageBubble({
                 play
                 forceAndroidAutoplay
                 useLocalHTML
+                // Same fix as SongPickerModal.tsx — without a real base URL
+                // the local HTML has no origin and YouTube rejects it with
+                // "Hata 153". YouTube's own domain gives it a legitimate one.
+                baseUrlOverride="https://www.youtube.com"
                 initialPlayerParams={{
                   start: message.clipStartSeconds ?? 0,
                   end: (message.clipStartSeconds ?? 0) + (message.clipDurationSeconds ?? 15),

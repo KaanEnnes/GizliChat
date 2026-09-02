@@ -168,6 +168,12 @@ function SongPickerModal({ visible, onClose, onSend }: Props): React.JSX.Element
                   play
                   forceAndroidAutoplay
                   useLocalHTML
+                  // Without a real base URL, the local HTML has no origin at
+                  // all and YouTube's embed rejects it ("Hata 153" — seen live
+                  // on-device). Pointing it at YouTube's own domain gives the
+                  // page a legitimate-looking origin without depending on any
+                  // third-party server.
+                  baseUrlOverride="https://www.youtube.com"
                   initialPlayerParams={{ start: startSeconds, end: startSeconds + clipDuration, controls: true }}
                 />
               </View>

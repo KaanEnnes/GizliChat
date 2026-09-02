@@ -1,5 +1,24 @@
 # Değişiklik Günlüğü
 
+## 2026-09-02 — v1.7.3: YouTube "Hata 153" düzeltildi (react-native-youtube-iframe'e baseUrlOverride)
+
+1.7.2'deki `react-native-youtube-iframe` + `useLocalHTML` geçişi cihazda test edilince gerçek,
+spesifik bir hatayla karşılaşıldı: **"Hata 153"** (ekran görüntüsüyle doğrulandı). Sebep:
+`useLocalHTML: true` kullanıldığında kütüphane, YouTube iframe'ini içeren HTML'i WebView'e
+`source={{html: ...}}` olarak veriyor ama **`baseUrlOverride` verilmediği için o sayfanın hiçbir
+kaynağı (origin) olmuyor** — YouTube'un gömme sistemi kaynaksız/boş bir origin'den gelen isteği
+reddedip bu hatayı veriyor. Çözüm: `baseUrlOverride="https://www.youtube.com"` eklendi
+(`SongPickerModal.tsx` ve `MessageBubble.tsx`) — sayfaya üçüncü bir sunucuya bağımlı olmadan
+YouTube'un kendi alan adını taklit eden gerçek bir kaynak veriliyor, gömme artık kabul ediliyor.
+
+**Ders:** Bir önceki (1.7.2) kayıt "gerçekten düzeltildi" diye yazmıştı ama kullanıcı cihazda
+tekrar test edip ekran görüntüsüyle hâlâ hata verdiğini gösterdi — kütüphane değiştirmek tek
+başına yeterli değilmiş, doğru yapılandırma (`baseUrlOverride`) da şart. Bu tür WebView/üçüncü
+parti embed sorunlarında "kütüphane X'e geçtik, sorun çözüldü" demeden önce gerçek cihazda
+görsel doğrulama beklemek gerekiyor.
+
+`tsc` temiz. Mobil: `versionCode 20→21`, `versionName "1.7.2"→"1.7.3"`; APK derlenip yayınlandı.
+
 ## 2026-09-02 — v1.7.2: YouTube oynatma hatası gerçekten düzeltildi + kişi bilgisinden medya galerisi açılabiliyor
 
 Bir önceki kayıttaki User-Agent düzeltmesi (`userAgent="...Chrome..."` WebView'a vermek) YouTube'un
