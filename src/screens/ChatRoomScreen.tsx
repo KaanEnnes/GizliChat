@@ -24,6 +24,7 @@ import ImageGalleryModal from '../components/ImageGalleryModal';
 import AttachMenuModal from '../components/AttachMenuModal';
 import GifPickerModal from '../components/GifPickerModal';
 import SongPickerModal from '../components/SongPickerModal';
+import TypingBubble from '../components/TypingBubble';
 import RecordingWaveform from '../components/RecordingWaveform';
 import Avatar from '../components/Avatar';
 import StorageQuotaBanner from '../components/StorageQuotaBanner';
@@ -426,6 +427,14 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack, initialJumpMessage
     }
     lastMessageIdRef.current = lastMessage.id;
   }, [messages, myUid]);
+
+  useEffect(() => {
+    if (isContactTyping && isNearBottomRef.current) {
+      requestAnimationFrame(() => {
+        listRef.current?.scrollToEnd({ animated: true });
+      });
+    }
+  }, [isContactTyping]);
 
   useEffect(() => {
     if (messages.length > 0) {
@@ -1151,6 +1160,7 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack, initialJumpMessage
               </View>
             ) : undefined
           }
+          ListFooterComponent={isContactTyping ? <TypingBubble /> : undefined}
         />
 
         {newMessagesBelow && (

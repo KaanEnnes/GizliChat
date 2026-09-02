@@ -1,5 +1,26 @@
 # Değişiklik Günlüğü
 
+## 2026-09-02 — Sohbet içinde animasyonlu "yazıyor..." baloncuğu + web-client production'a deploy edildi
+
+Önceki kayıttaki "yazıyor..." göstergesi sadece başlıkta bir metin etiketiydi; kullanıcı bunun
+mesaj listesinin içinde, WhatsApp'taki gibi zıplayan üç noktalı bir baloncuk olmasını istedi.
+Web'de mesaj listesinin sonuna `isContactTyping` true iken `.typing-bubble`/`.typing-dot`
+(CSS `@keyframes typing-bounce`) render ediliyor; mobilde yeni `src/components/TypingBubble.tsx`
+(RN `Animated` ile üç noktayı staggered/gecikmeli döngüyle zıplatıyor) `FlatList`'in
+`ListFooterComponent`'i olarak ekleniyor. İkisinde de gösterge belirdiğinde, kullanıcı zaten
+listenin altına yakınsa (`nearBottomRef`/`isNearBottomRef`) otomatik olarak en alta kaydırılıyor
+— yeni bir mesaj geldiğindeki mevcut auto-scroll mantığıyla aynı desen. `tsc` (her iki platform)
+temiz.
+
+Ayrıca bu görev sırasında web-client ilk kez **production'a deploy edildi**:
+`web-client/firebase.json` zaten `kaanchatmercan` sitesine (proje varsayılan sitesi) `dist`
+klasörünü SPA rewrite'ıyla yayınlayacak şekilde ayarlıydı, sadece `npm run build` + `firebase
+deploy --only hosting` (web-client dizininden) çalıştırıldı. Canlı adres:
+**https://kaanchatmercan.web.app** — kullanıcı buradan hem sesli mesaj düzeltmesini hem yazıyor
+göstergesini hem de şarkı gönderme özelliğini gerçek tarayıcıda test edebilir. Bundan sonra
+web-client'ta yapılan her değişiklik gerçekten "yayında" görünsün isteniyorsa bu iki komutun
+tekrar çalıştırılması gerekiyor — otomatik bir CI/deploy pipeline'ı yok.
+
 ## 2026-09-02 — "Şarkı gönder" (Instagram tarzı klip gönderme) eklendi (mobil + web) — YouTube üzerinden, Spotify değil
 
 Kullanıcı Instagram'daki "arkadaşına şarkının bir kısmını gönder" özelliğinin birebir aynısını

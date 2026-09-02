@@ -192,6 +192,12 @@ function ChatRoomScreen({ account, contact, onBack, initialJumpMessageId }: Prop
   }, [lastMessageId, lastMessageIsMine]);
 
   useEffect(() => {
+    if (isContactTyping && nearBottomRef.current) {
+      listRef.current?.scrollTo({ top: listRef.current.scrollHeight });
+    }
+  }, [isContactTyping]);
+
+  useEffect(() => {
     nearBottomRef.current = true;
     setShowJumpToBottom(false);
   }, [roomId]);
@@ -542,6 +548,15 @@ function ChatRoomScreen({ account, contact, onBack, initialJumpMessageId }: Prop
             onImagePress={setGalleryMessageId}
           />
         ))}
+        {isContactTyping && (
+          <div className="msg-row other">
+            <div className="msg-bubble typing-bubble" style={{ background: theme.bubbleOther }}>
+              <span className="typing-dot" style={{ background: theme.bubbleOtherText }} />
+              <span className="typing-dot" style={{ background: theme.bubbleOtherText }} />
+              <span className="typing-dot" style={{ background: theme.bubbleOtherText }} />
+            </div>
+          </div>
+        )}
       </div>
 
       {showJumpToBottom && (
