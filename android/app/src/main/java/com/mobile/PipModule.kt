@@ -1,7 +1,10 @@
 package com.mobile
 
 import android.app.PictureInPictureParams
+import android.content.Intent
+import android.net.Uri
 import android.os.Build
+import android.provider.Settings
 import android.util.Rational
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
@@ -43,10 +46,45 @@ class PipModule(reactContext: ReactApplicationContext) :
       val params = PictureInPictureParams.Builder()
         .setAspectRatio(Rational(9, 16))
         .build()
+      // enterPictureInPictureMode() sessizce false döner (istisna atmaz) —
+      // OEM'in kısıtlayıcı arayüzünde (ör. Transsion/XOS) kullanıcı bu
+      // uygulama için "Ekran içinde ekran" iznini elle açana kadar bu hep
+      // false dönüyor. openPipSettings() ile o ayar ekranına yönlendiriliyor.
       val entered = activity.enterPictureInPictureMode(params)
       promise.resolve(entered)
     } catch (error: Exception) {
       promise.reject("PIP_FAILED", error.message, error)
+    }
+  }
+
+  @ReactMethod
+  fun openPipSettings(promise: Promise) {
+    val context = reactApplicationContext
+    try {
+      val intent = Intent(
+        "android.settings.PICTURE_IN_PICTURE_SETTINGS",
+        Uri.parse("package:${context.packageName}"),
+      ).apply {
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+      }
+      context.startActivity(intent)
+      promise.resolve(true)
+    } catch (error: Exception) {
+      // Bazı OEM arayüzlerinde bu spesifik ayar ekranı yok — genel uygulama
+      // ayarları sayfasına düşülüyor, kullanıcı oradan "Pil"/"Gelişmiş" gibi
+      // bir menüde bulabilir.
+      try {
+        val fallback = Intent(
+          Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+          Uri.parse("package:${context.packageName}"),
+        ).apply {
+          addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(fallback)
+        promise.resolve(true)
+      } catch (fallbackError: Exception) {
+        promise.reject("SETTINGS_FAILED", fallbackError.message, fallbackError)
+      }
     }
   }
 }

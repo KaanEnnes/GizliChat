@@ -1,5 +1,27 @@
 # Değişiklik Günlüğü
 
+## 2026-09-02 — v1.7.6: "Pencereye ayır" düğmesi çalışmıyordu — PIP izni sessizce reddediliyormuş
+
+Kullanıcı 1.7.5'i gerçek cihazında (Infinix Smart 9, XOS/Android 14) denedi: PIP butonuna
+basınca hiçbir şey olmadı. Emülatörde çalışmıştı çünkü emülatör görüntüsü PIP iznini
+varsayılan açık veriyor; gerçek cihazlardaki birçok OEM arayüzü (özellikle Transsion/XOS gibi
+kısıtlayıcı Android skin'leri) her uygulama için "Ekran içinde ekran" (Picture-in-picture)
+iznini varsayılan KAPALI tutuyor. `Activity.enterPictureInPictureMode()` bu durumda istisna
+ATMIYOR, sessizce `false` dönüyor — önceki sürümde bu sonuç hiç kontrol edilmediği için
+kullanıcı hiçbir geri bildirim almadan buton "çalışmıyormuş" gibi görünüyordu.
+
+**Düzeltme:** `PipModule.kt`'ye `openPipSettings()` eklendi — `enter()`'ın döndürdüğü
+`entered` değeri artık JS tarafında (`pipService.ts`) kontrol ediliyor; `false` gelirse
+kullanıcıya "Küçük pencere izni gerekiyor" diyaloğu gösterilip "Ayarları Aç" ile doğrudan o
+uygulamaya özel PIP ayar ekranına (`android.settings.PICTURE_IN_PICTURE_SETTINGS`, yoksa genel
+uygulama ayarlarına düşülüyor) yönlendiriliyor.
+
+**Ders:** `enterPictureInPictureMode()`'un dönüş değerini kontrol etmeden "PIP başlatıldı"
+varsaymak hataydı — Android'in birçok API'si (bu dahil) izin/kısıtlama durumunda istisna
+atmak yerine sessizce `false`/no-op dönüyor; her zaman dönüş değerine bakılmalı.
+
+Mobil: `versionCode 23→24`, `versionName "1.7.5"→"1.7.6"`; APK derlenip yayınlandı.
+
 ## 2026-09-02 — v1.7.5: Panik kapatma butonu + sohbeti küçük pencereye alma (Picture-in-Picture)
 
 Kullanıcı, birinin fiziksel olarak yaklaşması durumunda sohbetin anında gizlenebilmesini
