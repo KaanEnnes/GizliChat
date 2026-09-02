@@ -1,5 +1,41 @@
 # Değişiklik Günlüğü
 
+## 2026-09-02 — v1.7.5: Panik kapatma butonu + sohbeti küçük pencereye alma (Picture-in-Picture)
+
+Kullanıcı, birinin fiziksel olarak yaklaşması durumunda sohbetin anında gizlenebilmesini
+istedi. İki ayrı mekanizma eklendi (mobil, `src/`):
+
+**1. Panik butonu** (`src/components/EmergencyCloseButton.tsx`) — HOME (sahte oyun menüsü)
+dışındaki her ekranda (`AppNavigator.tsx`) sağ altta duran, sürüklenebilir, kasıtlı olarak
+göze batmayan küçük gri bir nokta. Dokununca `BackHandler.exitApp()` ile uygulamayı komple
+kapatıyor — ekranda hiçbir sohbet izi kalmıyor, bir sonraki açılış zaten sahte oyun
+menüsüyle (`GameHubScreen`) başlıyor. Sürükleme hareketinin bırakma dokunuşu yanlışlıkla
+kapatma saymıyor (`dragged` ref kontrolü).
+
+**2. Küçük pencereye alma (PIP)** — kullanıcı önce "harici pencereli sohbet" (chat balonu/
+bubble) istedi, sonra ekranın kenarında sürekli görünen bir ikon istemediğini belirtti; bu
+yüzden bir balon/ikon yerine Android'in resmi Picture-in-Picture API'si kullanıldı (WhatsApp'ın
+video görüşmelerde kullandığı sistemin aynısı). Sohbet ekranındaki yeni bir header butonuna
+(`PipIcon`, `CallIcons.tsx`) basınca `PipModule.kt` (yeni native modül, `PipPackage.kt` ile
+kaydedildi) `Activity.enterPictureInPictureMode()` çağırıyor — OS'in kendi küçük yüzer
+penceresi ve kendi kapatma/genişletme kontrolleri (⚙ ve ✕) devreye giriyor, bizim ekstra bir
+UI kodu yazmamıza gerek kalmıyor. `AndroidManifest.xml`'de MainActivity'ye
+`android:supportsPictureInPicture="true"` eklendi (config-changes zaten uygundu).
+
+Emülatörde uçtan uca doğrulandı: sohbet açıkken PIP butonuna basınca ekran gerçekten küçük
+bir pencereye küçüldü ve arka plandaki başka bir uygulamanın (Chrome) üzerinde durdu;
+pencereye dokununca Android'in kendi ⚙/✕ kontrolleri belirdi (emülatörün PIP-overlay
+dokunma hassasiyeti gerçek cihazdan daha kaba olduğu için X'e isabet ettirmek zor oldu, ama
+kontrollerin doğru şekilde tetiklendiği görüldü — bu OS'in kendi davranışı, kod tarafında
+ekstra bir şey gerekmiyor).
+
+**Ders:** İlk PIP butonu ikonu emoji (🗗) olarak eklenmişti ama emülatör cihazında kutu (□)
+olarak render oldu — emoji glyph desteği cihazdan cihaza değişiyor, header ikonları için
+projede zaten kurulu olan SVG icon pattern'i (`CallIcons.tsx`) kullanılmalıydı; `PipIcon`
+olarak aynı stile taşındı.
+
+Mobil: `versionCode 22→23`, `versionName "1.7.4"→"1.7.5"`; APK derlenip yayınlandı.
+
 ## 2026-09-02 — v1.7.4: YouTube "Hata 152/153" asıl kök sebebi bulunup düzeltildi (baseUrlOverride youtube.com OLMAMALI)
 
 1.7.3'teki `baseUrlOverride="https://www.youtube.com"` düzeltmesi **yanlış yöndeymiş** — kullanıcı

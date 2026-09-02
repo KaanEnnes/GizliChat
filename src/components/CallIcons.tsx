@@ -72,6 +72,24 @@ export function GameControllerIcon({ color, size = 20 }: Props): React.JSX.Eleme
   );
 }
 
+/** Small picture-in-picture icon used on the "küçük pencereye al" header button. */
+export function PipIcon({ color, size = 18 }: Props): React.JSX.Element {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Path
+        d="M4 5.5A1.5 1.5 0 0 1 5.5 4h13A1.5 1.5 0 0 1 20 5.5v13a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 18.5v-13Z"
+        stroke={color}
+        strokeWidth={1.8}
+        strokeLinejoin="round"
+      />
+      <Path
+        d="M12.5 12.5h6a1 1 0 0 1 1 1v4a1 1 0 0 1-1 1h-6a1 1 0 0 1-1-1v-4a1 1 0 0 1 1-1Z"
+        fill={color}
+      />
+    </Svg>
+  );
+}
+
 /** Small image icon used on the "chat background" option (options menu). */
 export function ImageIcon({ color, size = 18 }: Props): React.JSX.Element {
   return (

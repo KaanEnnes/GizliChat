@@ -6,6 +6,7 @@ import ContactsScreen from '../screens/ContactsScreen';
 import ChatRoomScreen from '../screens/ChatRoomScreen';
 import CallProvider from '../components/CallProvider';
 import NotificationCenter from '../components/NotificationCenter';
+import EmergencyCloseButton from '../components/EmergencyCloseButton';
 import { Contact } from '../services/contactService';
 import { Account, logoutAccount, updatePresenceHeartbeat } from '../services/userService';
 import { initFcm } from '../services/fcmService';
@@ -134,6 +135,7 @@ function AppNavigator(): React.JSX.Element {
           activeContactUid={screen === 'CHAT_ROOM' ? activeContact?.uid ?? null : null}
           onOpenRoom={openRoom}>
           {content}
+          {screen !== 'HOME' && <EmergencyCloseButton />}
         </NotificationCenter>
       </CallProvider>
     );

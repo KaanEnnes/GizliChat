@@ -32,7 +32,7 @@ import StorageQuotaBanner from '../components/StorageQuotaBanner';
 import { ADMIN_UID } from '../config/adminConfig';
 import OnlineTicTacToeModal from '../components/OnlineTicTacToeModal';
 import ChessContactModal from '../components/ChessContactModal';
-import { BackChevronIcon, GameControllerIcon, ImageIcon, PhoneCallIcon, VideoCallIcon } from '../components/CallIcons';
+import { BackChevronIcon, GameControllerIcon, ImageIcon, PhoneCallIcon, PipIcon, VideoCallIcon } from '../components/CallIcons';
 import { subscribeToGame, TicTacToeGame } from '../services/ticTacToeService';
 import { ChessGame, subscribeToContactChessGame } from '../services/chessService';
 import { Contact } from '../services/contactService';
@@ -67,6 +67,7 @@ import { requestMicrophonePermission } from '../services/permissionsService';
 import { markRoomRead } from '../services/readStatusService';
 import { addVideoBytesUsed, subscribeToUserProfile } from '../services/userService';
 import { getChatBackground, setChatBackground } from '../services/chatBackgroundService';
+import { enterPipMode } from '../services/pipService';
 import { useTheme } from '../theme/ThemeContext';
 import { useNetworkStatus } from '../hooks/useNetworkStatus';
 
@@ -966,6 +967,16 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack, initialJumpMessage
           accessibilityRole="button"
           accessibilityLabel="Sohbette ara">
           <Text style={styles.headerIconText}>🔍</Text>
+        </Pressable>
+        <Pressable
+          onPress={() => {
+            enterPipMode();
+          }}
+          hitSlop={8}
+          style={styles.headerIconButton}
+          accessibilityRole="button"
+          accessibilityLabel="Küçük pencereye al">
+          <PipIcon color={theme.textMuted} />
         </Pressable>
         <Pressable
           onPress={handleChangeBackground}

@@ -83,8 +83,8 @@ android {
         applicationId "com.mobile"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 22
-        versionName "1.7.4"
+        versionCode 23
+        versionName "1.7.5"
     }
     compileOptions {
         // Stream Video'nun WebRTC modülü Java 8 kaynak uyumluluğu ister.
