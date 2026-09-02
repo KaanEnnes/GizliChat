@@ -1,5 +1,36 @@
 # Değişiklik Günlüğü
 
+## 2026-09-02 — v1.7.1: YouTube oynatma hatası + kişi bilgisi medya sayısı hatası düzeltildi
+
+İki gerçek kullanıcı raporu üzerine:
+
+1. **"Şarkı gönder" özelliğinde YouTube "Yapılandırma hatası" veriyordu** (hem önizlemede hem
+   gönderildikten sonra oynatmaya çalışırken, mobilde). Sebep: Android'in sistem WebView'i,
+   Chrome'un in-app WebView'lara eklediği `"; wv)"` işaretini User-Agent string'inde taşıyor;
+   YouTube'un gömülü oynatıcısı bunu görünce (DRM/politika gereği, bilerek) oynatmayı reddediyor
+   — API anahtarı/Cloud Function tarafıyla hiç ilgisi yok, sadece oynatma isteğinin WebView'dan
+   geldiğini tespit edip engelliyor. Çözüm: `SongPickerModal.tsx` ve `MessageBubble.tsx`'teki her
+   iki `WebView`'a normal bir Chrome-for-Android User-Agent string'i (`"wv"` içermeyen) veren
+   `userAgent` prop'u eklendi — standart, bilinen bir workaround.
+2. **Kişi bilgisi ekranındaki "Medya, bağlantı ve belgeler" her zaman 0 gösteriyordu.** Sebep:
+   `mediaCount`, `ChatRoomScreen`'in o an yüklü (sayfalanmış, genelde son ~20-30 mesaj) `messages`
+   state'inden sayılıyordu — galerideki eski aynı bug (bkz. bir önceki kayıt), oraya uygulanan
+   `fetchAllMedia` düzeltmesi bu ekrana hiç taşınmamıştı. Düzeltme: `ContactInfoScreen` artık
+   `mediaCount`'u prop olarak almıyor, kendi açıldığında `fetchAllMedia(roomId)` ile odanın **tüm**
+   geçmişini kendisi çekip sayıyor (hem mobil hem web).
+
+`tsc` (her iki platform) temiz. Web tekrar deploy edildi. Mobilde `versionCode 18→19`,
+`versionName "1.7.0"→"1.7.1"`; APK derlenip `gizlichat-android-updates` hosting'ine yüklendi,
+`app_config/android` güncellendi (`scripts/publishAndroidUpdate.js`). Bu turda telefon USB/kablosuz
+bağlı olmadığı için `adb install` ile yerel kurulum yapılmadı — cihazlar uygulama içi güncelleme
+banner'ından alacak.
+
+Ayrıca bu oturumda ayrı bir kullanıcı raporu: bir arkadaşı v1.7.0'ı kurmaya çalışırken "paket
+ayrıştırmasında sorun oldu" hatası aldı. Sunucudaki dosya `curl -I` ile doğrulandı (boyut/`Content-
+Type` doğru, 2026-09-01'deki "yanlış apkUrl" hatasının aynısı değil) — bu kez muhtemel sebep
+karşı tarafın cihazında indirmenin yarım/bozuk tamamlanması; kod tarafında yapılacak bir şey
+bulunamadı, kullanıcıya yarım dosyayı silip iyi bağlantıyla tekrar indirmesi söylendi.
+
 ## 2026-09-02 — APK 1.7.0 derlenip telefona kuruldu ve güncelleme yayınlandı
 
 Bu oturumdaki tüm mobil değişiklikleri (yazıyor göstergesi, şarkı gönderme, kişi bilgisi ekranı,

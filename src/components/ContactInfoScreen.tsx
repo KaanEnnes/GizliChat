@@ -3,7 +3,7 @@ import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, View } from 'rea
 import { useTheme } from '../theme/ThemeContext';
 import Avatar from './Avatar';
 import { replyPreviewLabel } from './MessageBubble';
-import { fetchStarredMessages, type ChatMessage } from '../services/chatService';
+import { fetchAllMedia, fetchStarredMessages, type ChatMessage } from '../services/chatService';
 import { fetchAccountUsername, ONLINE_THRESHOLD_MS, subscribeToPresence } from '../services/userService';
 import { Contact } from '../services/contactService';
 
@@ -13,8 +13,6 @@ interface Props {
   contactPhotoUrl?: string;
   myUid: string;
   roomId: string;
-  /** Count of image/video/audio/file messages currently loaded in the room — not the room's full history, same limitation as the existing gallery. */
-  mediaCount: number;
   onClose: () => void;
   onOpenSearch: () => void;
   onStartVoiceCall: () => void;
@@ -34,7 +32,6 @@ function ContactInfoScreen({
   contactPhotoUrl,
   myUid,
   roomId,
-  mediaCount,
   onClose,
   onOpenSearch,
   onStartVoiceCall,
@@ -47,6 +44,7 @@ function ContactInfoScreen({
   const [username, setUsername] = useState<string | null>(null);
   const [starred, setStarred] = useState<ChatMessage[] | null>(null);
   const [starredError, setStarredError] = useState<string | null>(null);
+  const [mediaCount, setMediaCount] = useState<number | null>(null);
 
   useEffect(() => {
     if (!visible) {
@@ -54,6 +52,20 @@ function ContactInfoScreen({
     }
     return subscribeToPresence(contact.uid, setLastActiveAt);
   }, [visible, contact.uid]);
+
+  // Counts the room's ENTIRE media history, not just whatever page of
+  // messages happens to be loaded in the open chat — that was the previous
+  // bug here (see fetchAllMedia's doc comment): a room with older photos
+  // outside the currently-loaded window showed "0" even when media existed.
+  useEffect(() => {
+    if (!visible) {
+      return;
+    }
+    setMediaCount(null);
+    fetchAllMedia(roomId)
+      .then(list => setMediaCount(list.length))
+      .catch(() => setMediaCount(0));
+  }, [visible, roomId]);
 
   useEffect(() => {
     if (!visible) {
@@ -141,7 +153,7 @@ function ContactInfoScreen({
             <View style={[styles.listSection, { borderTopColor: theme.border }]}>
               <View style={styles.listRow}>
                 <Text style={[styles.listRowText, { color: theme.text }]}>📎 Medya, bağlantı ve belgeler</Text>
-                <Text style={[styles.listRowValue, { color: theme.textMuted }]}>{mediaCount}</Text>
+                <Text style={[styles.listRowValue, { color: theme.textMuted }]}>{mediaCount ?? '…'}</Text>
               </View>
               <Pressable style={styles.listRow} onPress={() => setView('starred')}>
                 <Text style={[styles.listRowText, { color: theme.text }]}>⭐ Yıldızlı mesajlar</Text>

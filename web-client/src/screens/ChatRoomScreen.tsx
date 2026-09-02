@@ -392,11 +392,6 @@ function ChatRoomScreen({ account, contact, onBack, initialJumpMessageId }: Prop
     [galleryFullMedia, messages],
   );
 
-  const mediaCount = useMemo(
-    () => messages.filter(m => (m.type === 'image' || m.type === 'video' || m.type === 'file') && m.mediaUrl).length,
-    [messages],
-  );
-
   const handleJumpToMessage = (messageId: string) => {
     setHighlightedMessageId(messageId);
     requestAnimationFrame(() => handleJumpToReply(messageId));
@@ -536,7 +531,6 @@ function ChatRoomScreen({ account, contact, onBack, initialJumpMessageId }: Prop
           contactPhotoUrl={contactPhotoUrl}
           myUid={account.uid}
           roomId={roomId}
-          mediaCount={mediaCount}
           onClose={() => setContactInfoOpen(false)}
           onOpenSearch={() => {
             setContactInfoOpen(false);

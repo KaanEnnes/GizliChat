@@ -636,11 +636,6 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack, initialJumpMessage
     return galleryFullMedia ?? messages.filter(m => (m.type === 'image' || m.type === 'video') && m.mediaUrl && !m.hidden);
   }, [galleryMessageId, messages, galleryFullMedia]);
 
-  const mediaCount = useMemo(
-    () => messages.filter(m => (m.type === 'image' || m.type === 'video' || m.type === 'file') && m.mediaUrl).length,
-    [messages],
-  );
-
   const handlePickFile = useCallback(async () => {
     let picked;
     try {
@@ -1131,7 +1126,6 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack, initialJumpMessage
         contactPhotoUrl={contactPhotoUrl}
         myUid={myUid}
         roomId={roomId}
-        mediaCount={mediaCount}
         onClose={() => setContactInfoVisible(false)}
         onOpenSearch={() => setSearchOpen(true)}
         onStartVoiceCall={() => {

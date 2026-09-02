@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useTheme } from '../theme/ThemeContext';
 import Avatar from './Avatar';
 import { replyPreviewLabel } from './MessageBubble';
-import { fetchStarredMessages, type ChatMessage } from '../services/chatService';
+import { fetchAllMedia, fetchStarredMessages, type ChatMessage } from '../services/chatService';
 import { fetchAccountUsername, ONLINE_THRESHOLD_MS, subscribeToPresence } from '../services/userService';
 import type { Contact } from '../services/contactService';
 
@@ -11,8 +11,6 @@ interface Props {
   contactPhotoUrl?: string;
   myUid: string;
   roomId: string;
-  /** Count of image/video/file messages currently loaded in the room (see ChatRoomScreen's `messages`) — not the room's full history, same limitation as the existing gallery. */
-  mediaCount: number;
   onClose: () => void;
   onOpenSearch: () => void;
   onJumpToMessage: (messageId: string) => void;
@@ -24,18 +22,29 @@ function formatTime(timestamp: number): string {
 }
 
 /** WhatsApp-style "kişi bilgisi" screen — opened by tapping the contact's name/avatar in the chat header. No phone number exists in this app's data model (username/password auth, not phone-based), so the username stands in for it. */
-function ContactInfoScreen({ contact, contactPhotoUrl, myUid, roomId, mediaCount, onClose, onOpenSearch, onJumpToMessage }: Props): React.JSX.Element {
+function ContactInfoScreen({ contact, contactPhotoUrl, myUid, roomId, onClose, onOpenSearch, onJumpToMessage }: Props): React.JSX.Element {
   const { theme } = useTheme();
   const [view, setView] = useState<'info' | 'starred'>('info');
   const [lastActiveAt, setLastActiveAt] = useState<number | null>(null);
   const [username, setUsername] = useState<string | null>(null);
   const [starred, setStarred] = useState<ChatMessage[] | null>(null);
   const [starredError, setStarredError] = useState<string | null>(null);
+  const [mediaCount, setMediaCount] = useState<number | null>(null);
 
   useEffect(() => subscribeToPresence(contact.uid, setLastActiveAt), [contact.uid]);
   useEffect(() => {
     fetchAccountUsername(contact.uid).then(setUsername).catch(() => undefined);
   }, [contact.uid]);
+
+  // Counts the room's ENTIRE media history, not just whatever page of
+  // messages happens to be loaded in the open chat — that was the previous
+  // bug here (see fetchAllMedia's doc comment): a room with older photos
+  // outside the currently-loaded window showed "0" even when media existed.
+  useEffect(() => {
+    fetchAllMedia(roomId)
+      .then(list => setMediaCount(list.length))
+      .catch(() => setMediaCount(0));
+  }, [roomId]);
 
   useEffect(() => {
     if (view !== 'starred' || starred !== null) {
@@ -85,7 +94,7 @@ function ContactInfoScreen({ contact, contactPhotoUrl, myUid, roomId, mediaCount
             <div style={{ borderTop: `1px solid ${theme.border}`, marginTop: 8 }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 4px' }}>
                 <span style={{ fontSize: 14, color: theme.text }}>📎 Medya, bağlantı ve belgeler</span>
-                <span style={{ fontSize: 13.5, color: theme.textMuted }}>{mediaCount}</span>
+                <span style={{ fontSize: 13.5, color: theme.textMuted }}>{mediaCount ?? '…'}</span>
               </div>
               <div
                 style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 4px', cursor: 'pointer' }}

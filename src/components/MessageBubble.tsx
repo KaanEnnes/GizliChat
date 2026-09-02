@@ -498,6 +498,11 @@ function MessageBubble({
                 }}
                 allowsInlineMediaPlayback
                 mediaPlaybackRequiresUserAction={false}
+                // Same fix as SongPickerModal.tsx: without a non-WebView user
+                // agent, YouTube's embed detects the "; wv)" marker Chrome adds
+                // for in-app WebViews and refuses playback with "Yapılandırma
+                // hatası" (config error) — a deliberate policy block, not a bug.
+                userAgent="Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
               />
             </View>
           ) : (
