@@ -1,5 +1,24 @@
 # Değişiklik Günlüğü
 
+## 2026-09-02 — APK 1.7.0 derlenip telefona kuruldu ve güncelleme yayınlandı
+
+Bu oturumdaki tüm mobil değişiklikleri (yazıyor göstergesi, şarkı gönderme, kişi bilgisi ekranı,
+yıldızlı mesajlar, tüm geçmişte arama/galeri) içeren bir release APK derlendi —
+`versionCode 17→18`, `versionName "1.6.1"→"1.7.0"` (`android/app/build.gradle`). Bu, projeye ilk
+kez eklenen bir native bağımlılığın (`react-native-webview`, şarkı klip oynatıcısı için) ilk
+gerçek cihaz derlemesiydi; `gradlew assembleRelease --no-daemon` temiz derledi, autolinking'in
+elle bir müdahaleye ihtiyacı olmadı. `adb install -r` ile telefona kuruldu (USB hata ayıklama
+açıkken).
+
+**Güncelleme dağıtımı** [[05-Build-Deployment]]'taki akışla yapıldı: APK `public/app-release-1.7.0.apk`
+olarak kopyalanıp proje kökünden `firebase deploy --only hosting` ile **`gizlichat-android-updates`**
+sitesine yüklendi (kök `firebase.json`'ın hedefi — `web-client`'ın kendi `firebase.json`'ından
+farklı bir site, karıştırılmamalı, bkz. 2026-09-01 kaydındaki "yanlış apkUrl" hatası tam da bu
+ikisinin karıştırılmasından kaynaklanmıştı). URL çalıştığı `curl` ile doğrulandıktan SONRA
+`node scripts/publishAndroidUpdate.js 18 1.7.0 <url> <notes>` çalıştırılıp `app_config/android`
+Firestore dokümanı (Admin SDK ile, `firestore.rules`'ın `allow write: if false` kısıtlamasını
+bypass ederek) güncellendi — artık eski cihazlardaki güncelleme banner'ı bu sürümü gösteriyor.
+
 ## 2026-09-02 — Sohbet içi arama ve galeri artık tüm mesaj geçmişini tarıyor (mobil + web)
 
 Todo list'in kalan iki maddesi tamamlandı — ikisi de aynı kök nedenden kaynaklanan bir
