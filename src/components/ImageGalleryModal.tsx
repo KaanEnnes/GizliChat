@@ -1,5 +1,6 @@
 import React, { useCallback, useRef, useState } from 'react';
 import { FlatList, Image, Modal, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import Video from 'react-native-video';
 import type { ChatMessage } from '../services/chatService';
 import { BackChevronIcon } from './CallIcons';
 
@@ -11,10 +12,10 @@ interface Props {
 }
 
 /**
- * Full-screen swipeable viewer for a room's image messages (WhatsApp-style):
- * opens on the tapped photo and lets the user page left/right through every
- * other image in the same list (`images`, passed in chronological order),
- * both older and newer than the one that was tapped.
+ * Full-screen swipeable viewer for a room's image AND video messages
+ * (WhatsApp-style): opens on the tapped item and lets the user page
+ * left/right through every other item in the same list (`images`, passed in
+ * chronological order), both older and newer than the one that was tapped.
  */
 export default function ImageGalleryModal({ images, initialMessageId, onClose }: Props): React.JSX.Element | null {
   const { width, height } = useWindowDimensions();
@@ -61,9 +62,19 @@ export default function ImageGalleryModal({ images, initialMessageId, onClose }:
           initialScrollIndex={initialIndex}
           getItemLayout={(_, i) => ({ length: width, offset: width * i, index: i })}
           onMomentumScrollEnd={handleMomentumScrollEnd}
-          renderItem={({ item }) => (
+          renderItem={({ item, index: itemIndex }) => (
             <View style={[styles.page, { width, height }]}>
-              <Image source={{ uri: item.mediaUrl }} style={styles.image} resizeMode="contain" />
+              {item.type === 'video' ? (
+                <Video
+                  source={{ uri: item.mediaUrl }}
+                  style={styles.image}
+                  resizeMode="contain"
+                  controls
+                  paused={itemIndex !== index}
+                />
+              ) : (
+                <Image source={{ uri: item.mediaUrl }} style={styles.image} resizeMode="contain" />
+              )}
             </View>
           )}
         />

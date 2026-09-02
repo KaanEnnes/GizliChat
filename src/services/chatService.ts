@@ -259,10 +259,10 @@ export async function toggleStarMessage(roomId: string, messageId: string, uid: 
   await updateDoc(messageRef, { [`starredBy.${uid}`]: starred ? true : deleteField() });
 }
 
-/** One-off (non-live) fetch of every message `uid` has starred in this room — same "re-query up to MAX_MESSAGE_LIMIT, filter client-side" approach as the in-chat search (no Firestore full-text/nested-map index set up for this). */
+/** One-off (non-live) fetch of every message `uid` has ever starred in this room — re-queries the whole room and filters client-side (no Firestore nested-map index set up for this), same approach as searchMessagesInRoom now that its old MAX_MESSAGE_LIMIT cap is gone. */
 export async function fetchStarredMessages(roomId: string, uid: string): Promise<ChatMessage[]> {
   const snapshot = await getDocs(
-    query(collection(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION), orderBy('createdAt', 'desc'), limit(MAX_MESSAGE_LIMIT)),
+    query(collection(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION), orderBy('createdAt', 'desc')),
   );
   return snapshot.docs.map(d => docToMessage(d)).filter(message => !message.deleted && message.starredBy?.[uid] === true);
 }
@@ -484,6 +484,16 @@ export function subscribeToTypingTimestamp(roomId: string, otherUid: string, onT
   );
 }
 
+/** Every non-hidden image/video message in a room's ENTIRE history, chronological order, for the "browse all media" gallery — previously this only searched whatever page of history happened to already be loaded into the open chat's `messages` state, so an older photo the user hadn't scrolled up to yet silently never showed up in the gallery. "Gizli" (hidden) media is excluded here the same way it always was from the multi-item gallery (see ChatRoomScreen's old galleryImages memo) — tapping a hidden item directly still shows it alone, that special case lives in ChatRoomScreen, not here. */
+export async function fetchAllMedia(roomId: string): Promise<ChatMessage[]> {
+  const snapshot = await getDocs(
+    query(collection(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION), orderBy('createdAt', 'asc')),
+  );
+  return snapshot.docs
+    .map(d => docToMessage(d))
+    .filter(message => !message.deleted && !message.hidden && (message.type === 'image' || message.type === 'video') && message.mediaUrl);
+}
+
 /** One-off lookup used when the pinned message has scrolled out of the currently-loaded page — falls back to fetching just that doc instead of widening the whole live query. */
 export async function fetchMessageById(roomId: string, messageId: string, myUid: string): Promise<ChatMessage | null> {
   const snap = await getDoc(doc(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION, messageId));
@@ -494,12 +504,17 @@ export async function fetchMessageById(roomId: string, messageId: string, myUid:
 }
 
 /**
- * One-off (non-live) text search over a room's message history, newest-first
- * — used by both in-chat search and the cross-contact global search, neither
- * of which need a live subscription. Firestore has no full-text search, so
- * this pulls up to `MAX_MESSAGE_LIMIT` messages and does a plain
- * case-insensitive substring match client-side; deleted messages are
- * excluded, same as subscribeToMessages.
+ * One-off (non-live) text search over a room's ENTIRE message history,
+ * newest-first — used by both in-chat search and the cross-contact global
+ * search, neither of which need a live subscription. Firestore has no
+ * full-text search, so this fetches every message doc in the room and does a
+ * plain case-insensitive substring match client-side; deleted messages are
+ * excluded, same as subscribeToMessages. No `limit()` here — this used to be
+ * capped at `MAX_MESSAGE_LIMIT`, which meant anything older silently never
+ * matched a search, which was the actual bug being fixed. Fine for this
+ * app's per-room volume (a single 1-1 conversation between two people);
+ * would need real pagination/an external search index if that stopped being
+ * true.
  */
 export async function searchMessagesInRoom(
   roomId: string,
@@ -511,11 +526,7 @@ export async function searchMessagesInRoom(
     return [];
   }
   const snapshot = await getDocs(
-    query(
-      collection(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION),
-      orderBy('createdAt', 'desc'),
-      limit(MAX_MESSAGE_LIMIT),
-    ),
+    query(collection(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION), orderBy('createdAt', 'desc')),
   );
   return snapshot.docs
     .map(d => docToMessage(d))

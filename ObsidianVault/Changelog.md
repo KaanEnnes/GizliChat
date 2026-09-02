@@ -1,5 +1,29 @@
 # Değişiklik Günlüğü
 
+## 2026-09-02 — Sohbet içi arama ve galeri artık tüm mesaj geçmişini tarıyor (mobil + web)
+
+Todo list'in kalan iki maddesi tamamlandı — ikisi de aynı kök nedenden kaynaklanan bir
+sınırlamayı gideriyordu: `searchMessagesInRoom` ve galeri, odanın **tüm** geçmişini değil sadece
+o an yüklü/son `MAX_MESSAGE_LIMIT` (300) mesajı tarıyordu, bu yüzden eski bir mesaj/görsel
+aramada veya galeri de hiç çıkmıyordu.
+
+- **Arama:** `chatService.ts`'teki (her iki platform) `searchMessagesInRoom` ve
+  `fetchStarredMessages` sorgularından `limit(MAX_MESSAGE_LIMIT)` kaldırıldı — artık odanın
+  Firestore'daki tüm mesaj geçmişini çekip client-side filtreliyor. Bu uygulamanın gerçek
+  kullanım hacmi (iki kişilik tek bir sohbet) için sorun değil; çok daha büyük bir hacimde
+  gerçek sayfalama/harici bir arama indeksine ihtiyaç duyar.
+- **Galeri:** Yeni `fetchAllMedia(roomId)` fonksiyonu (her iki platform) odanın tüm geçmişindeki
+  görsel VE video mesajlarını (silinmemiş, mobilde ayrıca "gizli" olmayan) kronolojik sırayla
+  çekiyor. `ImageGalleryModal` artık videoları da oynatabiliyor (web: `<video controls>`, mobil:
+  `react-native-video`, o an görüntülenen sayfa dışındakiler `paused`). Mobilde video mesajına
+  dokunmak artık (tıpkı fotoğraf gibi) bu paylaşılan galeriyi açıyor — önceden kendi başına ayrı,
+  tekil bir video görüntüleyici açıyordu. Galeri açılırken tam liste Firestore'dan çekilene kadar
+  kısa bir süre hâlâ o an yüklü mesajlardan türetilen eski (sınırlı) liste gösteriliyor, boş
+  ekranla açılmasın diye.
+
+`tsc` (her iki platform) temiz, web-client tekrar build edilip **https://kaanchatmercan.web.app**'e
+deploy edildi. Bu maddeyle todo list'teki 6 madde de tamamlandı.
+
 ## 2026-09-02 — "Kişi bilgisi" ekranı + gerçek "yıldızlı mesajlar" özelliği eklendi (mobil + web)
 
 Sohbet başlığındaki isme/avatara dokununca artık WhatsApp'taki gibi bir "Kişi bilgisi" ekranı

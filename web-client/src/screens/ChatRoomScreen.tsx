@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   deleteMessage,
   editMessage,
+  fetchAllMedia,
   fetchMessageById,
   getRoomId,
   INITIAL_MESSAGE_LIMIT,
@@ -367,9 +368,28 @@ function ChatRoomScreen({ account, contact, onBack, initialJumpMessageId }: Prop
     document.getElementById(`msg-${messageId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   };
 
+  const [galleryFullMedia, setGalleryFullMedia] = useState<ChatMessage[] | null>(null);
+
+  useEffect(() => {
+    if (!galleryMessageId) {
+      setGalleryFullMedia(null);
+      return;
+    }
+    let cancelled = false;
+    fetchAllMedia(roomId).then(list => {
+      if (!cancelled) setGalleryFullMedia(list);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [galleryMessageId, roomId]);
+
+  // While the full-history fetch above is still in flight, fall back to
+  // whatever's already loaded in `messages` so the gallery doesn't open on
+  // an empty screen — replaced by the complete list the moment it resolves.
   const galleryImages = useMemo(
-    () => messages.filter(m => m.type === 'image' && m.mediaUrl),
-    [messages],
+    () => galleryFullMedia ?? messages.filter(m => (m.type === 'image' || m.type === 'video') && m.mediaUrl),
+    [galleryFullMedia, messages],
   );
 
   const mediaCount = useMemo(

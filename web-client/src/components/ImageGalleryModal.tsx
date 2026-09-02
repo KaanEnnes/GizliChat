@@ -8,10 +8,10 @@ interface Props {
 }
 
 /**
- * Full-screen swipeable/arrow-navigable viewer for a room's image messages
- * (WhatsApp-style): opens on the clicked photo and lets the user page through
- * every other image in `images` (chronological order), both older and newer
- * than the one that was clicked.
+ * Full-screen swipeable/arrow-navigable viewer for a room's image AND video
+ * messages (WhatsApp-style): opens on the clicked item and lets the user page
+ * through every other item in `images` (chronological order), both older and
+ * newer than the one that was clicked.
  */
 export default function ImageGalleryModal({ images, initialMessageId, onClose }: Props): React.JSX.Element | null {
   const [index, setIndex] = useState(() => Math.max(0, images.findIndex(m => m.id === initialMessageId)));
@@ -57,7 +57,11 @@ export default function ImageGalleryModal({ images, initialMessageId, onClose }:
         </button>
       )}
 
-      <img src={current.mediaUrl} className="gallery-image" alt="" onClick={e => e.stopPropagation()} />
+      {current.type === 'video' ? (
+        <video src={current.mediaUrl} className="gallery-image" controls autoPlay onClick={e => e.stopPropagation()} />
+      ) : (
+        <img src={current.mediaUrl} className="gallery-image" alt="" onClick={e => e.stopPropagation()} />
+      )}
 
       {images.length > 1 && index < images.length - 1 && (
         <button

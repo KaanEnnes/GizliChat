@@ -185,10 +185,10 @@ export async function toggleStarMessage(roomId: string, messageId: string, uid: 
   await updateDoc(messageRef, { [`starredBy.${uid}`]: starred ? true : deleteField() });
 }
 
-/** One-off (non-live) fetch of every message `uid` has starred in this room — same "re-query up to MAX_MESSAGE_LIMIT, filter client-side" approach as searchMessagesInRoom (no Firestore full-text/nested-map index set up for this). */
+/** One-off (non-live) fetch of every message `uid` has ever starred in this room — re-queries the whole room and filters client-side (no Firestore nested-map index set up for this), same approach as searchMessagesInRoom now that its old MAX_MESSAGE_LIMIT cap is gone. */
 export async function fetchStarredMessages(roomId: string, uid: string): Promise<ChatMessage[]> {
   const snapshot = await getDocs(
-    query(collection(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION), orderBy('createdAt', 'desc'), limit(MAX_MESSAGE_LIMIT)),
+    query(collection(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION), orderBy('createdAt', 'desc')),
   );
   return snapshot.docs.map(d => docToMessage(d)).filter(message => !message.deleted && message.starredBy?.[uid] === true);
 }
@@ -344,6 +344,16 @@ export function subscribeToTypingTimestamp(roomId: string, otherUid: string, onT
   );
 }
 
+/** Every image/video message in a room's ENTIRE history, chronological order, for the "browse all media" gallery — previously this only searched whatever page of history happened to already be loaded into the open chat's `messages` state, so an older photo the user hadn't scrolled up to yet silently never showed up in the gallery. Re-queries the whole room, same "no limit, filter client-side" tradeoff as searchMessagesInRoom. */
+export async function fetchAllMedia(roomId: string): Promise<ChatMessage[]> {
+  const snapshot = await getDocs(
+    query(collection(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION), orderBy('createdAt', 'asc')),
+  );
+  return snapshot.docs
+    .map(d => docToMessage(d))
+    .filter(message => !message.deleted && (message.type === 'image' || message.type === 'video') && message.mediaUrl);
+}
+
 export async function fetchMessageById(roomId: string, messageId: string, myUid: string): Promise<ChatMessage | null> {
   const snap = await getDoc(doc(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION, messageId));
   if (!snap.exists()) {
@@ -352,14 +362,14 @@ export async function fetchMessageById(roomId: string, messageId: string, myUid:
   return docToMessage(snap);
 }
 
-/** One-off (non-live) text search over a room's message history — see the mobile chatService.ts for the full rationale (no Firestore full-text search, client-side substring match over up to MAX_MESSAGE_LIMIT messages, deleted messages excluded). Used by both in-chat search and cross-contact global search. */
+/** One-off (non-live) text search over a room's ENTIRE message history — see the mobile chatService.ts for the full rationale (no Firestore full-text search, so this fetches every message doc in the room and does a client-side substring match, deleted messages excluded). No `limit()`: a cap here would silently miss anything older than it, which is exactly the bug this replaced (previously capped at MAX_MESSAGE_LIMIT). Fine for this app's per-room volume (a single 1-1 conversation between two people); would need real pagination/an external search index if that stopped being true. Used by both in-chat search and cross-contact global search. */
 export async function searchMessagesInRoom(roomId: string, myUid: string, queryText: string): Promise<ChatMessage[]> {
   const needle = queryText.trim().toLowerCase();
   if (!needle) {
     return [];
   }
   const snapshot = await getDocs(
-    query(collection(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION), orderBy('createdAt', 'desc'), limit(MAX_MESSAGE_LIMIT)),
+    query(collection(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION), orderBy('createdAt', 'desc')),
   );
   return snapshot.docs
     .map(d => docToMessage(d))

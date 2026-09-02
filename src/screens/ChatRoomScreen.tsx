@@ -40,6 +40,7 @@ import {
   ChatMessage,
   deleteMessage,
   editMessage,
+  fetchAllMedia,
   fetchMessageById,
   getRoomId,
   INITIAL_MESSAGE_LIMIT,
@@ -596,23 +597,44 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack, initialJumpMessage
     setGalleryMessageId(messageId);
   }, []);
 
+  const [galleryFullMedia, setGalleryFullMedia] = useState<ChatMessage[] | null>(null);
+
+  useEffect(() => {
+    if (!galleryMessageId) {
+      setGalleryFullMedia(null);
+      return;
+    }
+    let cancelled = false;
+    fetchAllMedia(roomId).then(list => {
+      if (!cancelled) {
+        setGalleryFullMedia(list);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [galleryMessageId, roomId]);
+
   // Hidden ("gizli") photos are excluded from the shared swipe-through gallery — each one
   // must still be revealed individually on its own bubble before it can be viewed at all, so
   // letting the gallery page past a still-hidden photo would leak its content. If the tapped
   // photo is itself hidden (i.e. the user just revealed it), it's shown alone with no swiping.
+  // The full list otherwise comes from fetchAllMedia (the room's entire history, images AND
+  // videos), falling back to whatever's already loaded in `messages` while that fetch is in
+  // flight so the gallery doesn't open on an empty screen.
   const galleryImages = useMemo(() => {
     if (!galleryMessageId) {
       return [];
     }
-    const tapped = messages.find(m => m.id === galleryMessageId);
+    const tapped = messages.find(m => m.id === galleryMessageId) ?? galleryFullMedia?.find(m => m.id === galleryMessageId);
     if (!tapped) {
       return [];
     }
     if (tapped.hidden) {
       return [tapped];
     }
-    return messages.filter(m => m.type === 'image' && m.mediaUrl && !m.hidden);
-  }, [galleryMessageId, messages]);
+    return galleryFullMedia ?? messages.filter(m => (m.type === 'image' || m.type === 'video') && m.mediaUrl && !m.hidden);
+  }, [galleryMessageId, messages, galleryFullMedia]);
 
   const mediaCount = useMemo(
     () => messages.filter(m => (m.type === 'image' || m.type === 'video' || m.type === 'file') && m.mediaUrl).length,

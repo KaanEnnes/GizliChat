@@ -437,7 +437,7 @@ function MessageBubble({
             )}
 
         {message.type === 'video' && cachedVideoUri && !showHiddenOverlay && (
-          <Pressable onPress={() => setViewerOpen(true)} style={styles.videoThumbWrap}>
+          <Pressable onPress={() => (onImagePress ? onImagePress(message.id) : setViewerOpen(true))} style={styles.videoThumbWrap}>
             <Video
               source={{ uri: cachedVideoUri }}
               style={styles.mediaImage}
