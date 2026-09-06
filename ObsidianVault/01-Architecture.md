@@ -26,15 +26,22 @@ Bağlam için önce [[00-START-HERE]] dosyasına bak.
   sağa yaslı/mavi, karşı taraf ise sola yaslı/gri stil. `message.createdAt`'ten `HH:MM` saat damgası
   render eder. `message.type`'a göre dallanır: `text` → düz metin, `image`/`video` → küçük önizleme
   (tam ekran görüntüleyici modal'ı açar, dokununca), `audio` → `AudioMessagePlayer`, `call` → normal
-  balon yerine ortalanmış bir WhatsApp-tarzı "çağrı geçmişi" kapsülü (📞/🎥 ikon, yön oku, süre ya
-  da "Cevapsız arama").
+  balon yerine ortalanmış bir WhatsApp-tarzı "çağrı geçmişi" kapsülü. Kapsül `CallIcons.tsx`'ten SVG
+  ikon (bağlanan arama → telefon/kamera, bağlanmayan → `MissedCallIcon`), yön oku ve duruma göre
+  süre / "Cevapsız arama" / "Reddedildi" gösterir; bağlanmayan her arama `dangerSoft` zeminde kırmızı
+  görünür. Yön oku `isMine`'a bakar ve `isMine` artık ARAYANIN uid'sine göre belirlenir, yazan cihaza
+  göre değil — bkz. `chatService.sendCallLogMessage()`.
 - `src/components/AudioMessagePlayer.tsx` — Tek bir sesli mesaj balonu için oynat/duraklat kontrolü,
   `react-native-nitro-sound`'ın (singleton export, `Sound`) oynatma API'sini kullanır.
-- `src/components/CallProvider.tsx` — Hesap girişi yapılmış ekranları (`CONTACTS`, `CHAT_ROOM`)
-  sarmalayan `StreamVideo` provider'ı. İçindeki `IncomingCallWatcher`, `useCalls()` ile her
-  `ringing` çağrıyı (hem gelen hem bu cihazın başlattığı) yakalayıp tam ekran `CallScreen` açar; çağrı
-  bitince `CallScreen`'in verdiği `CallSummary`'den `chatService.sendCallLogMessage()` ile sohbete bir
-  çağrı-geçmişi kaydı düşer.
+- `src/components/CallProvider.tsx` — Hesap girişi yapılmış TÜM ekranları (oyun ekranı dâhil, bkz.
+  `AppNavigator`) sarmalayan `StreamVideo` provider'ı. İçindeki `IncomingCallWatcher`, `useCalls()`
+  ile her `ringing` çağrıyı (hem gelen hem bu cihazın başlattığı) yakalayıp tam ekran `CallScreen`
+  açar; çağrı bitince `CallScreen`'in verdiği `CallSummary`'den `chatService.sendCallLogMessage()`
+  ile sohbete bir çağrı-geçmişi kaydı düşer. Zaten bir görüşmedeyken gelen ikinci çağrı sessizce
+  yok sayılmaz, `leave({ reject: true, reason: 'busy' })` ile gerçekten reddedilir (aksi hâlde karşı
+  taraf boşuna çalıyordu). Kayıt yazarken `senderId` olarak bu cihazın değil ARAYANIN uid'si
+  kullanılır, böylece iki taraf aynı yön okunu görür; `onLeave` iki kez tetiklenirse (koptu →
+  ardından ayrıldı) kayıt bir kez yazılır.
 - `src/components/NotificationCenter.tsx` — `CallProvider` ile birlikte `AppNavigator`'da
   `CONTACTS`/`CHAT_ROOM` etrafını **tek seferlik** (ekran değişince yeniden kurulmadan) sarmalar.
   Her kişinin odasını `chatService.subscribeToLatestMessage()` ile dinler, kendi mesajlarını/geçmişi/
@@ -174,12 +181,31 @@ Bağlam için önce [[00-START-HERE]] dosyasına bak.
   (`editMessage()`, `editedAt` damgası ekler) ve **Sil** (`deleteMessage()`, mesajı tamamen silmek
   yerine içeriğini temizleyip `deleted: true` işaretleyen bir "soft delete" — karşı taraf "Bu mesaj
   silindi" placeholder'ı görür).
-- `src/screens/CallScreen.tsx` — Bir `Call` nesnesini `StreamCall` ile sarar, `CallingState`'e göre
-  `RingingCallContent` (çalıyor/arıyor ekranı) ile `CallContent` (aktif görüşme: kamera/mikrofon
-  kontrolleri) arasında geçiş yapar. `onLeave` artık parametresiz değil — çağrı bitince bir
-  `CallSummary` (`otherUserId`, `isVideo`, `isCreatedByMe`, `wasJoined`, `durationSeconds`) verir,
-  `CallProvider` bunu sohbete çağrı-geçmişi kaydı düşmek için kullanır. Sesli/görüntülü arama her
-  zaman `'speaker'` (hoparlör) rotası kullanıyor — bkz. [[Changelog]] "hoparlör düzeltmesi".
+- `src/screens/CallScreen.tsx` — Bir `Call` nesnesini `StreamCall` ile sarar; `CallingState`'e göre
+  kendi yazdığımız `RingingScreen` / `StatusOverlay` / `ActiveVoiceScreen` / `ActiveVideoScreen`
+  ekranları arasında geçiş yapar (SDK'nın `RingingCallContent`/`CallContent` bileşenleri artık
+  kullanılmıyor, 2026-09-06 revizyonu). `onLeave` bir `CallSummary` (`otherUserId`, `isVideo`,
+  `isCreatedByMe`, `status`, `durationSeconds`) verir; `status` `'completed' | 'missed' | 'declined'`
+  — reddedilen arama, arayan tarafta `call.rejected` olayının `reason`'ı okunarak cevapsızdan
+  ayırt edilir (`'cancel'`/`'timeout'` reddetme sayılmaz).
+
+  Tasarım: her iki temada da koyu, tam ekran bir yüzey (`SURFACE` sabiti). `react-native-svg` ile
+  marka rengine boyanmış radyal gradyan arka plan (`CallBackdrop`), çalarken avatarın arkasından
+  yayılan iki halkalı nabız (`PulsingRings`), ve tüm kontroller `CallIcons.tsx`'teki SVG ikonlarla
+  (`ControlButton`; `active` durumu düğmeyi aydınlık dolguya çevirir). Görüntülü aramada karşı taraf
+  tam ekran (`ParticipantView`, `objectFit="cover"`), kendi kameran ise üstte sürüklenebilir küçük
+  bir dikdörtgende (`DraggableSelfView` — `PanResponder` + `Animated.ValueXY`, bırakınca en yakın
+  köşeye yaylanır; `videoZOrder={1}` şart, yoksa uzak görüntünün ARKASINDA kalıp hiç görünmez).
+
+  Davranış düzeltmeleri: sesli arama kulaklıktan / görüntülü arama hoparlörden başlar
+  (`callManager.start`'ın `deviceEndpointType`'ı; temizlikte `callManager.stop()` rotayı işletim
+  sistemine geri verir). Cevaplanmayan giden arama `RINGING_TIMEOUT_MS` (45 sn) sonunda kendini
+  iptal eder. Karşı taraf kapattığında `call.session_participant_left` / `call.ended` /
+  `call.session_ended` olayları dinlenerek arama bu tarafta da kapatılır (Stream birebir aramayı
+  kendiliğinden sonlandırmıyor); yedek olarak uzak katılımcı `REMOTE_GONE_GRACE_MS` (2,5 sn)
+  boyunca yoksa da kapatılır. `useCallCustomData` hook'u kullanılır (`call.state.custom`
+  doğrudan okunduğunda alıcıda geç gelen veri render tetiklemiyordu).
+
   2026-08-17'de eklendi: arama sırasında ses çıkış cihazını (hoparlör/kulaklık/Bluetooth) değiştirmek
   için bir buton + alt menü (`audioOutputService.ts`, canlı cihaz listesi, Ayarlar'da kalıcı tercih).
 
@@ -255,10 +281,23 @@ Bağlam için önce [[00-START-HERE]] dosyasına bak.
   toast'larının ve oyun-bitti/bildirim titreşimlerinin (`Vibration`, ekstra bağımlılık yok) Ayarlar'dan
   aç/kapa edilmesini sağlar.
 - `src/services/callService.ts` — Stream Video entegrasyonu: `getOrCreateStreamClient(uid,
-  username)` (aynı uid için her çağrıda aynı client instance'ını döner), `startVoiceCall()`/
-  `startVideoCall()` (`client.call('default', callId).getOrCreate({ ring: true, ... })`, `callId`
-  iki uid'in sıralanıp `-` ile birleşmesi — `chatService.getRoomId()`'e benzer ama farklı ayraç).
-  Token üretimi (`generateStreamToken`) `crypto-js` ile cihazda HS256 JWT imzalıyor — bkz.
+  username)` (aynı uid için her çağrıda aynı client instance'ını döner), `disconnectStreamClient()`
+  (çıkışta `userService.logoutAccount()` içinden çağrılır — yoksa önceki hesap Stream'e bağlı kalıp
+  kendi arama olaylarını almaya devam ediyordu), `startVoiceCall()`/`startVideoCall()`
+  (`client.call('default', callId).getOrCreate({ ring: true, ... })`).
+
+  **`callId` üretimi (`buildCallId`) iki kez ısırdı, dikkat:**
+  1. Kimlik KALICI'dır: bitmiş bir aramanın kimliğiyle `getOrCreate` çağrılırsa aynı, sonlanmış
+     arama nesnesi döner ve bir daha çalmaz. Eskiden kimlik sadece iki uid + tür idi, bu yüzden bir
+     kişiyle YALNIZCA ilk arama çalışıyordu. Artık rastgele bir sonek var.
+  2. Kimlik **en fazla 64 karakter** olabilir; aşarsa Stream `400 "id must be at maximum 64
+     characters in length"` döner ve arama hiç başlamaz. İki tam 28 karakterlik Firebase uid'i +
+     tür zaten 63 karakterdi (sınırın bir altı), yani (1)'in ilk denemesinde eklenen sonek her
+     aramayı bozdu. Şimdi her uid'in ilk 8 karakteri alınıyor (~34 karakter) ve sonuç ayrıca
+     `MAX_CALL_ID_LENGTH`'e kırpılıyor.
+
+  Token üretimi (`generateStreamToken`) `crypto-js` ile cihazda HS256 JWT imzalıyor; token'da artık
+  24 saatlik bir `exp` var (Stream `tokenProvider`'ı gerektiğinde yenisini istiyor) — bkz.
   [[04-Security-Notes]] "Stream arama token'ları".
 - `src/services/audioOutputService.ts` (2026-08-17'de eklendi) — Arama sırasındaki ses çıkış cihazı
   tercihini (hoparlör/kulaklık/Bluetooth) canlı cihaz listesiyle sunar, seçim `AsyncStorage`'da kalıcı.
@@ -341,7 +380,9 @@ crash reporting.
 
 **Push notification — artık kısmen entegre (eskiden hiç yoktu):** `@notifee/react-native` ve
 `@react-native-firebase/messaging` sadece kurulu duran boş bağımlılıklar değil, gerçekten kullanılıyor:
-`src/services/fcmService.ts` FCM token'ını alıp `users/{uid}.fcmToken`'a yazıyor, bir notifee kanalı
+`src/services/fcmService.ts` FCM token'ını alıp `users/{uid}/fcmTokens/{token}` dokümanına yazıyor
+(v8.7 öncesinde tek bir `users/{uid}.fcmToken` alanıydı; telefon ve PC birbirinin token'ını eziyordu),
+bir notifee kanalı
 kuruyor (`game_notifications_v2`) ve hem foreground (`onMessage`) hem arka plan/kapalı
 (`setBackgroundMessageHandler`, `index.js`'te kayıtlı) mesajlar için "Mini Oyunlar" kılıklı sahte bir
 bildirim gösteriyor (`displayFakeGameNotification`) — disguise bozulmasın diye bildirime dokununca

@@ -34,6 +34,66 @@ export function setNotificationsEnabled(enabled: boolean): void {
   AsyncStorage.setItem(NOTIFICATIONS_ENABLED_KEY, enabled ? '1' : '0').catch(() => undefined);
 }
 
+// "15 dk boyunca bakılmadığında alarm çalsın" — opt-in, defaults to OFF: most
+// users don't want a loud alarm-style escalation for every missed chat
+// notification, only people who explicitly want to make sure they never miss
+// one. See AlarmEscalationModule (native, android/) for the actual
+// OS-level scheduling this flag gates.
+const ALARM_ESCALATION_ENABLED_KEY = 'gizlichat_alarm_escalation_enabled';
+let alarmEscalationEnabled = false;
+
+AsyncStorage.getItem(ALARM_ESCALATION_ENABLED_KEY).then(value => {
+  if (value === '1') {
+    alarmEscalationEnabled = true;
+  }
+});
+
+export function isAlarmEscalationEnabled(): boolean {
+  return alarmEscalationEnabled;
+}
+
+/** Same "read fresh, don't trust the cache" reasoning as isNotificationsEnabledAsync. */
+export async function isAlarmEscalationEnabledAsync(): Promise<boolean> {
+  const value = await AsyncStorage.getItem(ALARM_ESCALATION_ENABLED_KEY);
+  return value === '1';
+}
+
+export function setAlarmEscalationEnabled(enabled: boolean): void {
+  alarmEscalationEnabled = enabled;
+  AsyncStorage.setItem(ALARM_ESCALATION_ENABLED_KEY, enabled ? '1' : '0').catch(() => undefined);
+}
+
+// How long a notification may sit unseen before the alarm fires. User-picked
+// (Settings), since "how long is too long to miss a message" is personal —
+// 15 dk is only the default.
+export const ALARM_ESCALATION_MINUTE_OPTIONS = [1, 5, 10, 15, 30, 60] as const;
+const ALARM_ESCALATION_MINUTES_KEY = 'gizlichat_alarm_escalation_minutes';
+const DEFAULT_ALARM_ESCALATION_MINUTES = 15;
+let alarmEscalationMinutes: number = DEFAULT_ALARM_ESCALATION_MINUTES;
+
+function parseMinutes(value: string | null): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_ALARM_ESCALATION_MINUTES;
+}
+
+AsyncStorage.getItem(ALARM_ESCALATION_MINUTES_KEY).then(value => {
+  alarmEscalationMinutes = parseMinutes(value);
+});
+
+export function getAlarmEscalationMinutes(): number {
+  return alarmEscalationMinutes;
+}
+
+/** Same "read fresh, don't trust the cache" reasoning as isNotificationsEnabledAsync. */
+export async function getAlarmEscalationMinutesAsync(): Promise<number> {
+  return parseMinutes(await AsyncStorage.getItem(ALARM_ESCALATION_MINUTES_KEY));
+}
+
+export function setAlarmEscalationMinutes(minutes: number): void {
+  alarmEscalationMinutes = minutes;
+  AsyncStorage.setItem(ALARM_ESCALATION_MINUTES_KEY, String(minutes)).catch(() => undefined);
+}
+
 // Deliberately generic, game-flavored copy — no sender name or message
 // content ever surfaces in a notification, so it reveals nothing about the
 // disguise underneath even if someone else is glancing at the screen. One is

@@ -61,7 +61,12 @@ kullanıcılar için leaderboard'un çalışmasını sağlayan tek amaç bu.
   photoUrl?: string;        // 2026-08-16'da eklendi — profil fotoğrafı, base64 data URI (Storage'sız)
   videoBytesUsed?: number;  // 2026-08-16'da eklendi — video/dosya yükleme kotası sayacı (bkz. aşağıda)
   lastActiveAt?: Timestamp; // 2026-08-14'te eklendi — presence/çevrimiçi göstergesi (bkz. aşağıda)
-  fcmToken?: string;        // push bildirimleri için cihaz token'ı (src/services/fcmService.ts)
+  fcmToken?: string;        // ESKİ (v8.7'de bırakıldı) tek cihazlık push token'ı — artık her cihaz
+                            // ayrı bir dokümana yazıyor: users/{uid}/fcmTokens/{token}
+                            // ({platform, updatedAt}). Tek alan olduğu sürece telefon ve PC
+                            // birbirinin token'ının üzerine yazıp diğerini bildirimsiz bırakıyordu.
+                            // Cloud Function (onNewMessage) tüm token'lara sendEachForMulticast ile
+                            // gönderiyor; bu eski alan sadece geçiş dönemi yedeği olarak okunuyor.
   notificationsEnabled?: boolean; // Ayarlar'daki bildirim aç/kapa tercihinin sunucu tarafı kopyası —
                                     // functions/'taki Cloud Function push gönderirken buna bakıyor
 }
@@ -170,7 +175,7 @@ Gerçek bir online/offline event sistemi değil, hafif bir "son ne zaman aktifti
 
 ```ts
 {
-  type: 'text' | 'image' | 'video' | 'audio' | 'file' | 'call';
+  type: 'text' | 'image' | 'video' | 'audio' | 'file' | 'call' | 'chess' | 'song';
   text: string;            // sadece type: 'text' için doldurulur
   senderId: string;        // Firebase uid
   createdAt: Timestamp;
@@ -186,8 +191,19 @@ Gerçek bir online/offline event sistemi değil, hafif bir "son ne zaman aktifti
     senderId: string;
     type: MessageType;
   };
+  // --- sadece type: 'call' için ---
+  callVideo?: boolean;
+  callStatus?: 'completed' | 'missed' | 'declined';
 }
 ```
+
+- `type: 'call'` — bitmiş bir aramanın sohbet kaydı. Doküman kimliği rastgele DEĞİL, `call_<streamCallId>`:
+  arayan ve aranan cihaz aramanın bittiğini birbirinden bağımsız fark edip ikisi de yazdığı için
+  paylaşılan bir kimlik gerekiyor, yoksa her arama sohbette iki kez görünürdü. Bu yüzden
+  `sendCallLogMessage()` düz bir `merge` değil, bir **transaction**: `senderId` her iki tarafta da
+  ARAYANIN uid'si (yön oku yazma yarışına göre değişmesin diye), durum asla geriye düşmüyor
+  (`completed` > `declined` > `missed`) ve süre iki tarafın gördüğü en uzun değer oluyor.
+  `createdAt` yalnızca ilk yazan tarafından damgalanır ki kayıt sohbette yerinden oynamasın.
 
 - `type: 'file'` (2026-08-20'de eklendi) — resim/video dışında herhangi bir dosya; `react-native-
   documents/picker` ile seçilip `mediaService.uploadRoomMedia(roomId, 'file', ...)` ile Storage'a
@@ -302,13 +318,26 @@ Firebase'den tamamen ayrı, üçüncü parti bir servis: [Stream Video](https://
 `src/services/callService.ts`:
 - `getOrCreateStreamClient(uid, username)` — `StreamVideoClient.getOrCreateInstance()`, aynı uid
   için tekrar çağrılırsa aynı client instance'ını döner (SDK'nın kendi cache'i).
+- `disconnectStreamClient()` — çıkışta (`userService.logoutAccount()`) çağrılır. `getOrCreateInstance`
+  uid başına önbelleğe alıp kendiliğinden kapanmadığı için, bu olmadan önceki hesap Stream'e bağlı
+  kalıyor ve bir sonraki hesabın oturumunun üstüne tam ekran gelen-arama açabiliyordu.
 - Token üretimi backend olmadığı için **cihazda** yapılıyor: `generateStreamToken(uid)`, `crypto-js`
-  ile `STREAM_CONFIG.apiSecret` kullanarak elle bir HS256 JWT (`{user_id, iat}`) imzalıyor. Normalde
-  bu bir sunucu sorumluluğu — bkz. [[04-Security-Notes]] "Stream arama token'ları".
+  ile `STREAM_CONFIG.apiSecret` kullanarak elle bir HS256 JWT (`{user_id, iat, exp}`) imzalıyor;
+  `exp` 24 saat (Stream `tokenProvider`'ı süresi dolmadan yenisini istiyor). Normalde bu bir sunucu
+  sorumluluğu — bkz. [[04-Security-Notes]] "Stream arama token'ları".
 - `startVoiceCall()`/`startVideoCall()` — `client.call('default', callId).getOrCreate({ ring: true,
-  data: { members: [...] } })`; `callId = [myUid, contact.uid].sort().join('-')` (chatService'in
-  `getRoomId()`'ine benzer ama Stream call id'lerinde `__` yerine `-` kullanılıyor, Stream'in kendi
-  id kısıtlarına göre).
+  data: { members: [...], custom: { isVideo } } })`. `custom.isVideo`, alıcının katılmadan önce
+  aramanın türünü öğrenebilmesinin tek yolu; `CallScreen` bunu `useCallCustomData()` ile okur.
+- **`callId` üretimi (`buildCallId`) — iki ayrı tuzak, ikisi de yaşandı:**
+  1. Stream arama kimlikleri KALICI. Bitmiş bir aramanın kimliğiyle `getOrCreate` çağrılırsa aynı,
+     sonlanmış arama nesnesi döner ve ÇALMAZ. Eski kimlik (`[uidA, uidB].sort().join('-')` + tür)
+     kişi başına sabit olduğu için bir kişiyle sadece İLK arama çalışıyordu; ayrıca sohbetteki
+     `call_<callId>` kayıt dokümanı da her aramada üzerine yazıldığı için arama geçmişi hiç
+     birikmiyordu. Çözüm: kimliğe rastgele bir sonek.
+  2. Kimlik **en fazla 64 karakter**; aşarsa Stream `400 "id must be at maximum 64 characters in
+     length"` döner ve arama hiç başlamaz. İki tam 28 karakterlik Firebase uid'i + tür zaten 63
+     karakterdi — sınırın TAM bir altı — yani (1)'in ilk denemesinde eklenen sonek her aramayı
+     bozdu. Çözüm: her uid'in ilk 8 karakteri (~34 karakter) + `MAX_CALL_ID_LENGTH` kırpması.
 - Stream tarafında ayrı bir kullanıcı/erişim modeli var (Firebase Auth'tan bağımsız) — her cihaz,
   Firebase uid'ini Stream'e de "user id" olarak veriyor, böylece iki sistem aynı kimliği paylaşıyor
   ama birbirinden habersiz çalışıyor (chat/admin auth'un birbirinden bağımsız olmasına benzer bir
@@ -338,7 +367,7 @@ Kuralların özeti:
   okuyabilir/yazabilir.
 - `rooms/{roomId}/messages/**`: Sadece `roomId`'nin içindeki iki uid'den biri olan kullanıcı
   okuyabilir/yazabilir (`roomId = uidA__uidB`, kurallar bunu `split('__')` ile doğruluyor). Mesajlar
-  temelde eklenebilir/güncellenemez, ama 2026-08-18/20'de eklenen **dört dar carve-out** var (her biri
+  temelde eklenebilir/güncellenemez, ama 2026-08-18/20'de eklenen **dar carve-out**'lar var (her biri
   `affectedKeys().hasOnly([...])` ile sadece o alanlara izin veriyor): (1) emoji tepkisi — bir üye
   sadece kendi `reactions.{uid}` anahtarını yazabilir; (2) iletildi/okundu tikleri — sadece **karşı**
   üye (gönderenin kendisi değil) `deliveredAt`/`readAt`'i damgalayabilir; (3) düzenleme — sadece
@@ -346,7 +375,13 @@ Kuralların özeti:
   yazabilir; (4) silme — sadece gönderen, `deleted`'i `true`'ya çevirip aynı anda
   `text`/`mediaUrl`/`fileName`/`fileSize`'ı temizleyebilir. Mesajlar hâlâ **silinemez** (Firestore
   doküman olarak), sadece bu carve-out'larla "soft" güncellenebilir; `allow delete: if false` aynen
-  duruyor.
+  duruyor. 2026-09-06'da **arama kaydı için iki carve-out daha** eklendi: (a) `create` — `senderId`
+  normalde `request.auth.uid` olmak zorunda, ama arama kaydında ARAYANIN uid'si yazıldığı için alıcı
+  kendi olmadığı bir mesajı oluşturuyor; bu yüzden `type == 'call'` + `call_` önekli doküman kimliği
+  + `senderId`'in odanın üyelerinden biri olması (`isRoomParticipant`) şartıyla izin veriliyor.
+  (b) `update` — ikinci yazan cihazın SADECE `callStatus`/`durationSeconds`/`callVideo` alanlarını
+  uzlaştırmasına izin var. Bu kural eklenmeden önce alıcının yazısı sessizce reddediliyordu, yani
+  arayanın uygulaması kaydı yazamadıysa (çöktü/kapandı/çevrimdışıydı) sohbette hiç kayıt kalmıyordu.
 - `rooms/{roomId}/game/{gameId}` (XOX/satranç, kişiye karşı): Sadece oda üyeleri okuyup yazabilir,
   ama **hamlenin gerçekten legal/sırası kendinde mi olduğu kural tarafından doğrulanmıyor** — bilinçli
   bir gevşek model, bkz. [[04-Security-Notes]].

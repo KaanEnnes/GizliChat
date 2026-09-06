@@ -181,8 +181,8 @@ yüklenemedi" gibi hatalar görülür). Kuralların içeriği için [[03-Service
 
 ## Sürüm bilgisi
 
-- Güncel değer için doğrudan `android/app/build.gradle`'a bak (sık değişir) — 2026-08-20 itibarıyla
-  `versionCode 6`, `versionName "1.2.3"`. Yeni bir sürüm çıkarırken bu değerleri artırmayı unutma,
+- Güncel değer için doğrudan `android/app/build.gradle`'a bak (sık değişir) — 2026-09-06 itibarıyla
+  `versionCode 35`, `versionName "8.8"`. Yeni bir sürüm çıkarırken bu değerleri artırmayı unutma,
   aksi halde telefonda "eski sürüm" olarak görülüp güncellenmeyebilir.
 - **Not:** Bu repoda artık bir `firebase.json` var (firestore/storage rules, `functions/`, ve
   `public/` klasörünü Hosting kaynağı olarak tanımlıyor) — yukarıdaki "Firebase CLI kurulumu yok"

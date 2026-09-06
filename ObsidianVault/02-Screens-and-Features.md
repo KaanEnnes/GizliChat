@@ -227,60 +227,71 @@ olarak kalıyor, son aramalar/favoriler/çevrimiçi durumu gibi hiçbir sohbet i
 
 ## Sesli/görüntülü arama (Stream Video)
 
-- `AppNavigator`, hesap girişi yapılmış her ekranı (`CONTACTS`, `CHAT_ROOM`) `CallProvider` ile
-  sarmalar. `CallProvider`, o oturum için bir Stream Video client'ı kurar ve içine
-  `IncomingCallWatcher`'ı yerleştirir.
+> 2026-09-06'da özellik baştan aşağı revize edildi (akış + tasarım + 14 hata) ve **iki emülatörde
+> uçtan uca test edildi** — bkz. [[Changelog]] v8.8. Aşağısı test sonrası güncel hâli anlatır.
+
+- `AppNavigator`, hesap girişi yapılmış **her** ekranı (oyun ekranı dâhil) `CallProvider` ile
+  sarmalar; böylece kullanıcı oyun kamuflajında otururken de arama gelir. `CallProvider`, o oturum
+  için bir Stream Video client'ı kurar ve içine `IncomingCallWatcher`'ı yerleştirir.
 - `IncomingCallWatcher`, Stream'in `useCalls()` hook'unu dinler; `ringing` durumundaki **herhangi
   bir** çağrıyı (hem bu cihazın az önce başlattığı giden arama, hem karşı taraftan gelen arama) tam
-  ekran bir `Modal` içinde `CallScreen` olarak açar — yani arayan ve aranan aynı mekanizmayla
-  ekranı görür, sadece Stream'in `RingingCallContent` bileşeni içeriği (arıyor/çalıyor) otomatik
-  ayırt eder.
-- `CallScreen` artık Stream SDK'nın hazır `RingingCallContent`/varsayılan kontrollerini kullanmıyor —
-  2026-08-14'te (bkz. [[Changelog]]) WhatsApp benzeri, tamamen kendi tasarımımız bir akışla
-  değiştirildi: `RINGING` → büyük daire baş-harf avatarı + isim + (giden aramada tek "Vazgeç"
-  butonu / gelen aramada yan yana kırmızı "Reddet" ve turuncu "Kabul Et" butonları); `JOINED` (sesli)
-  → tamamen özel bir ekran (avatar + canlı süre + sustur/kapat); `JOINED` (görüntülü) → Stream'in
-  video render motoru (`CallContent`) korunuyor ama alt kontrol çubuğu kendi tasarımımız
-  (`VideoCallControls`: sustur, kamera aç/kapa, kamerayı çevir, kapat). `RECONNECTING` durumunda
-  aktif ekran altında bir uyarı banner'ı gösteriliyor, ekran değişmiyor. `LEFT` olur olmaz `onLeave()`
-  hemen çağrılır, ekstra bir "görüşme bitti" ekranı yok. `RECONNECTING_FAILED` artık gösterim
-  süresinin sonunda gerçekten `call.leave()` de çağırıyor (öncesinde sadece yerel state
-  temizleniyordu — bağlantı aslında toparlanmışsa Stream tarafında çağrı sahipsiz canlı kalabiliyordu,
-  düzeltildi).
+  ekran bir `Modal` içinde `CallScreen` olarak açar — yani arayan ve aranan aynı mekanizmayla ekranı
+  görür. Zaten bir görüşmedeyken gelen ikinci çağrı **sessizce yok sayılmaz**, `reason: 'busy'` ile
+  gerçekten reddedilir (önceden karşı taraf boşuna çalıyordu).
+- **`CallScreen` tamamen kendi tasarımımız.** SDK'nın `RingingCallContent`/`CallContent`
+  bileşenleri artık hiç kullanılmıyor. Ekran her iki temada da koyu, tam ekran bir yüzey (gerçek
+  telefonların arama ekranı gibi; video karolarının beyaz çerçevede kalmasını da önler):
+  - `RINGING` → marka rengine boyanmış radyal gradyan arka plan (`CallBackdrop`), avatarın
+    arkasından yayılan iki halkalı nabız (`PulsingRings`), isim, ve (giden aramada tek "Vazgeç" /
+    gelen aramada "Reddet" + yeşil "Kabul Et") butonları.
+  - `JOINED` (sesli) → avatar + isim + canlı süre + sustur / kapat / ses çıkışı.
+  - `JOINED` (görüntülü) → **karşı taraf tam ekran** (`ParticipantView`, `objectFit="cover"`),
+    kendi kameran üstte **sürüklenebilir** küçük yuvarlatılmış bir dikdörtgende
+    (`DraggableSelfView`; bırakınca en yakın köşeye yaylanır). Üstte isim + süre çubuğu, altta
+    yarı saydam kontrol yuvası (sustur, kamera aç/kapa, kamerayı çevir, ses çıkışı, kapat).
+  - `RECONNECTING` → aktif ekran altında uyarı banner'ı, ekran değişmez.
+    `RECONNECTING_FAILED` → kısa bir "Görüşme koptu" ekranı, sonunda gerçekten `call.leave()`.
+  - `LEFT` olur olmaz `onLeave()` çağrılır, ekstra bir "görüşme bitti" ekranı yok.
+- **Bütün kontroller SVG ikon** (`CallIcons.tsx`), emoji değil — emoji her Android sürümünde farklı
+  görünüyor ve renklendirilemiyordu, dolayısıyla "sessize alındı" gibi durumlar ifade edilemiyordu.
+  Artık etkin durum düğmeyi aydınlık dolguya çeviriyor (`ControlButton`'ın `active` prop'u).
 - `startVoiceCall()`/`startVideoCall()` çağrı oluşturmadan önce `permissionsService.
-  requestCallPermissions()` ile mikrofon (+ görüntülüyse kamera) izni ister; `CallProvider`'ın
-  `IncomingCallWatcher`'ı da gelen bir çağrı tespit eder etmez aynı izni **aranan** taraf için de
-  proaktif olarak istiyor (kabul et'e basılmadan önce izin hazır olsun diye).
-  `startVideoCall()` ayrıca çağrı oluşturulur oluşturulmaz `call.camera.enable()` çağırır (sesli
-  aramada bunun yerine `call.camera.disable()`); `CallScreen` da `JOINED` durumuna geçilince
-  `call.microphone.enable()` çağırıyor (hem arayan hem aranan tarafında).
-- **Sesli aramada ses gelmiyordu — muhtemel kök neden bulundu, cihazda doğrulanmadı.** Asıl sorun
-  hiçbir yerde Stream'in native ses oturumu/yönlendirme yöneticisinin (`callManager`) başlatılmamış
-  olmasıydı; `CallScreen.tsx`'te artık `call` her JOINED olduğunda `callManager.start({ audioRole:
-  'communicator', deviceEndpointType: 'speaker' })` çağrılıyor (cleanup'ta `callManager.stop()`).
-  `deviceEndpointType` başta sesli aramalarda `'earpiece'` idi (gerçek telefon gibi) ama bunun
-  aramanın **dışında da** (oyun/bildirim sesleri) kulak hoparlörüne yapışkanlaştığı görüldü — artık
-  her iki arama türünde de `'speaker'`. **Hiçbiri henüz gerçek cihazda denenmedi**, bir sonraki
-  oturumda doğrulanmalı. 2026-08-14'te bu alana ek olarak durum-makinesi/kamera/mikrofon
-  düzeltmeleri de yapıldı (bkz. [[Changelog]]) — bunlar da `tsc`/`eslint`/`jest` ile doğrulandı ama
-  **henüz gerçek bir cihazda uçtan uca test edilmedi**.
-- **Çağrı geçmişi:** çağrı bitince (`CallScreen`'in `onLeave(summary: CallSummary)`'i) `CallProvider`
-  sohbete WhatsApp tarzı bir "çağrı geçmişi" kaydı düşer (`chatService.sendCallLogMessage`,
-  `MessageBubble`'da özel bir kapsül olarak render edilir) — süre, video/sesli, tamamlandı/cevapsız.
-  Hem arayan hem aranan taraf bu kaydı bağımsız olarak düşürdüğü için öncesinde her çağrı için
-  sohbete **iki** kopya kayıt düşüyordu; artık `sendCallLogMessage` çağrı id'sinden türetilen sabit
-  bir doküman id'siyle `setDoc(..., {merge:true})` kullanıyor, iki taraf da aynı dokümana yazınca
-  tek kayıt kalıyor (bkz. [[Changelog]] 2026-08-14).
+  requestCallPermissions()` ile mikrofon (+ görüntülüyse kamera) izni ister; `IncomingCallWatcher`
+  aynı izni **aranan** taraf için de proaktif ister (kabul et'e basılmadan hazır olsun diye), ama
+  yalnızca aranan tarafta — arayan aynı izni zaten `startCall`'da yanıtlamıştı, orada tekrar sormak
+  çalan ekranın üstüne ikinci bir dialog açıyordu.
+- **Ses rotası:** sesli arama kulaklıktan (earpiece), görüntülü arama hoparlörden başlar
+  (`callManager.start({ audioRole: 'communicator', deviceEndpointType })`, temizlikte
+  `callManager.stop()` rotayı işletim sistemine geri verir). Bir dönem her iki tür de `'speaker'`
+  idi, çünkü kulaklık rotası uygulamanın tüm ses oturumuna yapışıyordu (oyun/bildirim sesleri de
+  kulak hoparlöründen çıkıyordu); o sızıntının çaresi kesin olarak çağrılan `stop()` temizliği.
+  **Sızıntı tekrarlarsa bakılacak ilk yer `CallScreen.tsx`'teki `deviceEndpointType`.**
+- **Bitiş senaryoları:** cevaplanmayan giden arama 45 sn sonra kendini iptal eder
+  (`RINGING_TIMEOUT_MS`). Karşı taraf kapattığında `call.session_participant_left` /
+  `call.ended` / `call.session_ended` olayları dinlenerek arama bu tarafta da kapanır — Stream
+  birebir aramayı bir katılımcı ayrıldı diye kendiliğinden sonlandırmıyor, bu yüzden önceden kalan
+  taraf çalışan bir sayaç ve açık mikrofonla "Görüşme sürüyor" ekranında kalıyordu. Yedek olarak
+  uzak katılımcı 2,5 sn boyunca yoksa da kapatılır.
+- **Çağrı geçmişi:** çağrı bitince `CallProvider` sohbete WhatsApp tarzı bir kayıt düşer
+  (`chatService.sendCallLogMessage`). Durum artık üç değerli: **tamamlandı / cevapsız / reddedildi**
+  — reddedilen arama, arayan tarafta `call.rejected` olayının `reason`'ı okunarak ayırt edilir
+  (`'cancel'`/`'timeout'` reddetme sayılmaz). Hem arayan hem aranan bu kaydı bağımsız düştüğü için
+  doküman kimliği paylaşılan `call_<streamCallId>`'dir ve yazma bir **transaction**'dır: `senderId`
+  daima ARAYANIN uid'si (yön oku yazma yarışına göre değişmesin diye), durum geriye düşmez, süre
+  iki tarafın gördüğü en uzun değerdir. Bunun çalışması için `firestore.rules`'a arama kaydına
+  özel `create`/`update` carve-out'ları eklendi — bkz. [[03-Services-Backend]].
 - **Ses çıkış cihazı seçici (2026-08-17'de eklendi):** Arama sırasında bir buton, hoparlör/kulaklık/
   Bluetooth arasında canlı cihaz listesiyle geçiş yapmayı sağlıyor (`audioOutputService.ts`), tercih
-  `AsyncStorage`'da kalıcı ve Ayarlar'dan da değiştirilebiliyor.
+  `AsyncStorage`'da kalıcı ve Ayarlar'dan da değiştirilebiliyor. Artık koyu bir bottom-sheet.
 - **Elle yapılması gereken adım:** Stream Dashboard'da bir "Video & Audio" app oluşturup API
-  key/secret'ı `src/config/streamConfig.ts`'e girmek gerekiyor, yoksa arama butonları sessizce
-  başarısız olur. Detay: [[05-Build-Deployment]].
-- **Test ederken dikkat:** Arama, kimliği hesaba bağlı bir özellik olduğu için **iki farklı cihazda
-  aynı hesapla test edilemez** — Stream aynı `user_id`'nin iki oturumunu çakışan bir çağrı olarak
-  görüp `"Cannot reject a call that has already been accepted"` gibi hatalar verir. Test için iki
-  farklı hesap (iki cihazda ayrı ayrı kayıt olup birbirini kişi olarak eklemek) gerekir.
+  key/secret'ı `src/config/streamConfig.ts`'e girmek gerekiyor, yoksa arama butonları başarısız olur.
+  Detay: [[05-Build-Deployment]].
+- **Test ederken dikkat:** Arama kimliği hesaba bağlı olduğu için **iki cihazda aynı hesapla test
+  edilemez** — Stream aynı `user_id`'nin iki oturumunu çakışan bir çağrı sayıp
+  `"Cannot reject a call that has already been accepted"` gibi hatalar verir. İki ayrı hesap gerekir.
+- **Bilinen sınır:** uygulama tamamen kapalıyken gelen arama çalmaz — Stream client'ı yalnızca
+  uygulama açıkken bağlı. Gerçek bir "kilit ekranında çalan arama" için FCM data-push + `notifee`
+  full-screen intent (ya da CallKeep) gerekiyor; henüz yapılmadı.
 
 ## Önemli davranışsal notlar
 

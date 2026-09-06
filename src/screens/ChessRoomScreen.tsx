@@ -13,6 +13,25 @@ import { useTheme } from '../theme/ThemeContext';
 import { useWindowDimensions } from 'react-native';
 import { playGameOverSound, playTapSound, playWinSound } from '../services/soundService';
 import { ensureAnonymousAuth } from '../services/firebase';
+import { requestBluetoothConnectPermission } from '../services/permissionsService';
+import {
+  BluetoothChessMove,
+  connectToBluetoothChessHost,
+  disconnectBluetoothChess,
+  getPairedDevices,
+  isBluetoothChessAvailable,
+  isBluetoothEnabled,
+  onBluetoothChessConnected,
+  onBluetoothChessDisconnected,
+  onBluetoothChessError,
+  onBluetoothChessMove,
+  onBluetoothChessRestart,
+  PairedDevice,
+  requestEnableBluetooth,
+  sendBluetoothChessMove,
+  sendBluetoothChessRestart,
+  startBluetoothChessServer,
+} from '../services/bluetoothChessBridge';
 import ChessBoard from '../components/ChessBoard';
 import {
   Chess,
@@ -37,7 +56,8 @@ interface Props {
   onBack: () => void;
 }
 
-type Stage = 'menu' | 'joining' | 'in_room' | 'bot_difficulty' | 'vs_bot';
+type Stage = 'menu' | 'joining' | 'in_room' | 'bot_difficulty' | 'vs_bot' | 'bluetooth_menu' | 'vs_bluetooth';
+type BluetoothOutcome = 'me' | 'opponent' | 'draw' | null;
 type BotOutcome = 'player' | 'bot' | 'draw' | null;
 type SquareRef = { from: string; to: string };
 
@@ -74,9 +94,80 @@ function ChessRoomScreen({ onBack }: Props): React.JSX.Element {
   const botMoveSeqRef = useRef(0);
   const analysisSeqRef = useRef(0);
 
+  const [btDevices, setBtDevices] = useState<PairedDevice[]>([]);
+  const [btBusy, setBtBusy] = useState(false);
+  const [btHosting, setBtHosting] = useState(false);
+  const [btOpponentName, setBtOpponentName] = useState<string | null>(null);
+  const [btMyColor, setBtMyColor] = useState<'w' | 'b'>('w');
+  const [btFen, setBtFen] = useState(START_FEN);
+  const [btStatus, setBtStatus] = useState<'active' | 'finished'>('active');
+  const [btOutcome, setBtOutcome] = useState<BluetoothOutcome>(null);
+  const [btLastMove, setBtLastMove] = useState<SquareRef | null>(null);
+  const btConnectedRef = useRef(false);
+
   useEffect(() => {
     return () => {
       gameUnsubRef.current?.();
+      if (btConnectedRef.current) {
+        disconnectBluetoothChess().catch(() => undefined);
+      }
+    };
+  }, []);
+
+  // Wired up once — these fire regardless of which Bluetooth stage is
+  // currently showing (e.g. the "connected" event arrives while still on
+  // bluetooth_menu, right before we switch to vs_bluetooth).
+  useEffect(() => {
+    const offConnected = onBluetoothChessConnected(name => {
+      btConnectedRef.current = true;
+      setBtOpponentName(name);
+      setBtFen(START_FEN);
+      setBtStatus('active');
+      setBtOutcome(null);
+      setBtLastMove(null);
+      setBtBusy(false);
+      setStage('vs_bluetooth');
+      playTapSound();
+    });
+    const offDisconnected = onBluetoothChessDisconnected(() => {
+      btConnectedRef.current = false;
+      setError('Bağlantı kesildi.');
+    });
+    const offError = onBluetoothChessError(message => {
+      setBtBusy(false);
+      setError(message);
+    });
+    const offMove = onBluetoothChessMove((move: BluetoothChessMove) => {
+      setBtFen(currentFen => {
+        const chess = new Chess(currentFen);
+        try {
+          chess.move({ from: move.from, to: move.to, promotion: move.promotion ?? 'q' });
+        } catch {
+          return currentFen; // opponent sent something illegal/stale — ignore
+        }
+        setBtLastMove({ from: move.from, to: move.to });
+        if (chess.isCheckmate()) {
+          setBtStatus('finished');
+          setBtOutcome('opponent');
+        } else if (chess.isGameOver()) {
+          setBtStatus('finished');
+          setBtOutcome('draw');
+        }
+        return chess.fen();
+      });
+    });
+    const offRestart = onBluetoothChessRestart(() => {
+      setBtFen(START_FEN);
+      setBtStatus('active');
+      setBtOutcome(null);
+      setBtLastMove(null);
+    });
+    return () => {
+      offConnected();
+      offDisconnected();
+      offError();
+      offMove();
+      offRestart();
     };
   }, []);
 
@@ -283,6 +374,118 @@ function ChessRoomScreen({ onBack }: Props): React.JSX.Element {
     handleBotMove(pm.from, pm.to);
   }, [premove, botStatus, botThinking, botFen, handleBotMove]);
 
+  const handleOpenBluetoothMenu = useCallback(async () => {
+    setError(null);
+    if (!isBluetoothChessAvailable()) {
+      setError('Bluetooth ile oynamak sadece Android\'de kullanılabilir.');
+      return;
+    }
+    const granted = await requestBluetoothConnectPermission();
+    if (!granted) {
+      return;
+    }
+    const enabled = await isBluetoothEnabled();
+    if (!enabled) {
+      setError('Bluetooth kapalı — açıp tekrar dene.');
+      requestEnableBluetooth().catch(() => undefined);
+      return;
+    }
+    const devices = await getPairedDevices().catch(() => []);
+    setBtDevices(devices);
+    setStage('bluetooth_menu');
+  }, []);
+
+  const handleHostBluetooth = useCallback(async () => {
+    setBtBusy(true);
+    setError(null);
+    setBtMyColor('w');
+    setBtHosting(true);
+    playTapSound();
+    try {
+      await startBluetoothChessServer();
+      // Stays busy/waiting until the "connected" event fires (see the
+      // effect above) — startServer() itself only confirms listening began.
+    } catch (err) {
+      setBtBusy(false);
+      setBtHosting(false);
+      setError(`Başlatılamadı: ${(err as Error).message}`);
+    }
+  }, []);
+
+  const handleConnectBluetooth = useCallback(async (device: PairedDevice) => {
+    setBtBusy(true);
+    setError(null);
+    setBtMyColor('b');
+    setBtHosting(false);
+    playTapSound();
+    try {
+      await connectToBluetoothChessHost(device.address);
+    } catch (err) {
+      setBtBusy(false);
+      setError(`Bağlanılamadı: ${(err as Error).message}`);
+    }
+  }, []);
+
+  const handleLeaveBluetooth = useCallback(() => {
+    btConnectedRef.current = false;
+    disconnectBluetoothChess().catch(() => undefined);
+    setBtBusy(false);
+    setBtHosting(false);
+    setBtOpponentName(null);
+    setError(null);
+    setStage('menu');
+  }, []);
+
+  const handleBluetoothMove = useCallback(
+    (from: string, to: string) => {
+      if (btStatus !== 'active') {
+        return;
+      }
+      const isMyTurn = new Chess(btFen).turn() === btMyColor;
+      if (!isMyTurn) {
+        return;
+      }
+      const chess = new Chess(btFen);
+      try {
+        chess.move({ from, to, promotion: 'q' });
+      } catch {
+        return;
+      }
+      playTapSound();
+      setBtFen(chess.fen());
+      setBtLastMove({ from, to });
+      sendBluetoothChessMove({ from, to, promotion: 'q' }).catch(() => undefined);
+      if (chess.isCheckmate()) {
+        setBtStatus('finished');
+        setBtOutcome('me');
+      } else if (chess.isGameOver()) {
+        setBtStatus('finished');
+        setBtOutcome('draw');
+      }
+    },
+    [btFen, btMyColor, btStatus],
+  );
+
+  const handleBluetoothRestart = useCallback(() => {
+    playTapSound();
+    setBtFen(START_FEN);
+    setBtStatus('active');
+    setBtOutcome(null);
+    setBtLastMove(null);
+    sendBluetoothChessRestart().catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
+    if (stage !== 'vs_bluetooth' || btStatus !== 'finished') {
+      return;
+    }
+    if (btOutcome === 'me') {
+      playWinSound();
+    } else {
+      playGameOverSound();
+    }
+  }, [stage, btStatus, btOutcome]);
+
   const handleBotRestart = useCallback(() => {
     if (!botDifficulty) {
       return;
@@ -336,7 +539,22 @@ function ChessRoomScreen({ onBack }: Props): React.JSX.Element {
     <View style={[styles.container, { paddingTop: insets.top + 16, paddingBottom: insets.bottom + 16 }]}>
       <View style={styles.header}>
         <Pressable
-          onPress={stage === 'in_room' || stage === 'vs_bot' ? handleLeave : stage === 'bot_difficulty' ? () => setStage('menu') : onBack}
+          onPress={
+            stage === 'in_room' || stage === 'vs_bot'
+              ? handleLeave
+              : stage === 'vs_bluetooth'
+              ? handleLeaveBluetooth
+              : stage === 'bluetooth_menu'
+              ? () => {
+                  disconnectBluetoothChess().catch(() => undefined);
+                  setBtBusy(false);
+                  setBtHosting(false);
+                  setStage('menu');
+                }
+              : stage === 'bot_difficulty'
+              ? () => setStage('menu')
+              : onBack
+          }
           hitSlop={8}
           accessibilityRole="button"
           accessibilityLabel="Oyunlara dön">
@@ -400,6 +618,127 @@ function ChessRoomScreen({ onBack }: Props): React.JSX.Element {
             accessibilityLabel="Bilgisayara karşı oyna">
             <Text style={[styles.secondaryButtonText, { color: theme.text }]}>BİLGİSAYARA KARŞI OYNA</Text>
           </Pressable>
+
+          <Text style={[styles.orText, { color: theme.textFaint }]}>veya</Text>
+
+          <Pressable
+            onPress={handleOpenBluetoothMenu}
+            style={[styles.secondaryButton, { borderColor: theme.border }]}
+            accessibilityRole="button"
+            accessibilityLabel="Bluetooth ile yakındaki cihazla oyna">
+            <Text style={[styles.secondaryButtonText, { color: theme.text }]}>
+              BLUETOOTH İLE YAKINDAKİ CİHAZLA OYNA
+            </Text>
+          </Pressable>
+        </View>
+      )}
+
+      {stage === 'bluetooth_menu' && (
+        <View style={styles.menuBody}>
+          <Text style={[styles.menuHint, { color: theme.textMuted }]}>
+            İnternet gerekmez — önce iki telefonu Telefon Ayarları'ndan Bluetooth ile eşleştir, sonra biri "Ev sahibi
+            ol"a bassın, diğeri eşleştirilmiş cihaz listesinden onu seçsin.
+          </Text>
+
+          <Pressable
+            onPress={handleHostBluetooth}
+            disabled={btBusy}
+            style={[styles.primaryButton, { backgroundColor: theme.accent }, btBusy && styles.disabled]}
+            accessibilityRole="button"
+            accessibilityLabel="Ev sahibi ol">
+            {btBusy && btHosting ? (
+              <ActivityIndicator color={theme.accentText} />
+            ) : (
+              <Text style={[styles.primaryButtonText, { color: theme.accentText }]}>
+                {btBusy && btHosting ? 'BEKLENİYOR…' : 'EV SAHİBİ OL (BEKLE)'}
+              </Text>
+            )}
+          </Pressable>
+
+          <Text style={[styles.orText, { color: theme.textFaint }]}>veya eşleştirilmiş bir cihaza bağlan</Text>
+
+          {btDevices.length === 0 ? (
+            <Text style={[styles.menuHint, { color: theme.textFaint }]}>
+              Eşleştirilmiş cihaz yok. Önce telefon Bluetooth ayarlarından diğer telefonla eşleştir.
+            </Text>
+          ) : (
+            btDevices.map(device => (
+              <Pressable
+                key={device.address}
+                onPress={() => handleConnectBluetooth(device)}
+                disabled={btBusy}
+                style={[
+                  styles.secondaryButton,
+                  styles.difficultyButton,
+                  { borderColor: theme.border },
+                  btBusy && styles.disabled,
+                ]}
+                accessibilityRole="button"
+                accessibilityLabel={`${device.name} cihazına bağlan`}>
+                <Text style={[styles.secondaryButtonText, { color: theme.text }]} numberOfLines={1}>
+                  {btBusy && !btHosting ? 'BAĞLANIYOR…' : device.name.toUpperCase()}
+                </Text>
+              </Pressable>
+            ))
+          )}
+        </View>
+      )}
+
+      {stage === 'vs_bluetooth' && (
+        <View style={styles.roomBody}>
+          <View style={styles.roomTop}>
+            <View style={[styles.codeBadge, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+              <Text style={[styles.codeBadgeLabel, { color: theme.textFaint }]}>BLUETOOTH</Text>
+              <Text style={[styles.codeBadgeValue, { color: theme.text }]} numberOfLines={1}>
+                {btOpponentName ?? 'Rakip'}
+              </Text>
+            </View>
+
+            <View style={styles.statusRow}>
+              {btStatus === 'active' && (
+                <View
+                  style={[
+                    styles.turnDot,
+                    { backgroundColor: new Chess(btFen).turn() === btMyColor ? theme.accent : theme.textFaint },
+                  ]}
+                />
+              )}
+              <Text style={[styles.status, { color: theme.textMuted }]}>
+                {btStatus === 'finished'
+                  ? btOutcome === 'draw'
+                    ? 'Berabere'
+                    : btOutcome === 'me'
+                    ? 'Kazandın! 🎉'
+                    : 'Rakip kazandı'
+                  : new Chess(btFen).turn() === btMyColor
+                  ? 'Sırası sende'
+                  : 'Rakibin sırası'}
+              </Text>
+            </View>
+          </View>
+
+          <View style={styles.boardWrap}>
+            <ChessBoard
+              fen={btFen}
+              myColor={btMyColor}
+              isMyTurn={btStatus === 'active' && new Chess(btFen).turn() === btMyColor}
+              onMove={handleBluetoothMove}
+              size={boardSize}
+              lastMove={btLastMove}
+            />
+          </View>
+
+          <View style={styles.roomBottom}>
+            {btStatus === 'finished' && (
+              <Pressable
+                onPress={handleBluetoothRestart}
+                style={[styles.primaryButton, styles.restartButton, { backgroundColor: theme.accent }]}
+                accessibilityRole="button"
+                accessibilityLabel="Yeniden oyna">
+                <Text style={[styles.primaryButtonText, { color: theme.accentText }]}>YENİDEN OYNA</Text>
+              </Pressable>
+            )}
+          </View>
         </View>
       )}
 

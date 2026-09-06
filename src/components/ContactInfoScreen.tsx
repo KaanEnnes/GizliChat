@@ -3,9 +3,13 @@ import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, View } from 'rea
 import { useTheme } from '../theme/ThemeContext';
 import Avatar from './Avatar';
 import { replyPreviewLabel } from './MessageBubble';
-import { fetchAllMedia, fetchStarredMessages, type ChatMessage } from '../services/chatService';
+import { fetchMediaCount, fetchRecentMedia, fetchStarredMessages, type ChatMessage } from '../services/chatService';
 import { fetchAccountUsername, ONLINE_THRESHOLD_MS, subscribeToPresence } from '../services/userService';
 import { Contact } from '../services/contactService';
+import { PhoneCallIcon, VideoCallIcon } from './CallIcons';
+
+/** How many of the room's most recent media items to show the instant the gallery opens from this screen — ChatRoomScreen keeps loading the rest of the room's history in behind it (see its galleryMessageId effect) and swaps in the full list once that resolves. */
+const RECENT_MEDIA_PREVIEW_COUNT = 10;
 
 interface Props {
   visible: boolean;
@@ -18,8 +22,14 @@ interface Props {
   onStartVoiceCall: () => void;
   onStartVideoCall: () => void;
   onJumpToMessage: (messageId: string) => void;
-  /** Opens the shared room-wide gallery already used for tapping an image in the chat, seeded with this room's entire media history. */
-  onOpenMedia: (media: ChatMessage[]) => void;
+  /**
+   * Opens the shared room-wide gallery already used for tapping an image in the chat, seeded
+   * with just the most recent media (see RECENT_MEDIA_PREVIEW_COUNT) for an instant open —
+   * ChatRoomScreen's own gallery-open plumbing takes it from there and fetches the room's
+   * complete media history in the background (same as it already does when the gallery is
+   * opened by tapping an image inline).
+   */
+  onOpenMedia: (recentMedia: ChatMessage[], initialMessageId: string) => void;
 }
 
 function formatTime(timestamp: number): string {
@@ -47,7 +57,8 @@ function ContactInfoScreen({
   const [username, setUsername] = useState<string | null>(null);
   const [starred, setStarred] = useState<ChatMessage[] | null>(null);
   const [starredError, setStarredError] = useState<string | null>(null);
-  const [media, setMedia] = useState<ChatMessage[] | null>(null);
+  const [mediaCount, setMediaCount] = useState<number | null>(null);
+  const [mediaLoading, setMediaLoading] = useState(false);
 
   useEffect(() => {
     if (!visible) {
@@ -56,20 +67,20 @@ function ContactInfoScreen({
     return subscribeToPresence(contact.uid, setLastActiveAt);
   }, [visible, contact.uid]);
 
-  // Fetches the room's ENTIRE media history, not just whatever page of
-  // messages happens to be loaded in the open chat — that was the previous
-  // bug here (see fetchAllMedia's doc comment): a room with older photos
-  // outside the currently-loaded window showed "0" even when media existed.
-  // Kept in full (not just a count) so tapping the row can open the gallery
-  // on it directly, without a second fetch.
+  // Just the count, computed server-side (no message bodies — no inline base64 mediaUrl
+  // payloads — cross the wire for this), so the badge shows up fast even in a room with a lot
+  // of exchanged photos/videos. The full list (fetchAllMedia, see its doc comment for why that
+  // one's expensive) is only fetched below once the user actually taps the row to open the
+  // gallery — this used to run eagerly here just to display a number, which is what made this
+  // whole screen visibly freeze on open.
   useEffect(() => {
     if (!visible) {
       return;
     }
-    setMedia(null);
-    fetchAllMedia(roomId)
-      .then(setMedia)
-      .catch(() => setMedia([]));
+    setMediaCount(null);
+    fetchMediaCount(roomId)
+      .then(setMediaCount)
+      .catch(() => setMediaCount(0));
   }, [visible, roomId]);
 
   useEffect(() => {
@@ -93,6 +104,21 @@ function ContactInfoScreen({
     setStarred(null);
     setStarredError(null);
     onClose();
+  };
+
+  const handleOpenMediaRow = () => {
+    if (!mediaCount) {
+      return;
+    }
+    setMediaLoading(true);
+    fetchRecentMedia(roomId, RECENT_MEDIA_PREVIEW_COUNT)
+      .then(recent => {
+        if (recent.length > 0) {
+          handleClose();
+          onOpenMedia(recent, recent[recent.length - 1].id);
+        }
+      })
+      .finally(() => setMediaLoading(false));
   };
 
   const isOnline = lastActiveAt != null && Date.now() - lastActiveAt < ONLINE_THRESHOLD_MS;
@@ -127,7 +153,7 @@ function ContactInfoScreen({
                   onStartVoiceCall();
                 }}>
                 <View style={[styles.actionIconWrap, { backgroundColor: theme.surfaceAlt }]}>
-                  <Text style={styles.actionIcon}>📞</Text>
+                  <PhoneCallIcon color={theme.text} size={21} />
                 </View>
                 <Text style={[styles.actionLabel, { color: theme.text }]}>Sesli</Text>
               </Pressable>
@@ -138,7 +164,7 @@ function ContactInfoScreen({
                   onStartVideoCall();
                 }}>
                 <View style={[styles.actionIconWrap, { backgroundColor: theme.surfaceAlt }]}>
-                  <Text style={styles.actionIcon}>🎥</Text>
+                  <VideoCallIcon color={theme.text} size={21} />
                 </View>
                 <Text style={[styles.actionLabel, { color: theme.text }]}>Görüntülü</Text>
               </Pressable>
@@ -158,15 +184,14 @@ function ContactInfoScreen({
             <View style={[styles.listSection, { borderTopColor: theme.border }]}>
               <Pressable
                 style={styles.listRow}
-                disabled={!media || media.length === 0}
-                onPress={() => {
-                  if (media && media.length > 0) {
-                    handleClose();
-                    onOpenMedia(media);
-                  }
-                }}>
+                disabled={!mediaCount || mediaLoading}
+                onPress={handleOpenMediaRow}>
                 <Text style={[styles.listRowText, { color: theme.text }]}>📎 Medya, bağlantı ve belgeler</Text>
-                <Text style={[styles.listRowValue, { color: theme.textMuted }]}>{media?.length ?? '…'}</Text>
+                {mediaLoading ? (
+                  <ActivityIndicator color={theme.textMuted} size="small" />
+                ) : (
+                  <Text style={[styles.listRowValue, { color: theme.textMuted }]}>{mediaCount ?? '…'}</Text>
+                )}
               </Pressable>
               <Pressable style={styles.listRow} onPress={() => setView('starred')}>
                 <Text style={[styles.listRowText, { color: theme.text }]}>⭐ Yıldızlı mesajlar</Text>

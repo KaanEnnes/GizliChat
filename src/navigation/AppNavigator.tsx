@@ -9,8 +9,9 @@ import NotificationCenter from '../components/NotificationCenter';
 import EmergencyCloseButton from '../components/EmergencyCloseButton';
 import { Contact } from '../services/contactService';
 import { Account, logoutAccount, updatePresenceHeartbeat } from '../services/userService';
-import { initFcm } from '../services/fcmService';
+import { initFcm, notifyChatOpened } from '../services/fcmService';
 import { setActiveChatUid } from '../services/notificationService';
+import { useFloatingChatBridge } from '../services/floatingChatBridge';
 
 // How often this device stamps itself as "recently active" for other users'
 // online indicators — well under ONLINE_THRESHOLD_MS so a contact never
@@ -24,6 +25,8 @@ function AppNavigator(): React.JSX.Element {
   const [account, setAccount] = useState<Account | null>(null);
   const [activeContact, setActiveContact] = useState<Contact | null>(null);
   const [jumpMessageId, setJumpMessageId] = useState<string | undefined>(undefined);
+
+  useFloatingChatBridge(account?.uid ?? null);
 
   useEffect(() => {
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
@@ -75,6 +78,7 @@ function AppNavigator(): React.JSX.Element {
   useEffect(() => {
     const openContactUid = screen === 'CHAT_ROOM' ? activeContact?.uid ?? null : null;
     setActiveChatUid(openContactUid);
+    notifyChatOpened(openContactUid);
     return () => setActiveChatUid(null);
   }, [screen, activeContact]);
 

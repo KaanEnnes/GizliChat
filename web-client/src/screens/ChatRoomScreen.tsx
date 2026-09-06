@@ -537,10 +537,14 @@ function ChatRoomScreen({ account, contact, onBack, initialJumpMessageId }: Prop
             setSearchOpen(true);
           }}
           onJumpToMessage={handleJumpToMessage}
-          onOpenMedia={media => {
+          onOpenMedia={(recentMedia, initialMessageId) => {
+            // Seeds the gallery with just the recent preview for an instant open — the
+            // galleryMessageId effect below (fetchAllMedia) then fetches the room's full media
+            // history in the background and replaces `recentMedia` once that resolves, same as
+            // when the gallery is opened by tapping an image inline.
             setContactInfoOpen(false);
-            setGalleryFullMedia(media);
-            setGalleryMessageId(media[media.length - 1].id);
+            setGalleryFullMedia(recentMedia);
+            setGalleryMessageId(initialMessageId);
           }}
         />
       )}

@@ -3,22 +3,25 @@ import {
   collection,
   deleteField,
   doc,
+  getCountFromServer,
   getDoc,
   getDocs,
   limit,
   onSnapshot,
   orderBy,
   query,
+  runTransaction,
   serverTimestamp,
   setDoc,
   Timestamp,
   Unsubscribe,
   updateDoc,
+  where,
 } from 'firebase/firestore';
 import { db } from './firebase';
 
 export type MessageType = 'text' | 'image' | 'video' | 'audio' | 'file' | 'call' | 'chess' | 'song';
-export type CallLogStatus = 'completed' | 'missed';
+export type CallLogStatus = 'completed' | 'missed' | 'declined';
 
 /** Lightweight snapshot of the message being replied to — stored inline so the quoted preview renders without an extra fetch. */
 export interface ReplyPreview {
@@ -184,7 +187,7 @@ function docToMessage(docSnap: {
     durationSeconds: typeof data.durationSeconds === 'number' ? data.durationSeconds : undefined,
     callVideo: typeof data.callVideo === 'boolean' ? data.callVideo : undefined,
     callStatus:
-      data.callStatus === 'completed' || data.callStatus === 'missed'
+      data.callStatus === 'completed' || data.callStatus === 'missed' || data.callStatus === 'declined'
         ? (data.callStatus as CallLogStatus)
         : undefined,
     reactions:
@@ -300,33 +303,66 @@ export async function sendMessage(
   });
 }
 
+/** How authoritative a call outcome is — a higher-ranked status is never overwritten by a lower one. */
+const CALL_STATUS_RANK: Record<CallLogStatus, number> = { missed: 0, declined: 1, completed: 2 };
+
 /**
  * Logs a finished call as a WhatsApp-style entry in the chat (rendered
  * specially by MessageBubble). Both the caller's and the callee's devices
  * independently detect the call ending and each call this function — using
  * `callId` as the document id (instead of `addDoc`'s random id) makes the
- * second write overwrite the first instead of creating a duplicate entry.
+ * second write land on the same entry instead of creating a duplicate.
+ *
+ * That "both sides write the same document" is also why this runs in a
+ * transaction rather than a plain merge. With a merge, whichever device
+ * happened to write *last* won every field, which produced two visible bugs:
+ *
+ *  - `senderId` flipped, so the ↗/↙ direction arrow and "Cevapsız arama" vs
+ *    "Cevap verilmedi" wording were decided by a network race rather than by
+ *    who actually placed the call. `callerId` (not the writing device) is
+ *    stored now, so both sides always agree on the direction.
+ *  - the outcome regressed: the side that hung up first reports a shorter
+ *    duration, and a device that never joined reports 'missed', so a call
+ *    that plainly connected could end up logged as missed with 00:00. The
+ *    transaction keeps the strongest status (completed > declined > missed)
+ *    and the longest duration either side observed.
  */
 export async function sendCallLogMessage(
   roomId: string,
-  senderId: string,
+  callerId: string,
   callId: string,
   info: { video: boolean; status: CallLogStatus; durationSeconds: number },
 ): Promise<void> {
   const messageRef = doc(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION, `call_${callId}`);
-  await setDoc(
-    messageRef,
-    {
-      type: 'call',
-      text: '',
-      senderId,
-      createdAt: serverTimestamp(),
-      callVideo: info.video,
-      callStatus: info.status,
-      durationSeconds: info.durationSeconds,
-    },
-    { merge: true },
-  );
+  await runTransaction(db, async transaction => {
+    const existing = await transaction.get(messageRef);
+    const previous = existing.data();
+    const previousStatus = previous?.callStatus as CallLogStatus | undefined;
+    const status =
+      previousStatus && CALL_STATUS_RANK[previousStatus] > CALL_STATUS_RANK[info.status]
+        ? previousStatus
+        : info.status;
+    const durationSeconds = Math.max(
+      info.durationSeconds,
+      typeof previous?.durationSeconds === 'number' ? previous.durationSeconds : 0,
+    );
+    transaction.set(
+      messageRef,
+      {
+        type: 'call',
+        text: '',
+        senderId: callerId,
+        // Only stamped by the first writer, so the entry keeps its place in
+        // the chat instead of jumping to the bottom when the second device's
+        // write lands a moment later.
+        ...(existing.exists() ? {} : { createdAt: serverTimestamp() }),
+        callVideo: info.video,
+        callStatus: status,
+        durationSeconds,
+      },
+      { merge: true },
+    );
+  });
 }
 
 /** Posts a "Satranç daveti" system entry (rendered like a call log by MessageBubble) so the other side sees in the chat that a chess game just started. */
@@ -484,14 +520,76 @@ export function subscribeToTypingTimestamp(roomId: string, otherUid: string, onT
   );
 }
 
-/** Every non-hidden image/video message in a room's ENTIRE history, chronological order, for the "browse all media" gallery — previously this only searched whatever page of history happened to already be loaded into the open chat's `messages` state, so an older photo the user hadn't scrolled up to yet silently never showed up in the gallery. "Gizli" (hidden) media is excluded here the same way it always was from the multi-item gallery (see ChatRoomScreen's old galleryImages memo) — tapping a hidden item directly still shows it alone, that special case lives in ChatRoomScreen, not here. */
+/**
+ * Every non-hidden image/video message in a room's ENTIRE history, chronological order, for
+ * the "browse all media" gallery — previously this only searched whatever page of history
+ * happened to already be loaded into the open chat's `messages` state, so an older photo the
+ * user hadn't scrolled up to yet silently never showed up in the gallery. "Gizli" (hidden)
+ * media is excluded here the same way it always was from the multi-item gallery (see
+ * ChatRoomScreen's old galleryImages memo) — tapping a hidden item directly still shows it
+ * alone, that special case lives in ChatRoomScreen, not here.
+ *
+ * Filters by `type` server-side (`where('type', 'in', [...])`) instead of fetching every
+ * message in the room and discarding non-media ones client-side — this used to download and
+ * JSON-parse the room's ENTIRE message history (including every inline base64 image/video
+ * `mediaUrl`, which can be close to Firestore's 1 MiB document cap each) just to show a media
+ * count, which is what made ContactInfoScreen visibly freeze the JS thread for several seconds
+ * on open in any room with a non-trivial history. No `orderBy` here (avoids needing a composite
+ * index for `type in [...]` + `orderBy(createdAt)`) — the much smaller result set is sorted
+ * client-side instead.
+ */
 export async function fetchAllMedia(roomId: string): Promise<ChatMessage[]> {
   const snapshot = await getDocs(
-    query(collection(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION), orderBy('createdAt', 'asc')),
+    query(collection(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION), where('type', 'in', ['image', 'video'])),
   );
   return snapshot.docs
     .map(d => docToMessage(d))
-    .filter(message => !message.deleted && !message.hidden && (message.type === 'image' || message.type === 'video') && message.mediaUrl);
+    .filter(message => !message.deleted && !message.hidden && message.mediaUrl)
+    .sort((a, b) => a.createdAt - b.createdAt);
+}
+
+/**
+ * The `count` most recent image/video messages, chronological order — used to open the gallery
+ * instantly (see ContactInfoScreen/ChatRoomScreen's handleOpenMediaRow) on just the last handful
+ * of items while fetchAllMedia's full-history fetch keeps running in the background and replaces
+ * this once it resolves. Needs the `type ASC, createdAt DESC` composite index in
+ * firestore.indexes.json (an `in` filter combined with `orderBy` on a different field always
+ * does) — fetchAllMedia deliberately avoids `orderBy` to not need one, but paying for a real
+ * index here is worth it since this query has to be fast, not just cheap.
+ */
+export async function fetchRecentMedia(roomId: string, count: number): Promise<ChatMessage[]> {
+  const snapshot = await getDocs(
+    query(
+      collection(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION),
+      where('type', 'in', ['image', 'video']),
+      orderBy('createdAt', 'desc'),
+      limit(count),
+    ),
+  );
+  return snapshot.docs
+    .map(d => docToMessage(d))
+    .filter(message => !message.deleted && !message.hidden && message.mediaUrl)
+    .reverse();
+}
+
+/**
+ * A fast, server-computed count of a room's image/video messages, for the "Medya, bağlantı ve
+ * belgeler" badge in ContactInfoScreen — even after fetchAllMedia was narrowed to only
+ * image/video docs (see above), a room with a lot of exchanged photos is still slow to open
+ * because every one of those docs carries a full inline base64 `mediaUrl` (up to ~1 MiB each,
+ * see ChatMessage.mediaUrl's doc comment) that has to be downloaded and JSON-parsed just to
+ * show a number. `getCountFromServer` runs the count aggregation entirely server-side — no
+ * document bodies (so no `mediaUrl` payloads) ever cross the wire for this. ContactInfoScreen
+ * uses this for the badge and only calls fetchAllMedia (the expensive one) once the user
+ * actually taps the row to open the gallery. May count a `hidden`/`deleted` item that
+ * fetchAllMedia itself would filter out (no cheap way to express that in an aggregation query),
+ * so this can slightly overcount — acceptable for a badge, unlike the gallery's own list.
+ */
+export async function fetchMediaCount(roomId: string): Promise<number> {
+  const snapshot = await getCountFromServer(
+    query(collection(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION), where('type', 'in', ['image', 'video'])),
+  );
+  return snapshot.data().count;
 }
 
 /** One-off lookup used when the pinned message has scrolled out of the currently-loaded page — falls back to fetching just that doc instead of widening the whole live query. */

@@ -7,8 +7,22 @@ import { isActiveChatUid, isNotificationsEnabled, randomFakeNotification } from 
 /** Same disguised copy as the mobile app's fake-game push (GameHubScreen is the "app" a bystander sees). */
 const NOTIFICATION_TITLE = 'Mini Oyunlar';
 
+/**
+ * Stored per-token (doc id = the token itself) under a subcollection instead
+ * of a single `users/{uid}.fcmToken` field — a single shared field meant this
+ * browser's token and the mobile app's token constantly overwrote each other
+ * every time either re-registered, so whichever synced last silently stole
+ * the other's push. This was almost certainly why PC notifications "mostly
+ * don't arrive": the mobile app resyncs its token far more often (every
+ * login) than a browser tab does. See functions/index.js's onNewMessage,
+ * which now fans out to every token in this subcollection.
+ */
 async function saveFcmToken(uid: string, token: string): Promise<void> {
-  await setDoc(doc(db, 'users', uid), { fcmToken: token }, { merge: true });
+  await setDoc(
+    doc(db, 'users', uid, 'fcmTokens', token),
+    { platform: 'web', updatedAt: Date.now() },
+    { merge: true },
+  );
 }
 
 /**

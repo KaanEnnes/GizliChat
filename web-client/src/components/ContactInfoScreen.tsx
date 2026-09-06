@@ -2,9 +2,12 @@ import React, { useEffect, useState } from 'react';
 import { useTheme } from '../theme/ThemeContext';
 import Avatar from './Avatar';
 import { replyPreviewLabel } from './MessageBubble';
-import { fetchAllMedia, fetchStarredMessages, type ChatMessage } from '../services/chatService';
+import { fetchMediaCount, fetchRecentMedia, fetchStarredMessages, type ChatMessage } from '../services/chatService';
 import { fetchAccountUsername, ONLINE_THRESHOLD_MS, subscribeToPresence } from '../services/userService';
 import type { Contact } from '../services/contactService';
+
+/** How many of the room's most recent media items to show the instant the gallery opens from this screen — ChatRoomScreen keeps loading the rest of the room's history behind it and swaps in the full list once that resolves (same as the mobile client, see its copy of this constant). */
+const RECENT_MEDIA_PREVIEW_COUNT = 10;
 
 interface Props {
   contact: Contact;
@@ -14,8 +17,8 @@ interface Props {
   onClose: () => void;
   onOpenSearch: () => void;
   onJumpToMessage: (messageId: string) => void;
-  /** Opens the shared room-wide gallery already used for tapping an image in the chat, seeded with this room's entire media history. */
-  onOpenMedia: (media: ChatMessage[]) => void;
+  /** Opens the shared room-wide gallery already used for tapping an image in the chat, seeded with just the most recent media for an instant open — ChatRoomScreen's own gallery-open plumbing fetches the room's complete media history in the background from there. */
+  onOpenMedia: (recentMedia: ChatMessage[], initialMessageId: string) => void;
 }
 
 function formatTime(timestamp: number): string {
@@ -31,24 +34,35 @@ function ContactInfoScreen({ contact, contactPhotoUrl, myUid, roomId, onClose, o
   const [username, setUsername] = useState<string | null>(null);
   const [starred, setStarred] = useState<ChatMessage[] | null>(null);
   const [starredError, setStarredError] = useState<string | null>(null);
-  const [media, setMedia] = useState<ChatMessage[] | null>(null);
+  const [mediaCount, setMediaCount] = useState<number | null>(null);
+  const [mediaLoading, setMediaLoading] = useState(false);
 
   useEffect(() => subscribeToPresence(contact.uid, setLastActiveAt), [contact.uid]);
   useEffect(() => {
     fetchAccountUsername(contact.uid).then(setUsername).catch(() => undefined);
   }, [contact.uid]);
 
-  // Fetches the room's ENTIRE media history, not just whatever page of
-  // messages happens to be loaded in the open chat — that was the previous
-  // bug here (see fetchAllMedia's doc comment): a room with older photos
-  // outside the currently-loaded window showed "0" even when media existed.
-  // Kept in full (not just a count) so tapping the row can open the gallery
-  // on it directly, without a second fetch.
+  // Cheap server-computed count for the badge (see fetchMediaCount's doc comment) — the full
+  // list, with every item's full inline base64 mediaUrl, is only fetched in handleOpenMediaRow
+  // below once the user actually taps the row, so opening this screen doesn't have to pull a
+  // whole room's worth of photo/video data just to show a number.
   useEffect(() => {
-    fetchAllMedia(roomId)
-      .then(setMedia)
-      .catch(() => setMedia([]));
+    fetchMediaCount(roomId)
+      .then(setMediaCount)
+      .catch(() => setMediaCount(0));
   }, [roomId]);
+
+  const handleOpenMediaRow = () => {
+    if (!mediaCount) {
+      return;
+    }
+    setMediaLoading(true);
+    fetchRecentMedia(roomId, RECENT_MEDIA_PREVIEW_COUNT)
+      .then(recent => {
+        if (recent.length > 0) onOpenMedia(recent, recent[recent.length - 1].id);
+      })
+      .finally(() => setMediaLoading(false));
+  };
 
   useEffect(() => {
     if (view !== 'starred' || starred !== null) {
@@ -102,13 +116,11 @@ function ContactInfoScreen({ contact, contactPhotoUrl, myUid, roomId, onClose, o
                   alignItems: 'center',
                   justifyContent: 'space-between',
                   padding: '14px 4px',
-                  cursor: media && media.length > 0 ? 'pointer' : 'default',
+                  cursor: mediaCount && !mediaLoading ? 'pointer' : 'default',
                 }}
-                onClick={() => {
-                  if (media && media.length > 0) onOpenMedia(media);
-                }}>
+                onClick={handleOpenMediaRow}>
                 <span style={{ fontSize: 14, color: theme.text }}>📎 Medya, bağlantı ve belgeler</span>
-                <span style={{ fontSize: 13.5, color: theme.textMuted }}>{media?.length ?? '…'}</span>
+                <span style={{ fontSize: 13.5, color: theme.textMuted }}>{mediaLoading ? '…' : mediaCount ?? '…'}</span>
               </div>
               <div
                 style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 4px', cursor: 'pointer' }}

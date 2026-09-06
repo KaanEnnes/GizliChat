@@ -4,7 +4,22 @@ import DeviceInfo from 'react-native-device-info';
 import RNFS from 'react-native-fs';
 import { db } from './firebase';
 
-const { ApkInstaller } = NativeModules as { ApkInstaller?: { install: (path: string) => Promise<boolean> } };
+const { ApkInstaller } = NativeModules as {
+  ApkInstaller?: { install: (path: string) => Promise<boolean>; shareApk: () => Promise<boolean> };
+};
+
+/**
+ * Offline, no-internet "send to nearby device": hands this app's own
+ * installed APK to the system share sheet (Nearby Share/Quick Share,
+ * Bluetooth, etc.), unlike the QR flow above which needs the recipient to
+ * have internet to hit Firebase Hosting.
+ */
+export async function shareInstalledApk(): Promise<void> {
+  if (Platform.OS !== 'android' || !ApkInstaller) {
+    throw new Error('Bu özellik bu cihazda kullanılamıyor.');
+  }
+  await ApkInstaller.shareApk();
+}
 
 /**
  * Manually maintained in Firestore (app_config/android) — there is no build
@@ -48,6 +63,26 @@ export function getInstalledVersionCode(): number {
 }
 
 /**
+ * How many times a dropped-connection download is silently retried before
+ * surfacing an error to the user. This APK is ~130MB+, so on a weak/unstable
+ * mobile connection (observed live: "Software caused connection abort" from
+ * the OS killing the socket mid-transfer) a single attempt failing isn't
+ * unusual — most of the time a retry a moment later just succeeds.
+ */
+const MAX_DOWNLOAD_ATTEMPTS = 3;
+
+function isTransientDownloadError(error: unknown): boolean {
+  const message = (error as Error)?.message ?? '';
+  return (
+    message.includes('connection abort') ||
+    message.includes('Connection reset') ||
+    message.includes('ETIMEDOUT') ||
+    message.includes('ECONNRESET') ||
+    message.includes('Network request failed')
+  );
+}
+
+/**
  * Downloads the APK from `apkUrl` into the app's cache dir, then hands it to
  * ApkInstallerModule.kt to launch the system package installer. No progress
  * callback: for a download this size on a fast connection, RNFS's native
@@ -58,6 +93,25 @@ export async function downloadAndInstallUpdate(info: LatestVersionInfo): Promise
   if (!ApkInstaller) {
     throw new Error('Güncelleme yükleyici bu cihazda kullanılamıyor.');
   }
+  for (let attempt = 1; attempt <= MAX_DOWNLOAD_ATTEMPTS; attempt += 1) {
+    try {
+      await downloadAndInstallOnce(info);
+      return;
+    } catch (error) {
+      const isLastAttempt = attempt === MAX_DOWNLOAD_ATTEMPTS;
+      if (isLastAttempt || !isTransientDownloadError(error)) {
+        throw isTransientDownloadError(error)
+          ? new Error('Bağlantı birkaç kez koptu. Wi-Fi\'ye geçip tekrar dene.')
+          : error;
+      }
+      // Brief pause before retrying — an immediate retry into the same
+      // network hiccup just fails again just as fast.
+      await new Promise<void>(resolve => setTimeout(resolve, 1500));
+    }
+  }
+}
+
+async function downloadAndInstallOnce(info: LatestVersionInfo): Promise<void> {
   const destPath = `${RNFS.CachesDirectoryPath}/update-${info.versionCode}.apk`;
   // Stale partial file from a previously interrupted download at this same
   // versionCode would otherwise get silently handed to the installer as-is.
@@ -87,5 +141,5 @@ export async function downloadAndInstallUpdate(info: LatestVersionInfo): Promise
     throw new Error('Güncelleme indirmesi eksik kaldı (bağlantı kesildi). Lütfen tekrar deneyin.');
   }
 
-  await ApkInstaller.install(destPath);
+  await ApkInstaller!.install(destPath);
 }

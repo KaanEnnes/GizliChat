@@ -98,7 +98,12 @@ function AdminScreen({ account, onLogout }: Props): React.JSX.Element {
       case 'file':
         return <span>📎 {message.fileName ?? 'Dosya'}</span>;
       case 'call':
-        return <span>📞 Arama ({message.callStatus === 'missed' ? 'cevapsız' : 'tamamlandı'})</span>;
+        return (
+          <span>
+            📞 Arama (
+            {message.callStatus === 'missed' ? 'cevapsız' : message.callStatus === 'declined' ? 'reddedildi' : 'tamamlandı'})
+          </span>
+        );
       default:
         return <span>{message.text}</span>;
     }

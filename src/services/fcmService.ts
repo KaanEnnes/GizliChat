@@ -1,4 +1,4 @@
-import { Platform } from 'react-native';
+import { Alert, NativeModules, Platform } from 'react-native';
 import {
   getMessaging,
   getToken,
@@ -12,11 +12,35 @@ import { doc, setDoc } from 'firebase/firestore';
 import { db, auth } from './firebase';
 import { requestNotificationPermission } from './permissionsService';
 import {
+  getAlarmEscalationMinutesAsync,
   isActiveChatUid,
+  isAlarmEscalationEnabledAsync,
   isNotificationsEnabled,
   isNotificationsEnabledAsync,
   randomFakeNotification,
 } from './notificationService';
+
+const { AlarmEscalation } = NativeModules as {
+  AlarmEscalation?: {
+    scheduleEscalation: (senderId: string, delayMs: number) => void;
+    cancelEscalation: (senderId: string) => void;
+    markChatOpened: (senderId: string) => void;
+  };
+};
+
+/**
+ * Called by AppNavigator whenever the chat room for `senderId` opens (or
+ * closes, with `senderId: null`) — cancels/records that this contact's
+ * messages were just seen, on the native side, so a pending 15-minute alarm
+ * escalation (see AlarmEscalationModule) doesn't fire for a chat the user is
+ * already looking at.
+ */
+export function notifyChatOpened(senderId: string | null): void {
+  if (Platform.OS !== 'android' || !AlarmEscalation || !senderId) {
+    return;
+  }
+  AlarmEscalation.markChatOpened(senderId);
+}
 
 /** Same disguised copy as the in-app toast (GameHubScreen is the "app" a bystander sees). */
 const NOTIFICATION_TITLE = 'Mini Oyunlar';
@@ -52,8 +76,63 @@ export async function ensureNotificationChannel(): Promise<void> {
   });
 }
 
+const { FloatingChat } = NativeModules as {
+  FloatingChat?: {
+    isIgnoringBatteryOptimizations: () => Promise<boolean>;
+    requestIgnoreBatteryOptimizations: () => Promise<boolean>;
+  };
+};
+
+/**
+ * The server already sends pushes with `android: { priority: 'high' }`
+ * (functions/index.js), but on OEM ROMs with aggressive background-app
+ * management (this project has repeatedly hit this on MediaTek/XOS devices —
+ * see FloatingChatModule's battery-optimization exemption, added for the same
+ * reason) a killed/idle app still won't get its background FCM handler woken
+ * reliably unless it's exempt from battery optimization. Previously this
+ * exemption was only ever requested from the floating-chat feature, which
+ * most users never open — so most devices never got prompted at all, and
+ * push notifications silently degraded to "mostly doesn't arrive with the
+ * screen off." Prompting once here, right after notification permission is
+ * granted, covers ordinary chat notifications too.
+ */
+async function ensureBackgroundNotificationReliability(): Promise<void> {
+  if (!FloatingChat) {
+    return;
+  }
+  try {
+    const ignoringAlready = await FloatingChat.isIgnoringBatteryOptimizations();
+    if (ignoringAlready) {
+      return;
+    }
+    Alert.alert(
+      'Bir ayar daha gerekiyor',
+      'Bildirimlerin, telefon ekranı kapalıyken veya uygulama arka plandayken gecikmeden gelmesi için bu uygulamaya pil optimizasyonundan muafiyet vermen gerekiyor. Şimdi o ayar ekranını açalım mı?',
+      [
+        { text: 'Şimdi değil', style: 'cancel' },
+        { text: 'Ayarları Aç', onPress: () => FloatingChat.requestIgnoreBatteryOptimizations().catch(() => undefined) },
+      ],
+    );
+  } catch {
+    // Best-effort — if the check itself fails, don't block anything else.
+  }
+}
+
+/**
+ * Stored per-token (doc id = the token itself, deduped automatically) under a
+ * subcollection instead of a single `users/{uid}.fcmToken` field. A single
+ * field meant a user's phone and PC (or two phones) constantly overwrote each
+ * other's token as each re-registered on launch/refresh — whichever device
+ * synced last silently stole the other's push, which is why "PC bildirimleri
+ * çoğunlukla gelmiyor" (see functions/index.js's onNewMessage, which now
+ * sends to every token in this subcollection instead of one field).
+ */
 async function saveFcmToken(uid: string, token: string): Promise<void> {
-  await setDoc(doc(db, 'users', uid), { fcmToken: token }, { merge: true });
+  await setDoc(
+    doc(db, 'users', uid, 'fcmTokens', token),
+    { platform: 'android', updatedAt: Date.now() },
+    { merge: true },
+  );
 }
 
 /**
@@ -79,6 +158,10 @@ export function syncNotificationsEnabledToServer(enabled: boolean): void {
  * both paths render identically.
  */
 export async function displayFakeGameNotification(senderId: string): Promise<void> {
+  if (AlarmEscalation && (await isAlarmEscalationEnabledAsync())) {
+    const minutes = await getAlarmEscalationMinutesAsync();
+    AlarmEscalation.scheduleEscalation(senderId, minutes * 60 * 1000);
+  }
   await ensureNotificationChannel();
   await notifee.displayNotification({
     // Stable per-sender id: a burst of messages from the same contact
@@ -133,6 +216,7 @@ export async function initFcm(uid: string): Promise<() => void> {
       // toasts still work regardless.
       console.log('[fcmService] getToken/saveFcmToken failed:', error);
     }
+    ensureBackgroundNotificationReliability();
   }
 
   const unsubscribeTokenRefresh = onTokenRefresh(messagingInstance, token => {
@@ -182,7 +266,7 @@ export function registerBackgroundHandlers(): void {
     await displayFakeGameNotification(senderId);
   });
 
-  notifee.onBackgroundEvent(async ({ type }) => {
+  notifee.onBackgroundEvent(async ({ type, detail }) => {
     if (type === EventType.PRESS) {
       // No deep link into the chat room on purpose: this app's real UI is
       // gated behind the hidden gesture + login screen (see
@@ -191,6 +275,11 @@ export function registerBackgroundHandlers(): void {
       // a cold-start notification tap would bypass that and defeat the
       // disguise — `launchActivity: 'default'` already just opens the app
       // normally (GameHubScreen), which is all we want here.
+      const notificationId = detail.notification?.id ?? '';
+      const senderId = notificationId.startsWith('chat_') ? notificationId.slice('chat_'.length) : null;
+      if (senderId && AlarmEscalation) {
+        AlarmEscalation.cancelEscalation(senderId);
+      }
     }
   });
 }

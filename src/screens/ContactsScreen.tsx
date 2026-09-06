@@ -80,6 +80,9 @@ function formatPreview(message: ChatMessage | null | undefined, myUid: string): 
       if (message.callStatus === 'missed') {
         return `Cevapsız ${kind.toLowerCase()}`;
       }
+      if (message.callStatus === 'declined') {
+        return `Reddedilen ${kind.toLowerCase()}`;
+      }
       return `${prefix}📞 ${kind}`;
     }
     case 'chess':
@@ -92,6 +95,9 @@ function formatPreview(message: ChatMessage | null | undefined, myUid: string): 
 function formatCallDetail(message: ChatMessage): string {
   if (message.callStatus === 'missed') {
     return 'Cevapsız';
+  }
+  if (message.callStatus === 'declined') {
+    return 'Reddedildi';
   }
   const totalSeconds = message.durationSeconds ?? 0;
   const minutes = Math.floor(totalSeconds / 60);
@@ -457,7 +463,9 @@ function ContactsScreen({ account, onOpenRoom, onOpenGames, onLogout }: Props): 
           <Text style={[styles.sectionTitle, { color: theme.textMuted }]}>Son Aramalar</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
             {recentCalls.map(({ contact, message }) => {
-              const missed = message.callStatus === 'missed';
+              // Anything that isn't a connected call reads as "went wrong" here (red),
+              // so a declined call isn't shown in the same neutral tone as a completed one.
+              const missed = message.callStatus !== 'completed';
               return (
                 <Pressable
                   key={contact.uid}

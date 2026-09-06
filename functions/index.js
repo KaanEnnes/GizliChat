@@ -79,38 +79,64 @@ exports.onNewMessage = onDocumentCreated('rooms/{roomId}/messages/{messageId}', 
   const db = getFirestore();
   const userSnap = await db.collection('users').doc(recipientUid).get();
   const userData = userSnap.data();
+  // Every registered device (phone, PC browser, a second PC, …) gets its own
+  // token doc under this subcollection (see fcmService.ts on both clients) —
+  // previously all devices shared one `users/{uid}.fcmToken` field and kept
+  // overwriting each other's token, which silently starved whichever device
+  // synced less often (almost always the PC browser, since the mobile app
+  // resyncs its token on every login). Sending to all of them fixes that.
+  const tokensSnap = await db.collection('users').doc(recipientUid).collection('fcmTokens').get();
+  const tokens = tokensSnap.docs.map(d => d.id);
+  // Legacy single-field token, from clients still on a build that predates
+  // the subcollection — without this, anyone who hasn't opened the updated
+  // app/site yet would silently stop receiving push entirely.
+  if (typeof userData?.fcmToken === 'string' && !tokens.includes(userData.fcmToken)) {
+    tokens.push(userData.fcmToken);
+  }
   console.log('onNewMessage diagnostic', {
     roomId,
     recipientUid,
     userExists: userSnap.exists,
     notificationsEnabled: userData?.notificationsEnabled,
-    hasFcmToken: Boolean(userData?.fcmToken),
+    tokenCount: tokens.length,
   });
-  if (!userData || userData.notificationsEnabled === false || !userData.fcmToken) {
-    console.log('onNewMessage: skipping send (no user/disabled/no token)');
+  if (!userData || userData.notificationsEnabled === false || tokens.length === 0) {
+    console.log('onNewMessage: skipping send (no user/disabled/no tokens)');
     return;
   }
 
-  try {
-    await getMessaging().send({
-      token: userData.fcmToken,
-      data: {
-        roomId,
-        senderId: String(message.senderId ?? ''),
-      },
-      android: { priority: 'high' },
-    });
-    console.log('onNewMessage: push sent successfully', { recipientUid });
-  } catch (error) {
-    // An invalid/expired token is expected eventually (reinstall, token
-    // rotation) — clear it so future messages don't keep retrying a dead
-    // token. Any other error is just logged; a missed push isn't critical,
-    // the message itself is already safely in Firestore.
-    if (error && (error.code === 'messaging/registration-token-not-registered' || error.code === 'messaging/invalid-registration-token')) {
-      console.log('onNewMessage: token invalid, clearing it', { recipientUid, code: error.code });
-      await db.collection('users').doc(recipientUid).update({ fcmToken: null }).catch(() => undefined);
-    } else {
-      console.error('FCM send failed', error);
+  const response = await getMessaging().sendEachForMulticast({
+    tokens,
+    data: {
+      roomId,
+      senderId: String(message.senderId ?? ''),
+    },
+    android: { priority: 'high' },
+    // Chrome/OS can otherwise deprioritize a data-only web push and deliver
+    // it late (or drop it once the browser decides it's low-priority) —
+    // Urgency: high asks for immediate delivery, matching android's
+    // priority: high above; TTL keeps it queued if the browser is briefly
+    // offline instead of being dropped right away.
+    webpush: { headers: { Urgency: 'high', TTL: '86400' } },
+  });
+
+  const deadTokens = [];
+  response.responses.forEach((result, index) => {
+    if (result.success) {
+      return;
     }
+    const code = result.error?.code;
+    if (code === 'messaging/registration-token-not-registered' || code === 'messaging/invalid-registration-token') {
+      deadTokens.push(tokens[index]);
+    } else {
+      console.error('FCM send failed for one token', result.error);
+    }
+  });
+  if (deadTokens.length > 0) {
+    console.log('onNewMessage: clearing dead tokens', { recipientUid, count: deadTokens.length });
+    const batch = db.batch();
+    deadTokens.forEach(token => batch.delete(db.collection('users').doc(recipientUid).collection('fcmTokens').doc(token)));
+    await batch.commit().catch(() => undefined);
   }
+  console.log('onNewMessage: push sent', { recipientUid, successCount: response.successCount, failureCount: response.failureCount });
 });

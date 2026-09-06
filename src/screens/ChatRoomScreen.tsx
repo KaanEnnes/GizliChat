@@ -67,7 +67,7 @@ import { requestMicrophonePermission } from '../services/permissionsService';
 import { markRoomRead } from '../services/readStatusService';
 import { addVideoBytesUsed, subscribeToUserProfile } from '../services/userService';
 import { getChatBackground, setChatBackground } from '../services/chatBackgroundService';
-import { enterPipMode } from '../services/pipService';
+import { startFloatingChat } from '../services/floatingChatBridge';
 import { useTheme } from '../theme/ThemeContext';
 import { useNetworkStatus } from '../hooks/useNetworkStatus';
 
@@ -970,7 +970,7 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack, initialJumpMessage
         </Pressable>
         <Pressable
           onPress={() => {
-            enterPipMode();
+            startFloatingChat(contact, myUid, theme, backgroundUri);
           }}
           hitSlop={8}
           style={styles.headerIconButton}
@@ -1158,9 +1158,13 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack, initialJumpMessage
             .finally(() => setCallStarting(false));
         }}
         onJumpToMessage={scrollToMessageId}
-        onOpenMedia={media => {
-          setGalleryFullMedia(media);
-          setGalleryMessageId(media[media.length - 1].id);
+        onOpenMedia={(recentMedia, initialMessageId) => {
+          // Seeds the gallery with just the recent preview for an instant open — the
+          // galleryMessageId effect above (fetchAllMedia) then fetches the room's full media
+          // history in the background and replaces `recentMedia` once that resolves, same as
+          // when the gallery is opened by tapping an image inline.
+          setGalleryFullMedia(recentMedia);
+          setGalleryMessageId(initialMessageId);
         }}
       />
 
@@ -1238,6 +1242,16 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack, initialJumpMessage
           keyboardShouldPersistTaps="handled"
           onScroll={handleScroll}
           scrollEventThrottle={100}
+          // Base64 images/videos/song thumbnails inline in each bubble make
+          // off-screen rows expensive to keep mounted — trimming the
+          // render/retention window (vs. FlatList's much larger defaults)
+          // cuts how many of those heavy rows exist at once, which is most
+          // of what was making scrolling/sending feel laggy.
+          removeClippedSubviews
+          initialNumToRender={12}
+          maxToRenderPerBatch={8}
+          windowSize={7}
+          updateCellsBatchingPeriod={50}
           maintainVisibleContentPosition={loadingMore ? { minIndexForVisible: 0 } : undefined}
           ListHeaderComponent={
             loadingMore ? (

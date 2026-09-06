@@ -52,6 +52,23 @@
          APK indirildikten sonra sistemin paket yükleyicisini açabilmek için. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
+    <!-- Küçük yüzer mesajlaşma penceresi (FloatingChatService) — bu cihazın
+         Android'in resmi Picture-in-Picture özelliğini donanım/firmware
+         seviyesinde desteklemediği doğrulandığı için (pm has-feature
+         android.software.picture_in_picture -> false) kendi overlay
+         penceremizi yazıyoruz. -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+    <!-- 15 dk okunmamış mesaj alarmı (AlarmEscalationModule/Receiver, opt-in,
+         varsayılan kapalı) — ekran kapalıyken/uygulama öldürülmüşken bile
+         Doze modundan cihazı uyandırabilen setExactAndAllowWhileIdle için
+         gerekli. Android 12+ (API 31) bu izni kullanıcı Ayarlar'dan elle
+         vermezse alarm sessizce atlanır (bkz. AlarmEscalationModule). -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+
     <application
       android:name=".MainApplication"
       android:label="@string/app_name"
@@ -85,5 +102,14 @@
             <category android:name="android.intent.category.LAUNCHER" />
         </intent-filter>
       </activity>
+      <service
+        android:name=".FloatingChatService"
+        android:exported="false"
+        android:foregroundServiceType="specialUse">
+        <property
+          android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+          android:value="floating-chat-window" />
+      </service>
+      <receiver android:name=".AlarmEscalationReceiver" android:exported="false" />
     </application>
 </manifest>

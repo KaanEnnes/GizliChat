@@ -61,6 +61,22 @@ export function requestNotificationPermission(): Promise<boolean> {
   );
 }
 
+/**
+ * Android 12+ (API 31) made Bluetooth connect/discovery a runtime-dangerous
+ * permission group; below that, BLUETOOTH/BLUETOOTH_ADMIN in the manifest are
+ * normal permissions granted at install with no prompt, same reasoning as
+ * requestNotificationPermission's API-level guard above.
+ */
+export function requestBluetoothConnectPermission(): Promise<boolean> {
+  if (Platform.OS === 'android' && Platform.Version < 31) {
+    return Promise.resolve(true);
+  }
+  return requestAndroidPermissions(
+    [PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT],
+    'Yakındaki cihazla Bluetooth üzerinden satranç oynayabilmek için Bluetooth bağlantı iznine ihtiyaç var. Telefon bir daha sormuyorsa izni Ayarlar\'dan elle açman gerekiyor.',
+  );
+}
+
 export function requestCallPermissions(includeCamera: boolean): Promise<boolean> {
   const permissions = [PermissionsAndroid.PERMISSIONS.RECORD_AUDIO];
   if (includeCamera) {

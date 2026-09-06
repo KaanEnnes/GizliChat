@@ -73,15 +73,35 @@ function MessageBubble({ message, isMine, myUid, isPinned, highlighted, onToggle
   const status: 'pending' | 'sent' | 'delivered' | 'read' = message.pending ? 'pending' : message.readAt ? 'read' : message.deliveredAt ? 'delivered' : 'sent';
 
   if (message.type === 'call') {
-    const missed = message.callStatus === 'missed';
+    // Mirrors the mobile client's call log: anything that did not actually
+    // connect is shown in the danger tone, and the duration is only
+    // meaningful for a completed call.
+    const connected = message.callStatus === 'completed';
+    const declined = message.callStatus === 'declined';
     const kindLabel = message.callVideo ? 'Görüntülü arama' : 'Sesli arama';
-    const detail = missed ? (isMine ? 'Cevap verilmedi' : 'Cevapsız arama') : `${message.durationSeconds ?? 0}s`;
+    const totalSeconds = message.durationSeconds ?? 0;
+    const detail = connected
+      ? `${Math.floor(totalSeconds / 60)}:${String(Math.floor(totalSeconds % 60)).padStart(2, '0')}`
+      : declined
+        ? isMine
+          ? 'Reddedildi'
+          : 'Sen reddettin'
+        : isMine
+          ? 'Cevap verilmedi'
+          : 'Cevapsız arama';
     return (
       <div className="msg-call-row">
-        <div className="msg-call-pill" style={{ background: missed ? theme.dangerSoft : theme.surface, borderColor: missed ? theme.dangerSoft : theme.border }}>
+        <div
+          className="msg-call-pill"
+          style={{
+            background: connected ? theme.surface : theme.dangerSoft,
+            borderColor: connected ? theme.border : theme.dangerSoft,
+          }}>
           <span style={{ fontSize: 18, marginRight: 10 }}>{message.callVideo ? '🎥' : '📞'}</span>
           <div>
-            <div style={{ fontSize: 13, fontWeight: 700, color: missed ? theme.danger : theme.text }}>{kindLabel} {isMine ? '↗' : '↙'}</div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: connected ? theme.text : theme.danger }}>
+              {kindLabel} {isMine ? '↗' : '↙'}
+            </div>
             <div style={{ fontSize: 11.5, color: theme.textMuted }}>{detail}</div>
           </div>
         </div>

@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, FlatList, Image, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
-import YoutubeIframe from 'react-native-youtube-iframe';
+import YoutubeIframe, { type YoutubeIframeRef } from 'react-native-youtube-iframe';
 import { useTheme } from '../theme/ThemeContext';
 import { searchSongs, type SongSearchResult } from '../services/songService';
 import type { SongClip } from '../services/chatService';
@@ -40,6 +40,7 @@ function SongPickerModal({ visible, onClose, onSend }: Props): React.JSX.Element
   const [clipDuration, setClipDuration] = useState(DEFAULT_CLIP_DURATION);
   const [previewKey, setPreviewKey] = useState(0);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const playerRef = useRef<YoutubeIframeRef | null>(null);
 
   useEffect(() => {
     if (!visible) {
@@ -83,16 +84,23 @@ function SongPickerModal({ visible, onClose, onSend }: Props): React.JSX.Element
     setPreviewKey(k => k + 1);
   };
 
-  const handleSend = () => {
+  const handleSend = async () => {
     if (!selected) {
       return;
     }
+    // The preview player below has real YouTube controls (a scrubbable seek bar), so the
+    // user can drag to the exact part of the song they want to send — but that manual seek
+    // only moves playback, it never updated `startSeconds` (which only the +/-sn buttons
+    // did). Sending `startSeconds` here silently ignored wherever the user had actually
+    // scrubbed to, which was the "can't send the part I want" bug. Reading the player's real
+    // current time at send-time captures both the button nudges and any manual scrub.
+    const actualStart = await playerRef.current?.getCurrentTime().catch(() => undefined);
     onSend({
       videoId: selected.videoId,
       title: selected.title,
       artist: selected.channelTitle,
       thumbnailUrl: selected.thumbnailUrl,
-      startSeconds,
+      startSeconds: actualStart != null ? Math.floor(actualStart) : startSeconds,
       durationSeconds: clipDuration,
     });
     handleClose();
@@ -162,6 +170,7 @@ function SongPickerModal({ visible, onClose, onSend }: Props): React.JSX.Element
               </Text>
               <View style={styles.playerWrap}>
                 <YoutubeIframe
+                  ref={playerRef}
                   key={previewKey}
                   height={180}
                   videoId={selected.videoId}

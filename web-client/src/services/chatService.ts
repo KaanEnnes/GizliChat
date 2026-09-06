@@ -3,6 +3,7 @@ import {
   collection,
   deleteField,
   doc,
+  getCountFromServer,
   getDoc,
   getDocs,
   limit,
@@ -14,6 +15,7 @@ import {
   Timestamp,
   type Unsubscribe,
   updateDoc,
+  where,
 } from 'firebase/firestore';
 import { db } from './firebase';
 
@@ -30,7 +32,7 @@ export interface ChatMessage {
   fileSize?: number;
   durationSeconds?: number;
   callVideo?: boolean;
-  callStatus?: 'completed' | 'missed';
+  callStatus?: 'completed' | 'missed' | 'declined';
   /** Present for 'song' messages — a YouTube video id plus the clip window the sender picked (see songService.ts / SongPickerModal). */
   youtubeVideoId?: string;
   songTitle?: string;
@@ -105,7 +107,9 @@ function docToMessage(docSnap: {
     durationSeconds: typeof data.durationSeconds === 'number' ? data.durationSeconds : undefined,
     callVideo: typeof data.callVideo === 'boolean' ? data.callVideo : undefined,
     callStatus:
-      data.callStatus === 'completed' || data.callStatus === 'missed' ? (data.callStatus as 'completed' | 'missed') : undefined,
+      data.callStatus === 'completed' || data.callStatus === 'missed' || data.callStatus === 'declined'
+        ? (data.callStatus as 'completed' | 'missed' | 'declined')
+        : undefined,
     reactions: typeof data.reactions === 'object' && data.reactions !== null ? (data.reactions as Record<string, string>) : undefined,
     starredBy: typeof data.starredBy === 'object' && data.starredBy !== null ? (data.starredBy as Record<string, boolean>) : undefined,
     pending: docSnap.metadata.hasPendingWrites,
@@ -344,14 +348,58 @@ export function subscribeToTypingTimestamp(roomId: string, otherUid: string, onT
   );
 }
 
-/** Every image/video message in a room's ENTIRE history, chronological order, for the "browse all media" gallery — previously this only searched whatever page of history happened to already be loaded into the open chat's `messages` state, so an older photo the user hadn't scrolled up to yet silently never showed up in the gallery. Re-queries the whole room, same "no limit, filter client-side" tradeoff as searchMessagesInRoom. */
+/**
+ * Every image/video message in a room's ENTIRE history, chronological order, for the "browse
+ * all media" gallery — previously this only searched whatever page of history happened to
+ * already be loaded into the open chat's `messages` state, so an older photo the user hadn't
+ * scrolled up to yet silently never showed up in the gallery.
+ *
+ * Filters by `type` server-side instead of fetching the room's entire message history and
+ * discarding non-media docs client-side (see the mobile client's chatService.ts copy of this
+ * function for why — same fix, same freeze). No `orderBy` here (would need a composite index
+ * for `type in [...]` + `orderBy(createdAt)`) — sorted client-side instead, on the much smaller
+ * result set. Still downloads every matching doc's full inline base64 `mediaUrl` though, so
+ * ContactInfoScreen only calls this once the user taps to actually open the gallery — see
+ * fetchMediaCount below for the cheap badge-only path.
+ */
 export async function fetchAllMedia(roomId: string): Promise<ChatMessage[]> {
   const snapshot = await getDocs(
-    query(collection(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION), orderBy('createdAt', 'asc')),
+    query(collection(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION), where('type', 'in', ['image', 'video'])),
   );
   return snapshot.docs
     .map(d => docToMessage(d))
-    .filter(message => !message.deleted && (message.type === 'image' || message.type === 'video') && message.mediaUrl);
+    .filter(message => !message.deleted && message.mediaUrl)
+    .sort((a, b) => a.createdAt - b.createdAt);
+}
+
+/**
+ * The `count` most recent image/video messages, chronological order — lets the gallery open
+ * instantly on just the last handful of items while fetchAllMedia's full-history fetch keeps
+ * running in the background and replaces this once it resolves. Needs the `type ASC, createdAt
+ * DESC` composite index in firestore.indexes.json — see the mobile client's copy of this
+ * function for the full rationale.
+ */
+export async function fetchRecentMedia(roomId: string, count: number): Promise<ChatMessage[]> {
+  const snapshot = await getDocs(
+    query(
+      collection(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION),
+      where('type', 'in', ['image', 'video']),
+      orderBy('createdAt', 'desc'),
+      limit(count),
+    ),
+  );
+  return snapshot.docs
+    .map(d => docToMessage(d))
+    .filter(message => !message.deleted && message.mediaUrl)
+    .reverse();
+}
+
+/** Server-computed count (no document bodies downloaded) for ContactInfoScreen's media badge — see the mobile client's copy of this function for the full rationale. */
+export async function fetchMediaCount(roomId: string): Promise<number> {
+  const snapshot = await getCountFromServer(
+    query(collection(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION), where('type', 'in', ['image', 'video'])),
+  );
+  return snapshot.data().count;
 }
 
 export async function fetchMessageById(roomId: string, messageId: string, myUid: string): Promise<ChatMessage | null> {

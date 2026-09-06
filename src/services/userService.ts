@@ -19,6 +19,7 @@ import {
   where,
 } from 'firebase/firestore';
 import { auth, db } from './firebase';
+import { disconnectStreamClient } from './callService';
 
 /** A contact is shown as "online" if their last heartbeat was within this window. */
 export const ONLINE_THRESHOLD_MS = 60_000;
@@ -117,6 +118,11 @@ export async function loginAccount(username: string, password: string): Promise<
 }
 
 export async function logoutAccount(): Promise<void> {
+  // Stream's video client is cached per user id and outlives the React tree,
+  // so without an explicit disconnect the previous account stayed connected
+  // after sign-out — still receiving its own ring events, and able to throw a
+  // full-screen incoming-call UI over whoever logs in next.
+  await disconnectStreamClient();
   await signOut(auth);
 }
 

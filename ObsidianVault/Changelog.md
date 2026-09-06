@@ -1,5 +1,229 @@
 # Değişiklik Günlüğü
 
+## 2026-09-06 — v8.8: Sesli/görüntülü arama baştan aşağı revize (17 hata + tasarım, iki emülatörde test edildi)
+
+Kullanıcı arama özelliğinin hem akışının hem tasarımının tamamen gözden geçirilmesini ve
+hatalarının bulunup çözülmesini istedi. Bulunan hatalar ve düzeltmeleri:
+
+**1) Aynı kişiyi ikinci kez arayınca telefonu çalmıyordu (en kritik hata).** `callService.ts`
+arama kimliğini `${sıralı-uid-çifti}-${voice|video}` olarak, yani KİŞİ BAŞINA SABİT
+üretiyordu. Stream'de bir arama kimliği kalıcıdır: bitmiş bir aramanın kimliğiyle
+`getOrCreate` çağrıldığında aynı, çoktan sonlanmış arama nesnesi geri döner ve bir daha
+çalmaz. Yani bir kişiyle ilk sesli arama çalışıyor, sonrakiler sessizce hiçbir şey
+yapmıyordu. Kimliğe artık rastgele bir sonek ekleniyor (`buildCallId`), her arama gerçekten
+yeni bir arama.
+
+**2) Sohbetteki arama kaydı her seferinde ÜZERİNE yazılıyordu.** Arama kaydı dokümanının
+kimliği `call_<aramaKimliği>` olduğu için, sabit arama kimliğinin doğrudan sonucu olarak bir
+kişiyle yapılan tüm sesli aramalar sohbette tek bir satırı paylaşıyordu — geçmiş görünmüyordu.
+(1) ile birlikte kendiliğinden çözüldü.
+
+**3) Arama yönü (↗/↙) yazma yarışına bağlıydı.** İki cihaz da aynı dokümana kendi
+`senderId`'siyle yazıyordu; son yazan kazandığı için oku kimin aradığı değil, ağ gecikmesi
+belirliyordu. Artık her iki taraf da ARAYANIN uid'sini yazıyor. Ayrıca `sendCallLogMessage`
+bir Firestore transaction'ına alındı: durum asla geriye düşmüyor (completed > declined >
+missed) ve süre iki tarafın gördüğü en uzun değer oluyor — önceden önce kapatan tarafın kısa
+süresi kazanabiliyordu.
+
+**4) `firestore.rules` alıcının arama kaydını yazmasını engelliyordu.** `create` kuralı
+`senderId == request.auth.uid` şartı koştuğu için, arayanın uid'siyle yazan alıcının isteği
+reddediliyordu; arayanın uygulaması kaydı yazamadıysa (çöktü, kapandı, çevrimdışıydı) sohbette
+hiç kayıt kalmıyordu. `call_` önekli, `type == 'call'` mesajlar için dar kapsamlı bir
+`create` istisnası ve yalnızca `callStatus`/`durationSeconds`/`callVideo` alanlarına dokunan
+bir `update` istisnası eklendi (`isRoomParticipant` yardımcı fonksiyonu). **Bu kural
+değişikliğinin `firebase deploy --only firestore:rules` ile yayınlanması gerekiyor.**
+
+**5) Arayan vazgeçtiğinde karşı taraf çalmaya devam ediyordu.** `call.leave()` çıplak
+çağrılıyordu; çalan bir aramayı gerçekten iptal etmek için `leave({ reject: true, reason })`
+gerekiyor. Vazgeçme `cancel`, reddetme `decline`, meşgulken gelen arama `busy`, cevapsız
+zaman aşımı `timeout` sebebiyle kapatılıyor.
+
+**6) Cevaplanmayan giden arama sonsuza kadar çalıyordu.** `RINGING_TIMEOUT_MS` (45 sn)
+eklendi; süre dolunca arama kendini iptal ediyor ve sohbete "cevapsız" kaydı düşüyor.
+
+**7) Görüşme sırasında gelen ikinci arama sessizce yok sayılıyordu** — karşı taraf boşuna
+çalıyordu. `CallProvider` artık meşgulken geleni `busy` sebebiyle gerçekten reddediyor.
+
+**8) Karşı taraf kapatınca ekran açık kalabiliyordu.** Stream birebir aramayı diğer katılımcı
+ayrıldığı anda her zaman sonlandırmıyor; `useRemoteParticipants` ile uzak katılımcı 2,5 sn
+boyunca yoksa (ve daha önce en az bir kez görülmüşse) arama kapatılıyor.
+
+**9) Gelen görüntülü arama sesli arama gibi açılabiliyordu.** `call.state.custom` doğrudan
+okunuyordu; alıcının cihazında bu veri bir tık sonra geldiğinde React yeniden render
+etmiyordu. Artık `useCallCustomData` hook'u kullanılıyor.
+
+**10) Bağlantı koptuğunda arama kaydı iki kez yazılıyordu** (`RECONNECTING_FAILED` hem raporu
+hem ardından `LEFT`'i tetikliyordu) — `reportLeave` tek seferlik hâle getirildi.
+
+**11) Çıkış yapınca Stream istemcisi bağlı kalıyordu.** `getOrCreateInstance` uid başına
+önbelleğe alıyor ve kendiliğinden kapanmıyor; önceki hesap kendi arama olaylarını almaya
+devam ediyor, bir sonraki hesabın oturumunun üstüne tam ekran arama açabiliyordu.
+`disconnectStreamClient()` eklendi ve `logoutAccount()` içinden çağrılıyor.
+
+**12) JWT'nin son kullanma tarihi yoktu** — sızarsa iptal edilemezdi. Token'a 24 saatlik
+`exp` eklendi (Stream `tokenProvider`'ı zaten gerektiğinde yenisini istiyor).
+
+**13) Sesli arama hoparlörden açılıyordu.** Gizlilik odaklı bir uygulamada karşı tarafın sesi
+odadaki herkese duyuruluyordu. Artık sesli arama kulaklıktan (earpiece), görüntülü arama
+hoparlörden başlıyor. Bu daha önce, kulaklığın uygulamanın tüm ses oturumu için yapışkan
+varsayılan hâline gelmesi (oyun/bildirim seslerinin de kulaklıktan çıkması) yüzünden geri
+alınmıştı; çözümü artık kesin olarak çağrılan `callManager.stop()` temizliği. **Sorun tekrar
+ederse bakılacak yer `CallScreen.tsx` içindeki `deviceEndpointType`.**
+
+**14) "Reddedildi" diye bir durum yoktu.** `CallLogStatus` artık `completed | missed |
+declined`; arayan tarafta `call.rejected` olayı dinlenerek reddedilen arama cevapsızdan
+ayırt ediliyor. Mobil ve web istemcilerin arama kaydı/sohbet listesi/admin paneli görünümleri
+güncellendi.
+
+**Tasarım (tamamen yenilendi).** Arama ekranı artık her iki temada da koyu, tam ekran bir
+yüzey (gerçek telefonların arama ekranı gibi; video karolarının beyaz çerçevede kalmasını da
+önlüyor). Yenilikler: `react-native-svg` ile marka rengine boyanmış radyal gradyan arka plan,
+çalarken avatarın arkasından yayılan iki halkalı nabız animasyonu, avatar + isim + süre
+hiyerarşisi, `SafeAreaView` kenar boşlukları, ve tüm kontrollerin emoji yerine SVG ikonlara
+geçirilmesi (`CallIcons.tsx`'e `MicIcon`, `MicOffIcon`, `VideoOffIcon`, `FlipCameraIcon`,
+`SpeakerIcon`, `EarpieceIcon`, `BluetoothIcon`, `HeadsetIcon`, `EndCallIcon`,
+`AcceptCallIcon`, `MissedCallIcon` eklendi). Emoji ikonlar her Android sürümünde farklı
+görünüyor ve renklendirilemiyordu — "sessize alındı" gibi durumlar artık aydınlık dolgulu
+düğmeyle gösteriliyor. Ses çıkışı seçici koyu bir bottom-sheet'e dönüştü; video aramada üstte
+isim + süre çubuğu, altta yarı saydam kontrol yuvası var. `ContactInfoScreen`'deki
+Sesli/Görüntülü düğmeleri ve `MessageBubble`'daki arama kaydı da aynı ikon setine geçti.
+`StatusOverlay` spinner'ı artık `Easing.linear` (varsayılan ease-in-out her turda takılıyordu).
+
+**15) `callId` 64 karakter sınırını aşıyordu — (1)'in ilk denemesi HER aramayı bozdu.** Stream
+arama kimliklerinde sert bir üst sınır var; aşılınca `getOrCreate` `400 "id must be at maximum
+64 characters in length"` döndürüyor ve arama hiç başlamıyor. İki tam 28 karakterlik Firebase
+uid'i + tür zaten 63 karakterdi — sınırın TAM bir altı — yani (1) için eklenen rastgele sonek
+kimliği 78 karaktere çıkardı. İki emülatörlü testte yakalandı. `buildCallId` artık her uid'in
+ilk 8 karakterini alıyor (~34 karakter) ve sonucu `MAX_CALL_ID_LENGTH`'e kırpıyor.
+
+**16) Karşı taraf kapatınca arama diğer tarafta bitmiyordu (kullanıcı bildirimi).** (8)'deki
+katılımcı-sayacı koruması tek başına yetmedi. Stream birebir aramayı bir katılımcı ayrıldı diye
+kendiliğinden sonlandırmıyor ve yerel `CallingState` `JOINED` kalıyor — kalan taraf çalışan bir
+sayaç ve açık mikrofonla "Görüşme sürüyor" ekranında kalıyordu. Artık `call.session_participant_left`
+/ `call.ended` / `call.session_ended` olayları dinleniyor ve olay gelir gelmez `leave()` çağrılıyor;
+katılımcı sayacı yalnızca yedek (soketi düşen bir karşı taraf için).
+
+**17) Görüntülü arama düzeni yeniden yazıldı (kullanıcı isteği).** SDK'nın `CallContent`
+`layout="spotlight"` düzeni iki katılımcıyı yan yana döşüyordu — konuştuğun kişi ekranı kendi
+önizlemenle paylaşıyordu. Artık karşı taraf **tam ekran** (`ParticipantView`, `objectFit="cover"`),
+kendi kameran üstte **sürüklenebilir** küçük yuvarlatılmış bir dikdörtgende (`DraggableSelfView` —
+`PanResponder` + `Animated.ValueXY`, bırakınca en yakın köşeye yaylanır, üst çubuk ve alt kontrol
+yuvasının dışında kalacak şekilde sınırlanır). **Tuzak:** kendi önizlemene `videoZOrder={1}`
+vermezsen tam ekran uzak yüzeyin ARKASINDA kalıyor ve hiç görünmüyor.
+
+**Emülatör testi (2 AVD, gerçek Stream trafiği).** Sesli ve görüntülü arama uçtan uca denendi;
+sohbetteki arama kayıtları beş ayrı satır olarak doğrulandı: tamamlanan sesli (`00:09`),
+reddedilen görüntülü, cevapsız görüntülü, tamamlanan görüntülü (`00:34`), tamamlanan sesli
+(`00:04`). Yön okları iki cihazda tutarlıydı (aynı arama bir tarafta ↗, diğerinde ↙) ve bir taraf
+kapatınca diğer taraf da kapandı.
+
+**Bilinen sınır (bu turda çözülmedi):** uygulama tamamen kapalıyken gelen arama çalmıyor —
+Stream istemcisi yalnızca uygulama açıkken bağlı. Gerçek bir "kilit ekranında çalan arama"
+için FCM data-push + `notifee` full-screen intent (veya CallKeep) gerekiyor; ayrı bir iş.
+
+## 2026-09-06 — v8.7: PC bildirimleri artık gerçekten geliyor (çok cihazlı token) + 15 dk okunmamış mesaj alarmı
+
+Kullanıcı iki şey istedi: (1) PC'de bildirimlerin çoğunlukla gelmemesi, (2) mobilde bir
+bildirime 15 dakika boyunca bakılmadıysa — telefon ekranı ne kadar süre kapalı olursa olsun —
+alarm gibi bir ses çalması, ve bu özelliğin varsayılan olarak kapalı gelmesi.
+
+**1) PC bildirimlerinin kök sebebi: tek bir `fcmToken` alanı.** Hem mobil hem web istemci
+push token'ını `users/{uid}.fcmToken` ALANINA yazıyordu. Aynı hesap hem telefonda hem
+bilgisayarda açıkken bu iki cihaz sürekli birbirinin token'ının ÜZERİNE yazıyor — en son
+kaydeden kazanıyor, diğer cihaz sessizce push almayı bırakıyordu. Mobil uygulama token'ını
+her girişte yeniden kaydettiği için pratikte hep telefon kazanıyor, PC bildirimleri
+"çoğunlukla gelmiyor" hâline geliyordu.
+
+Düzeltme: token'lar artık cihaz başına ayrı bir dokümanda — `users/{uid}/fcmTokens/{token}`
+(doküman kimliği token'ın kendisi, `platform` + `updatedAt` alanlarıyla). `functions/index.js`
+içindeki `onNewMessage` tek `send()` yerine `sendEachForMulticast()` ile o kullanıcının TÜM
+cihazlarına gönderiyor, geçersiz/ölü token'ları toplu silerek temizliyor. Eski sürümde kalmış
+istemciler bildirimsiz kalmasın diye eski tek alanlık `fcmToken` hâlâ yedek olarak listeye
+ekleniyor (geçiş dönemi için). Ayrıca web push'a `webpush: { headers: { Urgency: 'high',
+TTL: '86400' } }` eklendi — data-only bir web push'u Chrome/işletim sistemi aksi hâlde düşük
+öncelikli sayıp geciktirebiliyor ya da tarayıcı kısa süre çevrimdışıysa tamamen düşürebiliyor.
+`firestore.rules`'a `users/{userId}/fcmTokens/{token}` için sahibine özel read/write kuralı
+eklendi.
+
+**2) 15 dk okunmamış mesaj alarmı (varsayılan KAPALI).** Yeni native Android parçaları:
+`AlarmEscalationModule.kt` (JS'e `scheduleEscalation`/`cancelEscalation`/`markChatOpened`
+veriyor), `AlarmEscalationReceiver.kt` ve `AlarmEscalationPackage.kt` (MainApplication'a
+kaydedildi). Bir sohbet bildirimi gösterildiğinde (`fcmService.displayFakeGameNotification`,
+hem ön plan hem arka plan/öldürülmüş yoldan) ayar açıksa AlarmManager ile
+`setExactAndAllowWhileIdle` kullanan tek seferlik bir alarm kuruluyor.
+
+Neden JS `setTimeout` değil: ekran kapandıktan/uygulama arka plana atıldıktan sonra JS motoru
+15 dakika boyunca ayakta kalmayı garanti etmiyor; süre sınırsız uzayabildiği için tek güvenilir
+yol cihazı Doze modundan uyandırabilen OS seviyesindeki AlarmManager. Aynı sebeple alarm
+tetiklendiğinde bildirim notifee/JS ile değil, doğrudan platform `Notification` API'siyle
+gösteriliyor — o an uygulama süreci tamamen ölmüş olabilir, ama BroadcastReceiver yine de
+çalışır. Ses olarak cihazın kendi varsayılan ALARM sesi (`RingtoneManager.TYPE_ALARM`) +
+`USAGE_ALARM` audio attribute + titreşim deseni + `setFullScreenIntent` kullanılıyor, yani
+bildirim sesi değil gerçek alarm sesi çalıyor.
+
+Durum (hangi göndericinin bekleyen alarmı var, bir sohbet en son ne zaman açıldı)
+SharedPreferences'ta tutuluyor, AsyncStorage'da değil — receiver'ın çalıştığı anda bir React
+context'inin var olduğu garanti değil. Aynı kişiden art arda gelen mesajlar alarmı ileri
+ötelemiyor (`pending_<senderId>` bayrağı): alarm İLK okunmamış mesajdan 15 dk sonra çalıyor.
+Sohbet açıldığında (`AppNavigator` → `notifyChatOpened`) ve bildirime basıldığında
+(`notifee.onBackgroundEvent`, `chat_<senderId>` id'sinden gönderici çıkarılıyor) alarm iptal
+ediliyor. Ayar `SettingsModal`'da "15 dk bildirim alarmı" anahtarı olarak, varsayılan kapalı
+(`notificationService.isAlarmEscalationEnabled`, AsyncStorage). Manifest'e
+`SCHEDULE_EXACT_ALARM` + `USE_FULL_SCREEN_INTENT` izinleri ve `AlarmEscalationReceiver`
+kaydı eklendi; Android 12+'ta "Alarmlar ve hatırlatıcılar" izni verilmemişse
+`SecurityException` yakalanıp alarm sessizce atlanıyor (bu opt-in bir ekstra, normal bildirim
+teslimatını bozmamalı).
+
+**3) Alarm süresi artık seçilebilir.** Sabit 15 dk yerine Ayarlar'da bir süre seçici
+(1/5/10/15/30/60 dk, varsayılan 15) — `notificationService.getAlarmEscalationMinutes`
+(AsyncStorage). Anahtar açıkken altında "Alarm süresi" satırı beliriyor, `SongPicker`/
+"Arama ses çıkışı" ile aynı seçici deseni. Not: süre değiştirildiğinde O AN bekleyen bir
+alarm eski süresiyle çalar, değişiklik bir sonraki bildirimden itibaren geçerli.
+
+**4) Kılık sızıntıları temizlendi ("hiçbir yerde GizliChat yazmasın").** Cihazda/dışarıda
+görünen üç yer düzeltildi: `ApkInstallerModule.kt`'nin yakındaki cihaza gönderdiği dosya adı
+`GizliChat.apk` → **`MiniOyunlar.apk`** (karşı tarafın paylaşım ekranında birebir görünüyordu),
+Bluetooth satranç SDP servis adı `GizliChatChess` → `MiniOyunlarChess` (yakındaki bir cihaz
+tarayınca görünebiliyor; UUID değişmediği için uyumluluk bozulmadı), `pc-client/index.html`
+sekme başlığı ve giriş ekranı başlığı `GizliChat` → `Mini Oyunlar`. Uygulama adı (`app_name`)
+zaten "Mini Oyunlar", web istemci başlığı "Blok Çılgınlığı", npm/Android paket adı `Mobile`/
+`com.mobile` — bunlar zaten temizdi.
+
+**Bilerek dokunulmayanlar (kırıcı oldukları için):** (a) güncelleme indirme adresi
+`gizlichat-android-updates.web.app` — QR/indirme sırasında görünüyor ama değiştirmek Firebase
+Console'dan yeni bir hosting site açmayı ve `app_config/android`'i güncellemeyi gerektiriyor;
+(b) giriş e-posta alan adı `@gizlichat.local` (`userService.usernameToEmail`) — bu Firebase
+Auth kimliğinin ta kendisi, değiştirilirse mevcut TÜM hesaplar giriş yapamaz hâle gelir;
+(c) AsyncStorage/localStorage/SharedPreferences anahtarlarındaki `gizlichat_` ön eki —
+sadece root'lu cihazda ya da tarayıcı devtools'ta görünür, değiştirmek kayıtlı ayarları ve
+en yüksek skorları sıfırlar (taşıma kodu yazılmadıkça).
+
+`tsc` her iki istemcide de temiz, `:app:compileDebugKotlin` başarılı. Mobil:
+`versionCode 33→34`, `versionName "8.6"→"8.7"`.
+
+**Yayınlandı (bu oturumda, uçtan uca):**
+- `firebase deploy --only functions,firestore:rules` → `onNewMessage` (europe-west1) ve
+  `youtubeSearch` güncellendi, kurallar yayınlandı.
+- `gradlew assembleRelease` → `public/app-release-8.7.apk` (~136 MB), eski `8.6` APK'sı
+  `public/`ten silindi; kök `firebase deploy --only hosting` ile
+  `https://gizlichat-android-updates.web.app/app-release-8.7.apk` (HTTP 200 ile doğrulandı).
+- `web-client`: `npm run build` + `firebase deploy --only hosting` → `kaanchatmercan.web.app`.
+- Firestore `app_config/android` (bilerek Console-only) Chrome üzerinden elle güncellendi:
+  `versionCode 34`, `versionName "8.7"`, yeni `apkUrl`, ve kılığı bozmayan bir `notes` metni
+  ("Bildirimler daha hizli ve guvenilir geliyor; yeni: kacirilan bildirim icin alarm…").
+  **Not:** Firebase Console'a Chrome'da `/u/1/` hesabıyla girilebiliyor; `/u/0/` "proje yok
+  veya yetkiniz yok" diyor — bir sonraki oturum doğrudan `/u/1/` ile açmalı.
+
+**Kotlin'e geçiş sorusu (karar: hayır).** Kullanıcı "tüm uygulamayı 1'e 1 koruyarak Kotlin'e
+geçirsek performans artar mı" diye sordu. Cevap: teorik olarak evet (soğuk açılış, uzun liste
+kaydırma, RAM) ama bu projede kazanç küçük, maliyet çok büyük — ~40+ ekran/bileşen, satranç ve
+6 mini oyunun tamamı, Stream Video araması, Firestore katmanı sıfırdan yazılır; web istemci
+(`web-client/`) mobil ile aynı TypeScript servis mantığını paylaştığı için o paylaşım tamamen
+kopar ve her özellik iki kez yazılmaya başlar. Bu uygulamadaki gerçek yavaşlık kaynakları RN
+değil: Firestore'da base64 olarak taşınan fotoğraflar, mesaj listesinin yeniden render'ları ve
+~130MB'lık APK. Doğru yol hedefli optimizasyon (görsellerin Storage'a taşınması, liste
+sanallaştırma/memoization, Hermes profil çıktısıyla ölçüm) — tam Kotlin yeniden yazımı değil.
+
 ## 2026-09-02 — v1.7.6: "Pencereye ayır" düğmesi çalışmıyordu — PIP izni sessizce reddediliyormuş
 
 Kullanıcı 1.7.5'i gerçek cihazında (Infinix Smart 9, XOS/Android 14) denedi: PIP butonuna

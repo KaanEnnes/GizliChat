@@ -18,6 +18,9 @@ class MainApplication : Application(), ReactApplication {
           // add(MyReactNativePackage())
           add(ApkInstallerPackage())
           add(PipPackage())
+          add(FloatingChatPackage())
+          add(BluetoothChessPackage())
+          add(AlarmEscalationPackage())
         },
     )
   }

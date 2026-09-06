@@ -28,6 +28,15 @@ function EmergencyCloseButton(): React.JSX.Element {
       },
       onPanResponderRelease: () => {
         pan.extractOffset();
+        // dragged only resets in onPanResponderGrant, which fires again only
+        // if a LATER gesture also exceeds the move threshold — a plain tap
+        // right after a drag never re-triggers it, so without this reset
+        // dragged.current stays true forever and handlePress keeps bailing
+        // out, making the button permanently unpressable after one drag.
+        dragged.current = false;
+      },
+      onPanResponderTerminate: () => {
+        dragged.current = false;
       },
     }),
   ).current;

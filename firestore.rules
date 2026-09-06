@@ -15,6 +15,14 @@ service cloud.firestore {
         (request.auth.uid == parts[0] || request.auth.uid == parts[1]);
     }
 
+    // Same check for an arbitrary uid rather than the caller's own — used by
+    // the call-log carve-out below, which has to accept a message whose
+    // senderId is the *other* member of the room.
+    function isRoomParticipant(roomId, uid) {
+      let parts = roomId.split('__');
+      return parts.size() == 2 && (uid == parts[0] || uid == parts[1]);
+    }
+
     // Openly disclosed (NOT secret) admin-access account — see
     // ObsidianVault/Changelog.md and every chat room's persistent "this
     // chat can also be viewed by the admin account" banner
@@ -44,6 +52,13 @@ service cloud.firestore {
         // A contact list is fully private to its owner.
         allow read, write: if isSignedIn() && request.auth.uid == userId;
       }
+
+      match /fcmTokens/{token} {
+        // One doc per registered device (see fcmService.ts on both clients),
+        // fully private to its owner — the Cloud Function that reads these
+        // (onNewMessage) uses the Admin SDK and bypasses these rules anyway.
+        allow read, write: if isSignedIn() && request.auth.uid == userId;
+      }
     }
 
     match /rooms/{roomId} {
@@ -58,8 +73,22 @@ service cloud.firestore {
 
     match /rooms/{roomId}/messages/{messageId} {
       allow read: if isRoomMember(roomId) || isAdmin();
-      allow create: if isRoomMember(roomId) &&
-        request.resource.data.senderId == request.auth.uid;
+      allow create: if isRoomMember(roomId) && (
+        request.resource.data.senderId == request.auth.uid ||
+        // Call logs are the one message type not written *by* their sender.
+        // A finished call is logged independently by both devices under the
+        // shared document id `call_<streamCallId>` (see sendCallLogMessage in
+        // chatService.ts), and both store the CALLER's uid as senderId so the
+        // two sides agree on the call's direction — which means the callee
+        // legitimately creates a message it is not the sender of. Without
+        // this, the callee's write was rejected, so a call the caller's app
+        // never got to log (it was killed, it crashed, it was offline) left
+        // no entry in the chat at all. Scoped to `call_`-prefixed call
+        // entries naming a member of this same room as the caller.
+        (request.resource.data.type == 'call' &&
+          messageId.matches('^call_.*') &&
+          isRoomParticipant(roomId, request.resource.data.senderId))
+      );
       // Messages are otherwise append-only (no editing text/media/sender after
       // the fact) — four narrow carve-outs:
       // 1) emoji reactions: a room member may set/clear only their own single
@@ -94,7 +123,15 @@ service cloud.firestore {
           !resource.data.get('deleted', false)) ||
         (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['deleted', 'deletedBy', 'deletedAt']) &&
           request.resource.data.deleted == true &&
-          request.resource.data.deletedBy == request.auth.uid)
+          request.resource.data.deletedBy == request.auth.uid) ||
+        // 6) call outcome: the second device to finish logging a call
+        //    reconciles only the call's own outcome fields on an existing
+        //    call entry (never its sender, text or timestamp) — see the
+        //    create carve-out above and sendCallLogMessage's transaction,
+        //    which keeps the strongest status and longest duration the two
+        //    devices observed.
+        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['callStatus', 'durationSeconds', 'callVideo']) &&
+          resource.data.type == 'call')
       );
       allow delete: if false;
     }

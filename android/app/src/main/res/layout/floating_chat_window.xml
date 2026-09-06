@@ -1,0 +1,157 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@drawable/floating_chat_bg">
+
+    <LinearLayout
+        android:id="@+id/floating_header"
+        android:layout_width="match_parent"
+        android:layout_height="44dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:background="@drawable/floating_chat_header_bg"
+        android:paddingStart="12dp"
+        android:paddingEnd="4dp">
+
+        <TextView
+            android:id="@+id/floating_title"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Sohbet"
+            android:textColor="#FFFFFF"
+            android:textStyle="bold"
+            android:textSize="14sp"
+            android:singleLine="true"
+            android:ellipsize="end" />
+
+        <ImageButton
+            android:id="@+id/floating_close"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:src="@android:drawable/ic_menu_close_clear_cancel"
+            android:contentDescription="Kapat" />
+    </LinearLayout>
+
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
+
+        <ImageView
+            android:id="@+id/floating_background_image"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:scaleType="centerCrop"
+            android:visibility="gone"
+            android:contentDescription="@null" />
+
+        <ListView
+            android:id="@+id/floating_message_list"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:transcriptMode="alwaysScroll"
+            android:stackFromBottom="true"
+            android:divider="@null"
+            android:paddingHorizontal="8dp"
+            android:clipToPadding="false"
+            android:cacheColorHint="#00000000" />
+    </FrameLayout>
+
+    <LinearLayout
+        android:id="@+id/floating_action_bar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:background="#1C2230"
+        android:paddingHorizontal="10dp"
+        android:paddingVertical="6dp"
+        android:visibility="gone">
+
+        <TextView android:id="@+id/emoji_1" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="❤️" android:textSize="18sp" android:padding="3dp" />
+        <TextView android:id="@+id/emoji_2" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="🤍" android:textSize="18sp" android:padding="3dp" android:layout_marginStart="4dp" />
+        <TextView android:id="@+id/emoji_3" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="😂" android:textSize="18sp" android:padding="3dp" android:layout_marginStart="4dp" />
+        <TextView android:id="@+id/emoji_4" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="😮" android:textSize="18sp" android:padding="3dp" android:layout_marginStart="4dp" />
+        <TextView android:id="@+id/emoji_5" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="😢" android:textSize="18sp" android:padding="3dp" android:layout_marginStart="4dp" />
+        <TextView android:id="@+id/emoji_6" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="🙏" android:textSize="18sp" android:padding="3dp" android:layout_marginStart="4dp" />
+        <TextView android:id="@+id/emoji_7" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="👍" android:textSize="18sp" android:padding="3dp" android:layout_marginStart="4dp" />
+
+        <TextView
+            android:id="@+id/floating_reply_action"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:gravity="end"
+            android:text="↩ Yanıtla"
+            android:textColor="#FF9C5C"
+            android:textSize="13sp"
+            android:padding="4dp" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/floating_reply_preview"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:background="#161B26"
+        android:paddingHorizontal="10dp"
+        android:paddingVertical="6dp"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/floating_reply_preview_text"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:textColor="#B7BFCF"
+            android:textSize="12sp"
+            android:singleLine="true"
+            android:ellipsize="end" />
+
+        <TextView
+            android:id="@+id/floating_reply_cancel"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="✕"
+            android:textColor="#B7BFCF"
+            android:padding="6dp" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:background="#1C2230"
+        android:paddingHorizontal="8dp">
+
+        <EditText
+            android:id="@+id/floating_input"
+            android:layout_width="0dp"
+            android:layout_height="36dp"
+            android:layout_weight="1"
+            android:background="@drawable/floating_input_bg"
+            android:paddingHorizontal="12dp"
+            android:hint="Mesaj yaz..."
+            android:textColorHint="#8892A6"
+            android:textColor="#FFFFFF"
+            android:textSize="13sp"
+            android:inputType="text"
+            android:imeOptions="actionSend"
+            android:singleLine="true" />
+
+        <ImageButton
+            android:id="@+id/floating_send"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:layout_marginStart="6dp"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:src="@android:drawable/ic_menu_send"
+            android:contentDescription="Gönder" />
+    </LinearLayout>
+</LinearLayout>

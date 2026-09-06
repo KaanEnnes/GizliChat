@@ -10,6 +10,7 @@ import { useTheme } from '../theme/ThemeContext';
 import { getCachedVideoUri } from '../services/videoCacheService';
 import LinkPreviewCard from './LinkPreviewCard';
 import { extractSpotifyUrl } from '../utils/linkPreview';
+import { MissedCallIcon, PhoneCallIcon, VideoCallIcon } from './CallIcons';
 
 function formatFileSize(bytes: number): string {
   if (bytes < 1024) {
@@ -199,6 +200,12 @@ function MessageBubble({
   const [songPlaying, setSongPlaying] = useState(false);
   const swipeX = useRef(new Animated.Value(0)).current;
   const swipeTriggered = useRef(false);
+  // PanResponder.create runs once inside useRef below, so its callbacks close
+  // over songPlaying's value from the first render only. A ref keeps them
+  // reading the live value, so dragging the YouTube seek bar isn't hijacked
+  // as a swipe-to-reply gesture once a song is playing.
+  const songPlayingRef = useRef(false);
+  songPlayingRef.current = message.type === 'song' && songPlaying;
   const bubbleColor = isMine ? theme.bubbleMine : theme.bubbleOther;
   const bubbleTextColor = isMine ? theme.bubbleMineText : theme.bubbleOtherText;
   const myReaction = message.reactions?.[myUid];
@@ -269,6 +276,7 @@ function MessageBubble({
   const panResponder = useRef(
     PanResponder.create({
       onMoveShouldSetPanResponder: (_evt, gesture) =>
+        !songPlayingRef.current &&
         Math.abs(gesture.dx) > 10 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.5,
       onPanResponderGrant: () => {
         swipeTriggered.current = false;
@@ -298,15 +306,23 @@ function MessageBubble({
 
   // WhatsApp-style call log entry — centered, not a left/right chat bubble.
   if (message.type === 'call') {
-    const missed = message.callStatus === 'missed';
-    const icon = message.callVideo ? '🎥' : '📞';
+    // `isMine` is true for the *caller* — sendCallLogMessage stores the
+    // caller's uid as senderId on both devices, so the direction never
+    // depends on which side wrote the entry last.
+    const connected = message.callStatus === 'completed';
+    const declined = message.callStatus === 'declined';
+    const CallStatusIcon = connected ? (message.callVideo ? VideoCallIcon : PhoneCallIcon) : MissedCallIcon;
+    const accentColor = connected ? theme.textMuted : theme.danger;
     const kindLabel = message.callVideo ? 'Görüntülü arama' : 'Sesli arama';
-    const directionIcon = isMine ? '↗' : '↙';
-    const detail = missed
-      ? isMine
-        ? 'Cevap verilmedi'
-        : 'Cevapsız arama'
-      : formatCallDuration(message.durationSeconds ?? 0);
+    const detail = connected
+      ? formatCallDuration(message.durationSeconds ?? 0)
+      : declined
+        ? isMine
+          ? 'Reddedildi'
+          : 'Sen reddettin'
+        : isMine
+          ? 'Cevap verilmedi'
+          : 'Cevapsız arama';
 
     return (
       <View style={styles.callRow}>
@@ -314,12 +330,14 @@ function MessageBubble({
           style={[
             styles.callPill,
             { backgroundColor: theme.surface, borderColor: theme.border },
-            missed && { backgroundColor: theme.dangerSoft, borderColor: theme.dangerSoft },
+            !connected && { backgroundColor: theme.dangerSoft, borderColor: theme.dangerSoft },
           ]}>
-          <Text style={styles.callIcon}>{icon}</Text>
+          <View style={styles.callIconWrap}>
+            <CallStatusIcon color={accentColor} size={17} />
+          </View>
           <View style={styles.callTextWrap}>
-            <Text style={[styles.callLabel, { color: theme.text }, missed && { color: theme.danger }]}>
-              {kindLabel} {directionIcon}
+            <Text style={[styles.callLabel, { color: connected ? theme.text : theme.danger }]}>
+              {kindLabel} {isMine ? '↗' : '↙'}
             </Text>
             <Text style={[styles.callDetail, { color: theme.textMuted }]}>{detail}</Text>
           </View>
@@ -355,6 +373,17 @@ function MessageBubble({
 
   const showHiddenOverlay = (message.type === 'image' || message.type === 'video') && message.hidden && !revealed;
 
+  // The YoutubeIframe below is a native WebView. As long as the bubble's
+  // long-press Pressable wraps it, that Pressable claims the JS touch
+  // responder on every touch-down (to track its own press state), which
+  // swallows the touch before Android ever dispatches it into the WebView —
+  // so taps on the YouTube player's own controls (play/pause/seek) silently
+  // do nothing. Disabling the wrapping Pressable while a song is actively
+  // playing stops it from claiming the responder, letting taps reach the
+  // WebView; long-press-to-react on a playing song bubble is sacrificed, but
+  // still works on the collapsed (not-yet-playing) song card below.
+  const isSongPlaying = message.type === 'song' && songPlaying;
+
   const handleRevealHidden = () => {
     setRevealed(true);
   };
@@ -389,8 +418,9 @@ function MessageBubble({
           {...panResponder.panHandlers}
           style={{ transform: [{ translateX: swipeX }] }}>
           <Pressable
-            onLongPress={handleLongPress}
+            onLongPress={isSongPlaying ? undefined : handleLongPress}
             delayLongPress={280}
+            disabled={isSongPlaying}
             style={[
               styles.bubble,
               { backgroundColor: bubbleColor },
@@ -511,7 +541,7 @@ function MessageBubble({
               />
             </View>
           ) : (
-            <Pressable style={styles.songCard} onPress={() => setSongPlaying(true)}>
+            <Pressable style={styles.songCard} onPress={() => setSongPlaying(true)} onLongPress={handleLongPress} delayLongPress={280}>
               {!!message.songThumbnailUrl && <Image source={{ uri: message.songThumbnailUrl }} style={styles.songThumb} />}
               <View style={styles.songPlayIconWrap}>
                 <Text style={styles.songPlayIcon}>▶</Text>
@@ -988,6 +1018,10 @@ const styles = StyleSheet.create({
     maxWidth: '82%',
     borderWidth: 1,
   },
+  /** Wrapper for the call log's SVG status icon (the chess entry below still uses an emoji). */
+  callIconWrap: {
+    marginRight: 10,
+  },
   callIcon: {
     fontSize: 18,
     marginRight: 10,
@@ -1008,4 +1042,8 @@ const styles = StyleSheet.create({
   },
 });
 
-export default MessageBubble;
+// The chat FlatList re-renders ChatRoomScreen on every keystroke, typing
+// indicator update, and keyboard event; without this, every bubble on screen
+// re-rendered along with it even though its own props never changed —
+// memoizing means only the bubble(s) whose actual data changed re-render.
+export default React.memo(MessageBubble);
