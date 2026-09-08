@@ -77,6 +77,14 @@ export function requestBluetoothConnectPermission(): Promise<boolean> {
   );
 }
 
+/** ACCESS_COARSE_LOCATION is requested alongside FINE so the OS's own "precise vs approximate" dialog is shown — the app always tries to read the most precise fix it gets, but doesn't require the user to grant precise specifically. */
+export function requestLocationPermission(): Promise<boolean> {
+  return requestAndroidPermissions(
+    [PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION, PermissionsAndroid.PERMISSIONS.ACCESS_COARSE_LOCATION],
+    'Konum gönderebilmek için konum iznine ihtiyaç var. Telefon bir daha sormuyorsa izni Ayarlar\'dan elle açman gerekiyor.',
+  );
+}
+
 export function requestCallPermissions(includeCamera: boolean): Promise<boolean> {
   const permissions = [PermissionsAndroid.PERMISSIONS.RECORD_AUDIO];
   if (includeCamera) {

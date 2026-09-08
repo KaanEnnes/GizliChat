@@ -51,6 +51,7 @@ import {
   MOVE_QUALITY_LABELS,
   MoveQuality,
 } from '../services/chessBotService';
+import { ChessSession, getChessSession, setChessSession } from '../services/chessSessionStore';
 
 interface Props {
   onBack: () => void;
@@ -81,6 +82,7 @@ function ChessRoomScreen({ onBack }: Props): React.JSX.Element {
   const [game, setGame] = useState<ChessGame | null>(null);
   const gameUnsubRef = useRef<(() => void) | null>(null);
   const lastAnnouncedRef = useRef<number | null>(null);
+  const [resumableSession, setResumableSession] = useState<ChessSession | null>(() => getChessSession());
 
   const [botDifficulty, setBotDifficulty] = useState<ChessDifficulty | null>(null);
   const [botFen, setBotFen] = useState(START_FEN);
@@ -252,6 +254,19 @@ function ChessRoomScreen({ onBack }: Props): React.JSX.Element {
   }, [code, game]);
 
   const handleLeave = useCallback(() => {
+    if (stage === 'in_room' && code) {
+      setChessSession({ type: 'room', code });
+    } else if (stage === 'vs_bot' && botDifficulty) {
+      setChessSession({
+        type: 'bot',
+        difficulty: botDifficulty,
+        fen: botFen,
+        lastMove: botLastMove,
+        status: botStatus,
+        outcome: botOutcome,
+      });
+    }
+    setResumableSession(getChessSession());
     gameUnsubRef.current?.();
     gameUnsubRef.current = null;
     botMoveSeqRef.current += 1; // invalidate any in-flight bot move
@@ -261,7 +276,41 @@ function ChessRoomScreen({ onBack }: Props): React.JSX.Element {
     setGame(null);
     setError(null);
     setBotDifficulty(null);
-  }, []);
+  }, [stage, code, botDifficulty, botFen, botLastMove, botStatus, botOutcome]);
+
+  const handleContinue = useCallback(async () => {
+    const session = resumableSession;
+    if (!session) {
+      return;
+    }
+    playTapSound();
+    if (session.type === 'room') {
+      setBusy(true);
+      setError(null);
+      try {
+        await ensureAuth();
+        setCode(session.code);
+        watchRoom(session.code);
+        setStage('in_room');
+      } catch (err) {
+        setError(`Devam edilemedi: ${(err as Error).message}`);
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
+    botMoveSeqRef.current += 1;
+    analysisSeqRef.current += 1;
+    setBotDifficulty(session.difficulty);
+    setBotFen(session.fen);
+    setBotStatus(session.status);
+    setBotOutcome(session.outcome);
+    setBotLastMove(session.lastMove);
+    setPremove(null);
+    setMoveQuality(null);
+    setAnalyzing(false);
+    setStage('vs_bot');
+  }, [resumableSession, ensureAuth, watchRoom]);
 
   const startBotGame = useCallback((difficulty: ChessDifficulty) => {
     botMoveSeqRef.current += 1;
@@ -571,6 +620,27 @@ function ChessRoomScreen({ onBack }: Props): React.JSX.Element {
           <Text style={[styles.menuHint, { color: theme.textMuted }]}>
             Bir oda kur ve kodu paylaş, ya da sana verilen kodla bir odaya katıl.
           </Text>
+
+          {resumableSession && (
+            <>
+              <Pressable
+                onPress={handleContinue}
+                disabled={busy}
+                style={[styles.primaryButton, { backgroundColor: theme.accent }, busy && styles.disabled]}
+                accessibilityRole="button"
+                accessibilityLabel="Son oyuna devam et">
+                {busy ? (
+                  <ActivityIndicator color={theme.accentText} />
+                ) : (
+                  <Text style={[styles.primaryButtonText, { color: theme.accentText }]}>
+                    {resumableSession.type === 'room' ? 'SON OYUNA DEVAM ET' : 'BİLGİSAYAR OYUNUNA DEVAM ET'}
+                  </Text>
+                )}
+              </Pressable>
+              <Text style={[styles.orText, { color: theme.textFaint }]}>veya</Text>
+            </>
+          )}
+
           <Pressable
             onPress={handleCreateRoom}
             disabled={busy}

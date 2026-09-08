@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import type { ChatMessage } from '../services/chatService';
 import { useTheme } from '../theme/ThemeContext';
 import LinkPreviewCard from './LinkPreviewCard';
-import { extractSpotifyUrl } from '../utils/linkPreview';
+import { extractPreviewUrl } from '../utils/linkPreview';
+import { buildMapsUrl } from '../services/locationService';
 
 function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -17,6 +18,8 @@ function formatTime(timestamp: number): string {
 
 export function replyPreviewLabel(message: Pick<ChatMessage, 'type' | 'text' | 'fileName'>): string {
   switch (message.type) {
+    case 'location':
+      return '📍 Konum';
     case 'image':
       return '📷 Fotoğraf';
     case 'video':
@@ -53,9 +56,43 @@ interface Props {
   onJumpToReply: (messageId: string) => void;
   /** Opens the room-wide swipeable image gallery starting at this message, instead of the single-image overlay below. */
   onImagePress: (messageId: string) => void;
+  /** Ends an active "canlı konum" share this client is the sender of — only rendered for own 'location' messages still live. */
+  onStopLiveLocation?: (message: ChatMessage) => void;
+  /** Opens the in-app map (LocationMapModal). Hoisted to ChatRoomScreen so one map is mounted per room; falls back to Google Maps in a new tab when absent. */
+  onOpenLocationMap?: (message: ChatMessage) => void;
 }
 
-function MessageBubble({ message, isMine, myUid, isPinned, highlighted, onToggleReaction, onPin, onUnpin, onToggleStar, onEdit, onDelete, onReply, onJumpToReply, onImagePress }: Props): React.JSX.Element {
+/**
+ * Ticking "Xdk kaldı" label for an active live-location share — null once the
+ * share was stopped or its `expiresAt` passed, even if the sender never got to
+ * call stopLiveLocation (tab closed mid-share). Mirrors the RN app's hook.
+ */
+function useLiveLocationCountdown(expiresAt: number | undefined, active: boolean): string | null {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (!active || !expiresAt) {
+      return;
+    }
+    const timer = setInterval(() => setTick(t => t + 1), 1000);
+    return () => clearInterval(timer);
+  }, [active, expiresAt]);
+
+  if (!active || !expiresAt) {
+    return null;
+  }
+  const remainingMs = expiresAt - Date.now();
+  if (remainingMs <= 0) {
+    return null;
+  }
+  const minutes = Math.ceil(remainingMs / 60000);
+  return minutes >= 60 ? `${Math.floor(minutes / 60)} sa ${minutes % 60} dk kaldı` : `${minutes} dk kaldı`;
+}
+
+function MessageBubble({ message, isMine, myUid, isPinned, highlighted, onToggleReaction, onPin, onUnpin, onToggleStar, onEdit, onDelete, onReply, onJumpToReply, onImagePress, onStopLiveLocation, onOpenLocationMap }: Props): React.JSX.Element {
+  const liveLocationCountdown = useLiveLocationCountdown(
+    message.type === 'location' ? message.liveExpiresAt : undefined,
+    message.type === 'location' && message.liveLocation === true,
+  );
   const { theme } = useTheme();
   const [menuOpen, setMenuOpen] = useState(false);
   const [textExpanded, setTextExpanded] = useState(false);
@@ -183,6 +220,40 @@ function MessageBubble({ message, isMine, myUid, isPinned, highlighted, onToggle
           )
         )}
 
+        {message.type === 'location' && message.latitude !== undefined && message.longitude !== undefined && (
+          <>
+            <div
+              className="msg-location"
+              role="button"
+              tabIndex={0}
+              onClick={() => {
+                if (onOpenLocationMap) {
+                  onOpenLocationMap(message);
+                } else {
+                  window.open(buildMapsUrl(message.latitude!, message.longitude!), '_blank', 'noopener');
+                }
+              }}
+              onKeyDown={e => {
+                if (e.key === 'Enter' && onOpenLocationMap) {
+                  onOpenLocationMap(message);
+                }
+              }}>
+              <span className="msg-location-icon">{liveLocationCountdown ? '🔴' : '📍'}</span>
+              <span className="msg-location-text">
+                <span className="msg-location-title">{liveLocationCountdown ? 'Canlı Konum' : 'Konum'}</span>
+                <span className="msg-location-sub">
+                  {liveLocationCountdown ?? `${message.latitude.toFixed(5)}, ${message.longitude.toFixed(5)}`}
+                </span>
+              </span>
+            </div>
+            {isMine && liveLocationCountdown && onStopLiveLocation && (
+              <button type="button" className="msg-location-stop" onClick={() => onStopLiveLocation(message)}>
+                Canlı Konumu Durdur
+              </button>
+            )}
+          </>
+        )}
+
         {message.type === 'file' && message.mediaUrl && (
           <a className="msg-file-row" href={message.mediaUrl} download={message.fileName} style={{ color: bubbleTextColor }}>
             <span style={{ fontSize: 26, marginRight: 10 }}>📄</span>
@@ -196,7 +267,7 @@ function MessageBubble({ message, isMine, myUid, isPinned, highlighted, onToggle
         {message.type === 'text' && (() => {
           const isLong = message.text.length > TEXT_TRUNCATE_LENGTH;
           const displayText = isLong && !textExpanded ? `${message.text.slice(0, TEXT_TRUNCATE_LENGTH)}…` : message.text;
-          const spotifyUrl = extractSpotifyUrl(message.text);
+          const previewUrl = extractPreviewUrl(message.text);
           return (
             <div style={{ fontSize: 15.5, lineHeight: 1.4, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
               {displayText}
@@ -209,7 +280,7 @@ function MessageBubble({ message, isMine, myUid, isPinned, highlighted, onToggle
                   {textExpanded ? 'Daha az göster' : 'Daha fazlası'}
                 </button>
               )}
-              {spotifyUrl && <LinkPreviewCard url={spotifyUrl} />}
+              {previewUrl && <LinkPreviewCard url={previewUrl} />}
             </div>
           );
         })()}

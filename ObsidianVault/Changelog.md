@@ -1,5 +1,188 @@
 # Değişiklik Günlüğü
 
+## 2026-09-07 — Canlı konum gerçekten canlı, uygulama içi harita, og:image link önizlemeleri
+
+Üç ayrı istek, üçü de uçtan uca iki emülatörde doğrulandı.
+
+**1) Canlı konum artık gerçekten canlı** — Yeni `src/services/liveLocationManager.ts`.
+Önceden GPS `watchPosition` aboneliği `ChatRoomScreen`'in içinde bir effect'ti, yani sohbetten
+çıkmak (başka bir sohbet, oyun, ana ekran... fark etmez) ekranı unmount edip paylaşımı SESSİZCE
+son yazılan fix'te donduruyordu — karşı taraf hâlâ "Canlı Konum" balonu görüyor ama iğne hiç
+kıpırdamıyordu, üstelik bunun anlaşılabileceği bir gösterge de yoktu. Watch artık modül
+seviyesinde yaşıyor: kullanıcı uygulama içinde nereye giderse gitsin paylaşım süresi dolana ya da
+elle durdurulana kadar yazmaya devam ediyor. Aynı anda en fazla bir paylaşım tutuluyor
+(`startLiveShare` öncekini kapatıyor), ve gelen her fix `active.messageId` ile eşleşiyor mu diye
+kontrol ediliyor — aksi hâlde clearWatch ile native tarafın gerçekten durması arasında düşen bir
+fix eski/kapanmış paylaşımın dokümanına yazabiliyordu. Hâlâ bilinçli olarak sadece ön planda:
+uygulama tamamen kapatılırsa JS runtime ölüyor, bunu aşmak gerçek bir foreground service +
+kalıcı bildirim gerektirir (projenin aramalar/bildirimler tarafındaki aynı bilinen sınırı);
+`liveExpiresAt` bu durumun emniyet supabı olarak duruyor.
+
+**2) Uygulama içi harita, belirli aralıklarla yenileniyor** — Yeni
+`src/components/LocationMapModal.tsx`. Konum balonuna dokunmak artık cihazın harita
+uygulamasına atmak yerine uygulama içinde tam ekran bir harita açıyor (harita uygulamasında açma
+seçeneği alt butonda duruyor). Leaflet + OpenStreetMap, `react-native-webview` üzerinden — API
+anahtarı, faturalandırma hesabı veya yeni native bağımlılık gerektirmiyor (react-native-maps
+Google Maps anahtarı isterdi). Canlı bir paylaşımda modal o mesaj dokümanına abone oluyor (yeni
+`subscribeToMessageById`), böylece iğne gönderenin her yeni fix'inde kendiliğinden hareket ediyor
+ve gidilen yol mavi bir çizgi olarak çiziliyor. Ayrıca `MAP_REFRESH_INTERVAL_MS` (15 sn) ile
+periyodik olarak haritayı son konuma yeniden ortalıyor ve "45 sn önce güncellendi · 13 dk kaldı"
+etiketini tazeliyor — 60 sn'yi geçen bir fix "konum güncellenmiyor olabilir" uyarısına dönüşüyor,
+yani sessizce bayatlamış bir paylaşım artık bayat olduğunu belli ediyor. Her yeni fix'te sayfa
+yeniden yüklenmiyor, `injectJavaScript` ile sadece marker taşınıyor (zoom/pan korunuyor, tile'lar
+yeniden indirilmiyor). Tek `LocationMapModal` oda başına ChatRoomScreen'de mount ediliyor, her
+balonda ayrı bir Modal değil.
+
+**3) og:image link önizlemeleri** — Link önizleme kartı eskiden SADECE Spotify linklerinde
+çıkıyordu (Spotify oEmbed). Artık her http(s) linki için Open Graph verisi çekiliyor: og:image
+geniş bir banner olarak, og:title, og:description ve site adı. Spotify hâlâ kendi kompakt yeşil
+satırını koruyor (oEmbed daha iyi başlık veriyor ve CORS'a takılmıyor). Veri, yeni
+`linkPreview` Cloud Function'ı üzerinden geliyor (`functions/index.js`) — istemciden doğrudan
+fetch YAPILMIYOR, iki sebeple: (a) web istemcisi tarayıcıda başka bir origin'in HTML'ini zaten
+okuyamaz, (b) gizlilik — bu uygulama kılık değiştirmiş özel bir mesajlaşma uygulaması, linki
+cihazdan çekmek alıcının IP adresini ve "şu an bu sohbeti açtı" zamanlama bilgisini linkin
+sahibine verirdi. Fonksiyon SSRF'e karşı korumalı (`isBlockedHost`: localhost, RFC1918, link-local,
+`metadata.google.internal` vb. reddediliyor), 6 sn timeout, 512KB okuma tavanı ve `</head>`
+görülünce erken kesme uyguluyor. Her iki istemcide de sonuçlar URL başına önbellekleniyor.
+
+Dosyalar: `src/services/liveLocationManager.ts` (yeni), `src/components/LocationMapModal.tsx`
+(yeni), `src/services/chatService.ts` (`subscribeToMessageById`), `src/screens/ChatRoomScreen.tsx`,
+`src/components/MessageBubble.tsx` (`onOpenLocationMap`), `src/utils/linkPreview.ts`,
+`src/components/LinkPreviewCard.tsx`, web-client'ta `utils/linkPreview.ts` +
+`components/LinkPreviewCard.tsx` + `index.css`, `functions/index.js`.
+
+Test: iki emülatörde; github.com gönderilip og:image kartı doğrulandı; konum balonundan harita
+açıldı; canlı paylaşım başlatılıp `adb emu geo fix` ile GPS taşındı — iğne ve iz takip etti,
+15 sn'lik tick haritayı yeniden ortaladı; **sohbet ekranından ÇIKILDIKTAN sonra** GPS tekrar
+taşındı ve Firestore'daki koordinatın 37.435,-122.095 → 41.0100,28.9800 olarak güncellenmeye
+devam ettiği doğrulandı (düzeltmenin asıl kanıtı); "Canlı Konumu Durdur" paylaşımı sonlandırdı.
+
+## 2026-09-06 — Güncelleme APK'sı arm64-only: 130MB → 48MB indirme
+
+Kullanıcı "her güncellemede tam APK indiriliyor, çok internet yiyor" diye sordu. Asıl OTA/delta
+güncelleme sistemi (sadece değişen JS'i indirmek) bu projenin ölçeğine göre orantısız bir
+karmaşıklık olurdu (bundle versiyonlama, hatalı yamada geri alma, native değişikliklerde yine
+tam APK gerektirmesi) — onun yerine çok daha basit ve etkili bir kazanım vardı: hosting'e
+yüklenen `app-release-8.10.apk`'nın 130MB'ının 112MB'ı, gerçek hiçbir telefonun kullanmadığı üç
+mimari (armeabi-v7a/x86/x86_64 — sadece çok eski telefonlar/emülatörler için) için gereksiz yere
+gömülü native kütüphanelerdi. `android/gradle.properties`'teki `reactNativeArchitectures`
+**değiştirilmedi** (hâlâ 4 mimarinin hepsi) — bunu değiştirmek bu projenin dev/test emülatörleri
+x86_64 çalıştırdığı için local `react-native run-android`/`gradlew installDebug` akışını
+bozardı. Onun yerine SADECE release/hosting build'i `-PreactNativeArchitectures=arm64-v8a`
+bayrağıyla derleniyor (bkz. YAPILACAKLAR.txt madde 6) — `cd android && ./gradlew assembleRelease
+-PreactNativeArchitectures=arm64-v8a`. Sonuç: aynı `app-release-8.10.apk` URL'si artık 48MB
+(130MB değil), hosting'e yeniden deploy edildi, Firestore `app_config/android` dokümanı zaten bu
+URL'ye işaret ettiği için değiştirilmesine gerek kalmadı. Çok eski (2017 öncesi, armeabi-v7a)
+telefonlar bu APK'yı kuramaz — pratikte ihmal edilebilir bir risk olarak kabul edildi.
+
+Uçtan uca doğrulandı: bir emülatörü elle versionCode 36'ya düşürüp gerçek "Güncelle" bandı akışını
+(Firestore'dan versiyon oku → indir → sistem paket yükleyicisine ver) tetikledim — banner doğru
+çıktı, indirme + "Do you want to update this app?" sistem diyaloğu + kurulum sorunsuz çalıştı
+(release de debug.keystore ile imzalandığı için signature çakışması olmadı, normal bir "update"
+olarak kabul edildi). Kurulan APK gerçekten sadece arm64-v8a içeriyordu (`primaryCpuAbi=arm64-v8a`)
+— bu da emülatörün x86_64 olması nedeniyle (ARM çeviri katmanı yok) `SoLoaderDSONotFoundError` ile
+açılışta çökmesine yol açtı; bu beklenen bir sonuç ve gerçek (arm64) telefonlarda sorun teşkil
+etmiyor, sadece x86_64 emülatörlerinde doğrudan bu APK'nın çalıştırılamayacağı (yalnızca indirme
+akışının test edilebileceği) anlamına geliyor. Emülatör sonrasında normal (4 mimarili) debug
+build'e geri döndürüldü.
+
+## 2026-09-06 — v8.10: sohbet sesleri müziği kesmiyor, mesaj listesi WhatsApp gibi akıyor, hosting temizliği
+
+- **Ses odağı düzeltmesi** (`src/services/soundService.ts`) — `Sound.setCategory('Playback')`
+  ikinci parametresi olmadan Android'de her efekt sesinden (tık, kazanma, oyun bitti...) önce
+  `AudioManager.requestAudioFocus(..., AUDIOFOCUS_GAIN)` çağırıyordu, bu da arka planda çalan
+  müzik gibi başka bir uygulamanın sesini her seferinde kesiyordu/duraklatıyordu. `Sound.
+  setCategory('Playback', true)` (mixWithOthers=true) ile bu davranış kapatıldı — kısa UI efekt
+  sesleri artık arka plandaki müziğe dokunmuyor. Sesli mesaj oynatma/kayıt (`react-native-
+  nitro-sound`, ayrı bir kütüphane) zaten hiç audio focus istemiyordu, ona dokunulmadı.
+- **Sohbet mesaj listesi `FlatList inverted` mimarisine geçirildi** (`src/screens/
+  ChatRoomScreen.tsx`) — eskiden liste normal (en eski üstte) render olup her açılışta/yeni
+  mesajda imperatif `scrollToEnd()` ile en alta zıplatılıyordu; bu, oda her açıldığında önce
+  listenin en üstünde bir an görünüp sonra alta "zıplaması" (kullanıcının tarif ettiği "yavaş
+  yükleniyor, bulanıyor, üste kayıyor" hissi) ve WhatsApp'taki gibi akıcı olmayan bir kaydırma
+  hissi yaratıyordu. Artık liste `inverted` + ters çevrilmiş veri diziisiyle (`invertedMessages`)
+  render oluyor: oda açılışta zaten en yeni mesajda (ekranın altında) başlıyor, imperatif scroll
+  gerekmiyor. `handleScroll`'daki "yukarı kaydırınca eski mesaj yükle" / "aşağıdaykenki" eşik
+  formülleri simetrik olarak ters çevrildi, `ListHeaderComponent`/`ListFooterComponent` (yazıyor
+  balonu / "daha fazla yükleniyor" spinner'ı) yer değiştirdi, `maintainVisibleContentPosition`
+  hack'i kaldırıldı (inverted liste eski mesajları veri dizisinin sonuna ekleyerek bunu zaten
+  kendiliğinden çözüyor). **Dikkat:** React Native'in modern `VirtualizedList`'i `inverted`
+  olduğunda her hücreyi zaten kendi içinde otomatik "geri çeviriyor" (bkz. `@react-native/
+  virtualized-lists`'teki `VirtualizedListCellRenderer`) — ek bir manuel `scaleY:-1` sarmalayıcı
+  eklemek (ilk denemede yapıldığı gibi) metni baş aşağı/ters gösteriyor, o yüzden renderItem/
+  header/footer'da EK bir ters çevirme YAPILMAMALI.
+- **Firestore kuralları yayınlandı** (`firebase deploy --only firestore:rules`) — daha önce bu
+  oturumda eklenen canlı konum paylaşımı kuralı (`resource.data.type == 'location'` dalı)
+  canlıya çıktı.
+- **Firebase Storage'daki tüm sohbet video/dosya ekleri PC'ye yedeklendi** (yeni `scripts/
+  backupStorageMedia.js`, salt-okunur — Storage'a dokunmuyor) — `storage-backup/` klasörüne
+  (gitignore'da) indirildi. Şu an sadece 2 dosya var (~7.7 MB) çünkü fotoğraf/ses/küçük
+  dosyalar zaten Storage'a hiç uğramadan Firestore'a inline base64 yazılıyor (bkz.
+  ChatRoomScreen.tsx'teki `sendPickedAsset`/`handlePickFile`) — Storage'daki orijinaller
+  SİLİNMEDİ, kullanıcı onayı bekleniyor.
+- **Hosting temizliği** — `gizlichat-android-updates` sitesindeki eski APK'lar (8.7, 8.8, 8.9)
+  silindi, `kaanchatmercan` sitesindeki web-client'a dokunulmadı. `android/app/build.gradle`
+  versionCode 36→37, versionName 8.9→8.10; yeni release APK derlenip `app-release-8.10.apk`
+  olarak hosting'e yayınlandı, Firestore `app_config/android` dokümanı bu sürüme güncellendi
+  (`scripts/publishAndroidUpdate.js`) — eski cihazlarda "güncelle" banner'ı artık bu sürümü
+  gösterecek.
+
+## 2026-09-06 — Satrançta oyundan çıkınca son oyuna devam edilebiliyor
+
+Oyun içindeyken (oda kodlu online oyun veya bilgisayara karşı) "‹ Menü"ye basıp Satranç ana
+menüsüne dönmek daha önce mevcut oyunu tamamen siliyordu — bir sonraki girişte hep sıfırdan
+başlanıyordu, çünkü `GameHubScreen` başka bir oyuna geçince `ChessRoomScreen`'i tamamen
+unmount ediyor ve tüm component state'i kayboluyordu. Yeni `src/services/chessSessionStore.ts`
+modül seviyesinde (React state'in dışında, AsyncStorage'a yazılmadan — sadece uygulama açıkken
+yaşayan) son bırakılan oyunu tutuyor: oda oyunları için sadece oda kodu (tahta zaten
+Firestore'da), bilgisayar oyunları için zorluk + FEN + son hamle + durum/sonuç.
+`ChessRoomScreen.handleLeave` menüye dönerken bu snapshot'ı kaydediyor; ana menüde bir
+`resumableSession` varsa üstte "SON OYUNA DEVAM ET" / "BİLGİSAYAR OYUNUNA DEVAM ET" butonu
+çıkıyor, `handleContinue` odaya yeniden abone oluyor ya da bot state'ini geri yüklüyor. Bluetooth
+oyunları bağlantıya bağlı olduğu için devam ettirilemez, kapsam dışı bırakıldı.
+
+## 2026-09-06 — Konum paylaşımı eklendi (mevcut konum + canlı konum, iki emülatörde uçtan uca test edildi)
+
+Sohbete yeni bir mesaj tipi eklendi: `location`. 📎 ataç menüsüne "📍 Konum" satırı eklendi,
+dokununca `LocationShareModal.tsx` iki seçenek sunuyor:
+
+- **Mevcut Konumu Gönder** — tek seferlik bir GPS fix'i alıp (`locationService.
+  getCurrentLocation()`, `@react-native-community/geolocation` — yeni native bağımlılık,
+  `android/app/src/main/AndroidManifest.xml`'e `ACCESS_FINE_LOCATION`/`ACCESS_COARSE_LOCATION`
+  eklendi) `sendLocationMessage()` ile bir daha güncellenmeyen sabit bir konum kartı gönderiyor.
+- **Canlı Konum Paylaş** — WhatsApp tarzı 15 dakika/1 saat/8 saat süre seçimi
+  (`LIVE_LOCATION_DURATIONS_MS`), `sendLiveLocationMessage()` ile `liveLocation: true` +
+  `liveExpiresAt` alanlarıyla bir mesaj dokümanı açıyor, sonra `locationService.watchLocation()`
+  (`Geolocation.watchPosition`, 15 sn/10m eşiği) her yeni fix'te AYNI dokümanın `latitude`/
+  `longitude`'unu `updateLiveLocation()` ile üzerine yazıyor (yeni mesaj eklemiyor). Gönderen
+  tarafta mesaj kartının altında "Canlı Konumu Durdur" linki var (`stopLiveLocation()` —
+  `liveLocation`'ı `false`'a çeker, `liveExpiresAt`'i temizler); süre dolunca
+  `ChatRoomScreen`'deki bir `setTimeout` da aynı şeyi otomatik yapıyor. **Sadece bu ekran açıkken
+  çalışıyor** — bildirim/arama sistemindeki gibi gerçek bir arka plan servisi yok, ekrandan
+  çıkmak (unmount) `watchPosition`'ı durduruyor ama Firestore'daki `liveLocation:true`'yu
+  otomatik `false` yapmıyor; `MessageBubble`'daki geri sayım `liveExpiresAt` geçince zaten
+  "canlı" rozetini kaldırıp son bilinen konumu sabit gösteriyor, bu yüzden sekmeyi kapatıp
+  gitmek görünürde sorunsuz.
+- `MessageBubble.tsx`'e `location` render'ı eklendi: 📍/🔴 ikon + başlık + (canlıyken) ticking
+  "Xdk kaldı" (`useLiveLocationCountdown`, aksi halde) koordinat metni. Karta dokununca
+  `Linking.openURL(geo:lat,lng?q=lat,lng)` ile cihazın harita uygulaması (Google Maps vb.)
+  açılıyor — ayrı bir harita SDK'sı/API key'i gerekmiyor, gerçek cihazda/emülatörde test edilip
+  doğru konumda Google Maps açıldığı doğrulandı.
+- `firestore.rules`'a yeni bir carve-out (#7) eklenip **deploy edildi** (`firebase deploy
+  --only firestore:rules`): sadece mesajın `senderId`'si, `type == 'location'` bir mesajın
+  SADECE `['latitude','longitune']` ya da SADECE `['liveLocation','liveExpiresAt']` alanlarını
+  güncelleyebiliyor — canlı konum güncellemesi/durdurma bu carve-out olmadan sessizce
+  `permission-denied` ile reddediliyordu (ilk testte fark edildi, `.catch(() => undefined)`
+  hatayı yutuyordu; rules deploy edilince düzeldi). **Not:** rules dosyası repoda olması tek
+  başına yeterli değil, Firebase Console/CLI ile deploy edilmedikçe hiçbir etkisi yok (bkz.
+  [[03-Services-Backend]]/[[05-Build-Deployment]]) — bu değişiklikte deploy bilfiil yapıldı.
+- Mobil-only — `pc-client`/`web-client` bu mesaj tipini render etmiyor (aynı "sadece mobilde
+  var" deseni arama/sesli mesaj/yanıtlama gibi diğer mobile-only özelliklerle aynı).
+- İki emülatörde (`GizliChat_Emulator` = @aramatest1, `GizliChat_Emulator2` = @kaan) uçtan uca
+  test edildi: mevcut konum gönderme, canlı konum başlatma + karşı tarafta canlı geri sayımın
+  görünmesi, "Canlı Konumu Durdur" ile durdurma, ve konum kartına dokununca Google Maps'in doğru
+  koordinatta açılması — hepsi doğrulandı.
+
 ## 2026-09-06 — v8.8: Sesli/görüntülü arama baştan aşağı revize (17 hata + tasarım, iki emülatörde test edildi)
 
 Kullanıcı arama özelliğinin hem akışının hem tasarımının tamamen gözden geçirilmesini ve

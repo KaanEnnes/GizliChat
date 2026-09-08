@@ -131,7 +131,14 @@ service cloud.firestore {
         //    which keeps the strongest status and longest duration the two
         //    devices observed.
         (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['callStatus', 'durationSeconds', 'callVideo']) &&
-          resource.data.type == 'call')
+          resource.data.type == 'call') ||
+        // 7) live location: only the sender of a 'location' message may keep
+        //    overwriting its coordinates as they move (updateLiveLocation),
+        //    or end the share early by clearing liveLocation/liveExpiresAt
+        //    (stopLiveLocation) — see locationService.ts/chatService.ts.
+        (resource.data.type == 'location' && resource.data.senderId == request.auth.uid &&
+          (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['latitude', 'longitude']) ||
+           request.resource.data.diff(resource.data).affectedKeys().hasOnly(['liveLocation', 'liveExpiresAt'])))
       );
       allow delete: if false;
     }

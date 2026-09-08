@@ -354,6 +354,10 @@ Bağlam için önce [[00-START-HERE]] dosyasına bak.
   'react-native-nitro-sound'`, `new` ile çağrılmaz).
 - `crypto-js` — sadece Stream arama token'ları için HMAC-SHA256 imzalama (`callService.ts`). Saf JS,
   native modül değil.
+- `@react-native-community/geolocation` (2026-09-06'da eklendi) — konum paylaşımı (mevcut/canlı
+  konum, `src/services/locationService.ts`). Native modül, `AndroidManifest.xml`'e
+  `ACCESS_FINE_LOCATION`/`ACCESS_COARSE_LOCATION` eklendi, `__mocks__/@react-native-community/
+  geolocation.js` ile Jest'te no-op.
 - `chess.js` (2026-08-17'de eklendi) — Satranç kural motoru (legal hamle kontrolü, FEN parse/serialize,
   şah/mat/berabere tespiti), `src/services/chessService.ts`'te kullanılıyor. Saf JS, native modül değil
   — `pc-client/index.html` de aynı paketi (`chess.js@1.4.0`) `esm.sh` CDN'inden import edip aynı

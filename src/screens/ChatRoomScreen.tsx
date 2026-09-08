@@ -24,6 +24,7 @@ import ImageGalleryModal from '../components/ImageGalleryModal';
 import AttachMenuModal from '../components/AttachMenuModal';
 import GifPickerModal from '../components/GifPickerModal';
 import SongPickerModal from '../components/SongPickerModal';
+import LocationShareModal from '../components/LocationShareModal';
 import TypingBubble from '../components/TypingBubble';
 import ContactInfoScreen from '../components/ContactInfoScreen';
 import RecordingWaveform from '../components/RecordingWaveform';
@@ -49,11 +50,13 @@ import {
   MESSAGE_LIMIT_STEP,
   pinMessage,
   sendFileMessage,
+  sendLocationMessage,
   sendMediaMessage,
   sendMessage,
   sendSongMessage,
   setMessageReaction,
   setTypingStatus,
+  stopLiveLocation,
   subscribeToMessages,
   subscribeToPinnedMessageId,
   subscribeToTypingTimestamp,
@@ -63,7 +66,10 @@ import {
 } from '../services/chatService';
 import { localFileToDataUri, uploadRoomMedia } from '../services/mediaService';
 import { startVoiceCall, startVideoCall } from '../services/callService';
-import { requestMicrophonePermission } from '../services/permissionsService';
+import { requestLocationPermission, requestMicrophonePermission } from '../services/permissionsService';
+import { getCurrentLocation } from '../services/locationService';
+import { isBroadcasting, startLiveShare, stopLiveShare } from '../services/liveLocationManager';
+import LocationMapModal from '../components/LocationMapModal';
 import { markRoomRead } from '../services/readStatusService';
 import { addVideoBytesUsed, subscribeToUserProfile } from '../services/userService';
 import { getChatBackground, setChatBackground } from '../services/chatBackgroundService';
@@ -106,6 +112,10 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack, initialJumpMessage
   const [attachMenuVisible, setAttachMenuVisible] = useState(false);
   const [gifPickerVisible, setGifPickerVisible] = useState(false);
   const [songPickerVisible, setSongPickerVisible] = useState(false);
+  const [locationShareVisible, setLocationShareVisible] = useState(false);
+  // The 'location' message whose in-app map is currently open, if any. One
+  // LocationMapModal is mounted per room here rather than one per bubble.
+  const [mapMessage, setMapMessage] = useState<ChatMessage | null>(null);
   const [contactInfoVisible, setContactInfoVisible] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingLevel, setRecordingLevel] = useState(0);
@@ -352,11 +362,17 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack, initialJumpMessage
   const handleScroll = useCallback(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
       const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
-      if (contentOffset.y < 60) {
+      // The list is inverted (see the FlatList below) — content grows away
+      // from offset 0, so the edge nearest the oldest loaded message (where
+      // pagination should kick in) is the far edge of the scrollable
+      // content, the mirror image of the old non-inverted "near top" check.
+      const distanceFromOldestEdge = contentSize.height - contentOffset.y - layoutMeasurement.height;
+      if (distanceFromOldestEdge < 60) {
         handleLoadMore();
       }
-      const distanceFromBottom = contentSize.height - contentOffset.y - layoutMeasurement.height;
-      isNearBottomRef.current = distanceFromBottom < NEAR_BOTTOM_THRESHOLD_PX;
+      // ...and the newest message (visual bottom of the screen) sits at
+      // contentOffset.y ~ 0 instead of the old distance-from-bottom math.
+      isNearBottomRef.current = contentOffset.y < NEAR_BOTTOM_THRESHOLD_PX;
       if (isNearBottomRef.current) {
         setNewMessagesBelow(false);
       }
@@ -407,36 +423,45 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack, initialJumpMessage
 
   useEffect(() => {
     // Only react when the newest message actually changed (a fresh
-    // incoming/outgoing message) — not when older messages get prepended by
-    // scrolling up for more history, which would otherwise yank the view
-    // back down every time a page of history loads.
+    // incoming/outgoing message) — not when older messages get appended (at
+    // the far end of the now-inverted data) by scrolling up for more
+    // history, which would otherwise yank the view back down every time a
+    // page of history loads.
     const lastMessage = messages.length > 0 ? messages[messages.length - 1] : null;
     if (lastMessage === null || lastMessage.id === lastMessageIdRef.current) {
       return;
     }
     const isInitialLoad = lastMessageIdRef.current === null;
     const isMine = lastMessage.senderId === myUid;
-    // Smart scroll: always jump to a message the user just sent themselves
-    // (and on first room open), but only auto-follow an *incoming* message
-    // if the user is already near the bottom — otherwise leave their scroll
-    // position alone and surface the "new messages" pill instead, exactly
-    // like scrolling up to read history shouldn't get yanked back down.
-    if (isInitialLoad || isMine || isNearBottomRef.current) {
-      const animate = !isInitialLoad;
+    lastMessageIdRef.current = lastMessage.id;
+    if (isInitialLoad) {
+      // The list is inverted, so it already opens scrolled to offset 0 —
+      // which, being the start of the reversed data, is exactly the newest
+      // message at the visual bottom. No imperative scroll needed here,
+      // which is what avoids the old "renders at the top, then snaps down"
+      // flash on first opening a room.
+      setNewMessagesBelow(false);
+      return;
+    }
+    // Smart scroll: always jump to a message the user just sent themselves,
+    // but only auto-follow an *incoming* message if the user is already
+    // near the bottom — otherwise leave their scroll position alone and
+    // surface the "new messages" pill instead, exactly like scrolling up to
+    // read history shouldn't get yanked back down.
+    if (isMine || isNearBottomRef.current) {
       requestAnimationFrame(() => {
-        listRef.current?.scrollToEnd({ animated: animate });
+        listRef.current?.scrollToOffset({ offset: 0, animated: true });
       });
       setNewMessagesBelow(false);
     } else {
       setNewMessagesBelow(true);
     }
-    lastMessageIdRef.current = lastMessage.id;
   }, [messages, myUid]);
 
   useEffect(() => {
     if (isContactTyping && isNearBottomRef.current) {
       requestAnimationFrame(() => {
-        listRef.current?.scrollToEnd({ animated: true });
+        listRef.current?.scrollToOffset({ offset: 0, animated: true });
       });
     }
   }, [isContactTyping]);
@@ -453,7 +478,7 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack, initialJumpMessage
   const handleJumpToBottom = useCallback(() => {
     isNearBottomRef.current = true;
     setNewMessagesBelow(false);
-    listRef.current?.scrollToEnd({ animated: true });
+    listRef.current?.scrollToOffset({ offset: 0, animated: true });
   }, []);
 
   const handleCancelEdit = useCallback(() => {
@@ -683,6 +708,54 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack, initialJumpMessage
     setAttachMenuVisible(true);
   }, []);
 
+  // No unmount cleanup for live sharing any more — that's the whole point of
+  // liveLocationManager owning it at module scope: leaving the room (or the
+  // app's chat section entirely) used to silently freeze the share at its
+  // last fix while the receiver still saw a "Canlı Konum" bubble. It now
+  // keeps broadcasting until it expires or is explicitly stopped.
+
+  const handleShareCurrentLocation = useCallback(async () => {
+    const granted = await requestLocationPermission();
+    if (!granted) {
+      return;
+    }
+    try {
+      const { latitude, longitude } = await getCurrentLocation();
+      await sendLocationMessage(roomId, myUid, latitude, longitude);
+    } catch (error) {
+      setConnectionError(`Konum gönderilemedi: ${(error as Error).message}`);
+    }
+  }, [roomId, myUid]);
+
+  const handleStopLiveLocation = useCallback(
+    (message: ChatMessage) => {
+      // Stop the broadcast if this device is the one running it; otherwise
+      // (e.g. the share survived an app restart that lost the watch) still
+      // mark the message doc as ended so both sides stop showing it as live.
+      if (isBroadcasting(message.id)) {
+        stopLiveShare().catch(() => undefined);
+      } else {
+        stopLiveLocation(roomId, message.id).catch(() => undefined);
+      }
+    },
+    [roomId],
+  );
+
+  const handleShareLiveLocation = useCallback(
+    async (durationMs: number) => {
+      const granted = await requestLocationPermission();
+      if (!granted) {
+        return;
+      }
+      try {
+        await startLiveShare(roomId, myUid, durationMs);
+      } catch (error) {
+        setConnectionError(`Canlı konum başlatılamadı: ${(error as Error).message}`);
+      }
+    },
+    [roomId, myUid],
+  );
+
   const handleStartRecording = useCallback(() => {
     const startPromise = (async () => {
       const granted = await requestMicrophonePermission();
@@ -836,7 +909,10 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack, initialJumpMessage
         return false;
       }
       try {
-        listRef.current?.scrollToItem({ item: target, animated: true, viewPosition: 0.3 });
+        // 0.5 (centered) rather than a directional bias — the list is
+        // inverted, which flips what "0.3" would mean visually, and centered
+        // reads fine regardless of orientation.
+        listRef.current?.scrollToItem({ item: target, animated: true, viewPosition: 0.5 });
       } catch {
         // Item not in the currently-rendered window — nothing reasonable to do without getItemLayout.
       }
@@ -918,6 +994,15 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack, initialJumpMessage
     setSearchQuery('');
     setHighlightedMessageId(null);
   }, []);
+
+  // FlatList below renders `inverted` (newest message at the visual bottom,
+  // WhatsApp-style) so it opens already scrolled to the newest message with
+  // no imperative scroll-after-render — that's what removes the old
+  // render-at-top-then-snap-to-bottom flash. `messages` itself stays in
+  // ascending (oldest-first) order everywhere else in this file (search,
+  // read receipts, the "last message" scroll-trigger effect, ...); this is
+  // purely the reversed view the list itself renders.
+  const invertedMessages = useMemo(() => [...messages].reverse(), [messages]);
 
   const canSend = draft.trim().length > 0;
   // Disclosed (not secret) admin access — the admin account has read-only
@@ -1109,7 +1194,27 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack, initialJumpMessage
         onFile={() => handlePickFile()}
         onGif={() => setGifPickerVisible(true)}
         onSong={() => setSongPickerVisible(true)}
+        onLocation={() => setLocationShareVisible(true)}
       />
+
+      <LocationShareModal
+        visible={locationShareVisible}
+        onClose={() => setLocationShareVisible(false)}
+        onShareCurrent={handleShareCurrentLocation}
+        onShareLive={handleShareLiveLocation}
+      />
+
+      {mapMessage && (
+        <LocationMapModal
+          visible
+          roomId={roomId}
+          // Prefer the live copy out of `messages` so the modal's own
+          // subscription isn't the only thing keeping it current (and so a
+          // share that ends while the map is open reflects that).
+          message={messages.find(m => m.id === mapMessage.id) ?? mapMessage}
+          onClose={() => setMapMessage(null)}
+        />
+      )}
 
       <GifPickerModal
         visible={gifPickerVisible}
@@ -1218,9 +1323,16 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack, initialJumpMessage
         imageStyle={styles.listBackgroundImage}>
         <FlatList
           ref={listRef}
-          data={messages}
+          data={invertedMessages}
+          inverted
           keyExtractor={item => item.id}
           renderItem={({ item }) => (
+            // No manual counter-flip needed here — React Native's own
+            // VirtualizedList already applies (and cancels back out) the
+            // scaleY mirror per-cell internally when `inverted` is set, on
+            // top of the whole-list flip that gives the reversed visual
+            // order. Adding another one here double-flips it back upside
+            // down (learned the hard way — see git history for this file).
             <MessageBubble
               message={item}
               isMine={item.senderId === myUid}
@@ -1236,6 +1348,8 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack, initialJumpMessage
               onReply={handleReplyRequest}
               onJumpToReply={scrollToMessageId}
               onImagePress={handleImagePress}
+              onStopLiveLocation={handleStopLiveLocation}
+              onOpenLocationMap={setMapMessage}
             />
           )}
           contentContainerStyle={styles.listContent}
@@ -1252,15 +1366,19 @@ function ChatRoomScreen({ myUid, myUsername, contact, onBack, initialJumpMessage
           maxToRenderPerBatch={8}
           windowSize={7}
           updateCellsBatchingPeriod={50}
-          maintainVisibleContentPosition={loadingMore ? { minIndexForVisible: 0 } : undefined}
-          ListHeaderComponent={
+          // Older messages load by appending at the far end of `invertedMessages`
+          // (see handleLoadMore/handleScroll above) — an inverted list keeps
+          // the visible content stable for that on its own, no
+          // maintainVisibleContentPosition anchoring needed like the old
+          // non-inverted (prepend-to-the-front) version required.
+          ListHeaderComponent={isContactTyping ? <TypingBubble /> : undefined}
+          ListFooterComponent={
             loadingMore ? (
               <View style={styles.loadingMoreRow}>
                 <ActivityIndicator color={theme.textFaint} size="small" />
               </View>
             ) : undefined
           }
-          ListFooterComponent={isContactTyping ? <TypingBubble /> : undefined}
         />
 
         {newMessagesBelow && (

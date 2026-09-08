@@ -38,6 +38,11 @@ import GifPickerModal from '../components/GifPickerModal';
 import type { GifResult } from '../services/gifService';
 import SongPickerModal from '../components/SongPickerModal';
 import ContactInfoScreen from '../components/ContactInfoScreen';
+import LocationShareModal from '../components/LocationShareModal';
+import LocationMapModal from '../components/LocationMapModal';
+import { sendLocationMessage, stopLiveLocation, type ChatMessage as ChatMessageType } from '../services/chatService';
+import { getCurrentLocation } from '../services/locationService';
+import { isBroadcasting, startLiveShare, stopLiveShare } from '../services/liveLocationManager';
 import { ADMIN_UID } from '../config/adminConfig';
 
 const IMAGE_DATA_URI_LIMIT = 900_000;
@@ -71,6 +76,10 @@ function ChatRoomScreen({ account, contact, onBack, initialJumpMessageId }: Prop
   const [gamesOpen, setGamesOpen] = useState(false);
   const [gifPickerOpen, setGifPickerOpen] = useState(false);
   const [songPickerOpen, setSongPickerOpen] = useState(false);
+  const [locationShareOpen, setLocationShareOpen] = useState(false);
+  // The 'location' message whose in-app map is open, if any. One map is
+  // mounted per room here rather than one per bubble.
+  const [mapMessage, setMapMessage] = useState<ChatMessageType | null>(null);
   const [contactInfoOpen, setContactInfoOpen] = useState(false);
   const [contactPhotoUrl, setContactPhotoUrl] = useState<string | undefined>(undefined);
   const [showJumpToBottom, setShowJumpToBottom] = useState(false);
@@ -549,6 +558,35 @@ function ChatRoomScreen({ account, contact, onBack, initialJumpMessageId }: Prop
         />
       )}
 
+      {locationShareOpen && (
+        <LocationShareModal
+          onClose={() => setLocationShareOpen(false)}
+          onShareCurrent={async () => {
+            try {
+              const { latitude, longitude } = await getCurrentLocation();
+              await sendLocationMessage(roomId, account.uid, latitude, longitude);
+            } catch (err) {
+              setError(`Konum gönderilemedi: ${(err as Error).message}`);
+            }
+          }}
+          onShareLive={async durationMs => {
+            try {
+              await startLiveShare(roomId, account.uid, durationMs);
+            } catch (err) {
+              setError(`Canlı konum başlatılamadı: ${(err as Error).message}`);
+            }
+          }}
+        />
+      )}
+
+      {mapMessage && (
+        <LocationMapModal
+          roomId={roomId}
+          message={messages.find(m => m.id === mapMessage.id) ?? mapMessage}
+          onClose={() => setMapMessage(null)}
+        />
+      )}
+
       {songPickerOpen && (
         <SongPickerModal
           onClose={() => setSongPickerOpen(false)}
@@ -608,6 +646,16 @@ function ChatRoomScreen({ account, contact, onBack, initialJumpMessageId }: Prop
             onReply={handleReply}
             onJumpToReply={handleJumpToReply}
             onImagePress={setGalleryMessageId}
+            onOpenLocationMap={setMapMessage}
+            onStopLiveLocation={m => {
+              // Stop the broadcast if this tab is running it; otherwise still
+              // mark the doc as ended so both sides stop showing it as live.
+              if (isBroadcasting(m.id)) {
+                stopLiveShare().catch(() => undefined);
+              } else {
+                stopLiveLocation(roomId, m.id).catch(() => undefined);
+              }
+            }}
           />
         ))}
         {isContactTyping && (
@@ -662,6 +710,9 @@ function ChatRoomScreen({ account, contact, onBack, initialJumpMessageId }: Prop
         </button>
         <button type="button" className="icon-btn" style={{ background: theme.surfaceAlt, color: theme.text }} onClick={() => setSongPickerOpen(true)} title="Şarkı gönder">
           🎵
+        </button>
+        <button type="button" className="icon-btn" style={{ background: theme.surfaceAlt, color: theme.text }} onClick={() => setLocationShareOpen(true)} title="Konum gönder">
+          📍
         </button>
         <input ref={fileInputRef} type="file" accept="image/*,video/*,.pdf,.zip,.doc,.docx" multiple style={{ display: 'none' }} onChange={handleFileChange} />
         <input

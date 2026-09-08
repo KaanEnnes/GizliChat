@@ -140,6 +140,13 @@ button:focus-visible {
 .msg-link-preview-thumb { width: 48px; height: 48px; border-radius: 6px; object-fit: cover; margin-right: 10px; flex-shrink: 0; }
 .msg-link-preview-badge { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.3px; color: #1DB954; margin-bottom: 2px; }
 .msg-link-preview-title { font-size: 13.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+/* Generic Open Graph variant: stacks a wide og:image banner above the text
+   instead of the Spotify row's small square thumb beside it. */
+.msg-link-preview-og { display: block; flex-direction: unset; padding: 0; width: 260px; overflow: hidden; }
+.msg-link-preview-image { display: block; width: 100%; height: 130px; object-fit: cover; }
+.msg-link-preview-og-text { padding: 8px 10px; }
+.msg-link-preview-site { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.3px; margin-bottom: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msg-link-preview-desc { font-size: 12px; line-height: 16px; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .msg-pinned-tag { font-size: 10.5px; font-weight: 700; margin-bottom: 2px; }
 .msg-call-row { width: 100%; display: flex; justify-content: center; margin: 6px 0; }
 .msg-call-pill { display: flex; align-items: center; border-radius: 16px; padding: 8px 14px; border: 1px solid; max-width: 82%; }
@@ -308,3 +315,38 @@ button:focus-visible {
   .msg-media { max-width: 200px; }
   .xox-cell { width: 72px; height: 72px; font-size: 28px; }
 }
+
+/* ---- Konum paylaşımı (LocationShareModal / LocationMapModal / konum balonu) ----
+   Mobil uygulamadaki karşılıklarıyla birebir aynı davranışı hedefler; ölçüler
+   src/components/LocationMapModal.tsx ve MessageBubble.tsx (RN) ile eşleşir. */
+
+.attach-overlay { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; padding: 0 24px; z-index: 1000; }
+.attach-card { width: 100%; max-width: 340px; border-radius: 18px; border: 1px solid; padding: 8px 0; overflow: hidden; }
+.attach-title { font-size: 13px; font-weight: 700; opacity: 0.6; text-align: center; padding: 10px 0; }
+.attach-row { display: block; width: 100%; text-align: left; background: none; border: 0; padding: 14px 20px; font-size: 15.5px; font-weight: 600; cursor: pointer; font-family: inherit; }
+.attach-row:hover { background: rgba(148,163,184,0.10); }
+.attach-cancel { margin-top: 4px; border-top: 1px solid rgba(148,163,184,0.24); }
+
+/* Konum balonu (mesaj içi kart) */
+.msg-location { display: flex; align-items: center; gap: 10px; padding: 4px 2px; cursor: pointer; }
+.msg-location-icon { font-size: 22px; line-height: 22px; }
+.msg-location-text { display: flex; flex-direction: column; min-width: 0; }
+.msg-location-title { font-size: 14px; font-weight: 700; }
+.msg-location-sub { font-size: 12px; opacity: 0.75; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msg-location-stop { display: block; margin-top: 6px; background: none; border: 0; padding: 0; font-family: inherit; font-size: 12.5px; font-weight: 700; color: #EF4444; cursor: pointer; text-decoration: underline; }
+
+/* Tam ekran harita */
+.location-map-overlay { position: fixed; inset: 0; z-index: 1100; display: flex; flex-direction: column; }
+.location-map-header { display: flex; align-items: center; gap: 14px; padding: 12px 14px; border-bottom: 1px solid; flex-shrink: 0; }
+.location-map-close { background: none; border: 0; font-family: inherit; font-size: 15px; font-weight: 600; cursor: pointer; padding: 0; }
+.location-map-headtext { min-width: 0; }
+.location-map-title { display: flex; align-items: center; gap: 6px; font-size: 16px; font-weight: 700; }
+.location-map-livedot { width: 8px; height: 8px; border-radius: 4px; display: inline-block; }
+.location-map-subtitle { font-size: 12px; margin-top: 2px; }
+.location-map-canvas { position: relative; flex: 1; min-height: 0; }
+/* Leaflet kapsayıcısının yüksekliği CSS'ten geliyor; 100% olmazsa harita
+   sıfır yükseklikte kalıp sadece bir şerit döşeme render ediyor. */
+.location-map-leaflet { position: absolute; inset: 0; width: 100%; height: 100%; }
+.location-map-error { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center; padding: 0 24px; font-size: 13px; }
+.location-map-footer { padding: 12px 16px; border-top: 1px solid; flex-shrink: 0; }
+.location-map-open { display: block; text-align: center; border-radius: 14px; padding: 14px; font-size: 14.5px; font-weight: 700; text-decoration: none; }

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Image, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
-import { fetchSpotifyPreview, type SpotifyPreview } from '../utils/linkPreview';
+import { fetchLinkPreview, type LinkPreview } from '../utils/linkPreview';
 import { useTheme } from '../theme/ThemeContext';
 
 const SPOTIFY_GREEN = '#1DB954';
@@ -9,15 +9,23 @@ interface Props {
   url: string;
 }
 
-/** Banner card shown under a chat message that contains a Spotify link — cover art, track title and an "open in Spotify" affordance. Renders nothing while loading or if the oEmbed lookup fails. */
+/**
+ * Preview card shown under a chat message containing a link. Spotify links
+ * keep their compact branded row (cover art beside the track title); every
+ * other link renders a generic Open Graph card with the og:image as a wide
+ * banner above the title/description. Renders nothing while loading or when
+ * the lookup fails, so a link that has no metadata just stays a plain link.
+ */
 function LinkPreviewCard({ url }: Props): React.JSX.Element | null {
   const { theme } = useTheme();
-  const [preview, setPreview] = useState<SpotifyPreview | null | undefined>(undefined);
+  const [preview, setPreview] = useState<LinkPreview | null | undefined>(undefined);
+  const [imageFailed, setImageFailed] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     setPreview(undefined);
-    fetchSpotifyPreview(url).then(result => {
+    setImageFailed(false);
+    fetchLinkPreview(url).then(result => {
       if (!cancelled) {
         setPreview(result);
       }
@@ -31,21 +39,52 @@ function LinkPreviewCard({ url }: Props): React.JSX.Element | null {
     return null;
   }
 
-  return (
-    <Pressable
-      onPress={() => Linking.openURL(url).catch(() => undefined)}
-      style={[styles.card, { backgroundColor: theme.surface, borderColor: theme.border }]}>
-      {preview.thumbnailUrl && (
-        <Image source={{ uri: preview.thumbnailUrl }} style={styles.thumb} resizeMode="cover" />
-      )}
-      <View style={styles.textWrap}>
-        <View style={styles.badgeRow}>
-          <Text style={styles.badgeIcon}>♫</Text>
-          <Text style={[styles.badgeText, { color: SPOTIFY_GREEN }]}>Spotify</Text>
+  const open = () => Linking.openURL(preview.url).catch(() => undefined);
+  const showImage = !!preview.imageUrl && !imageFailed;
+
+  if (preview.isSpotify) {
+    return (
+      <Pressable onPress={open} style={[styles.card, styles.spotifyCard, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+        {showImage && <Image source={{ uri: preview.imageUrl }} style={styles.spotifyThumb} resizeMode="cover" onError={() => setImageFailed(true)} />}
+        <View style={styles.spotifyTextWrap}>
+          <View style={styles.badgeRow}>
+            <Text style={styles.badgeIcon}>♫</Text>
+            <Text style={[styles.badgeText, { color: SPOTIFY_GREEN }]}>Spotify</Text>
+          </View>
+          <Text style={[styles.title, { color: theme.text }]} numberOfLines={2}>
+            {preview.title}
+          </Text>
         </View>
-        <Text style={[styles.title, { color: theme.text }]} numberOfLines={2}>
-          {preview.title}
-        </Text>
+      </Pressable>
+    );
+  }
+
+  return (
+    <Pressable onPress={open} style={[styles.card, styles.ogCard, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+      {showImage && (
+        <Image
+          source={{ uri: preview.imageUrl }}
+          style={styles.ogImage}
+          resizeMode="cover"
+          onError={() => setImageFailed(true)}
+        />
+      )}
+      <View style={styles.ogTextWrap}>
+        {!!preview.siteName && (
+          <Text style={[styles.siteName, { color: theme.textFaint }]} numberOfLines={1}>
+            {preview.siteName}
+          </Text>
+        )}
+        {!!preview.title && (
+          <Text style={[styles.title, { color: theme.text }]} numberOfLines={2}>
+            {preview.title}
+          </Text>
+        )}
+        {!!preview.description && (
+          <Text style={[styles.description, { color: theme.textMuted }]} numberOfLines={2}>
+            {preview.description}
+          </Text>
+        )}
       </View>
     </Pressable>
   );
@@ -53,22 +92,43 @@ function LinkPreviewCard({ url }: Props): React.JSX.Element | null {
 
 const styles = StyleSheet.create({
   card: {
-    flexDirection: 'row',
-    alignItems: 'center',
     borderRadius: 12,
     borderWidth: 1,
-    padding: 8,
     marginTop: 6,
     maxWidth: 260,
+    overflow: 'hidden',
   },
-  thumb: {
+  spotifyCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 8,
+  },
+  spotifyThumb: {
     width: 48,
     height: 48,
     borderRadius: 6,
     marginRight: 10,
   },
-  textWrap: {
+  spotifyTextWrap: {
     flex: 1,
+  },
+  ogCard: {
+    width: 260,
+  },
+  ogImage: {
+    width: '100%',
+    height: 130,
+  },
+  ogTextWrap: {
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  siteName: {
+    fontSize: 10.5,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+    marginBottom: 2,
   },
   badgeRow: {
     flexDirection: 'row',
@@ -89,6 +149,11 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 13.5,
     fontWeight: '600',
+  },
+  description: {
+    fontSize: 12,
+    marginTop: 3,
+    lineHeight: 16,
   },
 });
 

@@ -11,6 +11,7 @@ interface Props {
   onFile: () => void;
   onGif: () => void;
   onSong: () => void;
+  onLocation: () => void;
 }
 
 /**
@@ -19,7 +20,7 @@ interface Props {
  * Galeri/Kamera/Gizli Medya to include Dosya too, the extra options (and
  * Vazgeç) just disappeared with no error. A real modal has no such limit.
  */
-function AttachMenuModal({ visible, onClose, onGallery, onCamera, onHiddenMedia, onFile, onGif, onSong }: Props): React.JSX.Element {
+function AttachMenuModal({ visible, onClose, onGallery, onCamera, onHiddenMedia, onFile, onGif, onSong, onLocation }: Props): React.JSX.Element {
   const { theme } = useTheme();
 
   const run = (action: () => void) => {
@@ -49,6 +50,9 @@ function AttachMenuModal({ visible, onClose, onGallery, onCamera, onHiddenMedia,
           </Pressable>
           <Pressable style={styles.row} onPress={() => run(onSong)} accessibilityRole="button">
             <Text style={[styles.rowText, { color: theme.text }]}>🎵  Şarkı</Text>
+          </Pressable>
+          <Pressable style={styles.row} onPress={() => run(onLocation)} accessibilityRole="button">
+            <Text style={[styles.rowText, { color: theme.text }]}>📍  Konum</Text>
           </Pressable>
           <Pressable style={[styles.row, styles.cancelRow]} onPress={onClose} accessibilityRole="button">
             <Text style={[styles.rowText, { color: theme.textMuted }]}>Vazgeç</Text>

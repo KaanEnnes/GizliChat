@@ -94,8 +94,18 @@ Sohbet ana ekranındaki "Yeni sürüm hazır" bandı (`UpdateBanner.tsx` +
 Yeni bir sürüm yayınlamak için:
 
 - `android/app/build.gradle` içindeki `versionCode`'u bir artır, istersen
-  `versionName`'i de güncelle (örn. "1.1"), sonra release APK'yı derle
-  (`cd android && ./gradlew assembleRelease`).
+  `versionName`'i de güncelle (örn. "1.1"), sonra release APK'yı derle —
+  `-PreactNativeArchitectures=arm64-v8a,armeabi-v7a` İLE (gradle.properties'teki
+  varsayılan hâlâ 4 mimarinin hepsini içeriyor, sadece local dev/emülatör
+  build'leri bozulmasın diye; hosting'e gidecek gerçek dosya bu bayrakla
+  derlenmeli — aksi hâlde indirme gereksiz yere ~130MB'a çıkar):
+  `cd android && ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a,armeabi-v7a`.
+
+  !! DİKKAT — bir kez SADECE `arm64-v8a` ile derlenip yayınlandı (v8.10) ve
+  32-bit ARM telefonlarda Android "uygulama telefonunuzla uyumlu olmadığı için
+  yüklenemedi" hatası verdi. x86/x86_64 (sadece emülatör) çıkarılabilir ama
+  `armeabi-v7a` ÇIKARILMAMALI: hâlâ kullanımda olan 32-bit Android telefonlar
+  var ve o mimari olmadan APK onlara hiç kurulmuyor. İkisi birden ~68MB.
 - Derlenen dosyayı (`android/app/build/outputs/apk/release/app-release.apk`)
   bu projenin kökündeki `public/` klasörüne kopyala, örn.
   `public/app-release-1.1.apk` adıyla (her sürüm için farklı ad kullan ki

@@ -24,7 +24,15 @@ export function setSoundEnabled(enabled: boolean): void {
 // synthetically, no third-party audio assets involved). react-native-sound
 // finds Android raw resources by filename alone; iOS isn't wired up since
 // this project is only built/tested for Android so far.
-Sound.setCategory('Playback');
+//
+// The `true` (mixWithOthers) is required — without it, react-native-sound
+// calls AudioManager.requestAudioFocus(..., AUDIOFOCUS_GAIN) on Android
+// before every single effect (tap, win, game-over, ...), which asks the
+// system to pause/steal focus from whatever's playing in the background
+// (e.g. a music app) for the effect's whole duration. These are short UI
+// sound effects, not this app's own music/media playback, so they should
+// never interrupt audio the user already has playing elsewhere.
+Sound.setCategory('Playback', true);
 
 type SoundKey =
   | 'place'

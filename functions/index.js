@@ -140,3 +140,166 @@ exports.onNewMessage = onDocumentCreated('rooms/{roomId}/messages/{messageId}', 
   }
   console.log('onNewMessage: push sent', { recipientUid, successCount: response.successCount, failureCount: response.failureCount });
 });
+
+/**
+ * Server-side Open Graph scraper behind a callable, powering the generic link
+ * preview cards in chat (og:image / og:title / og:description). Two reasons
+ * it isn't just a `fetch` in the client:
+ *
+ *  1. CORS — the web client's browser cannot fetch arbitrary third-party
+ *     sites at all, so it has no other way to read their meta tags.
+ *  2. Privacy — this app is a disguised private messenger. Fetching a link
+ *     straight from the device would hand the recipient's IP address (and a
+ *     "someone opened this chat right now" timing signal) to whoever controls
+ *     the linked site, just for rendering a preview. Going through the
+ *     function means only Google's egress IP touches the target.
+ *
+ * Deliberately conservative about what it will fetch — see isBlockedHost().
+ */
+const PREVIEW_TIMEOUT_MS = 6000;
+// Enough to cover <head> on essentially any real page; the body is where the
+// weight is and we never need it, so the read is aborted past this.
+const PREVIEW_MAX_BYTES = 512 * 1024;
+
+/**
+ * SSRF guard: this function will happily fetch any URL a chat participant
+ * sends, so it must never be usable as a proxy into Google's internal network
+ * or link-local metadata endpoints.
+ */
+function isBlockedHost(hostname) {
+  const host = hostname.toLowerCase();
+  if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.internal') || host.endsWith('.local')) {
+    return true;
+  }
+  // Bare IPv6 / IPv4-mapped loopback and the cloud metadata address.
+  if (host === '::1' || host === '[::1]' || host === '169.254.169.254' || host === 'metadata.google.internal') {
+    return true;
+  }
+  const ipv4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (ipv4) {
+    const [a, b] = [Number(ipv4[1]), Number(ipv4[2])];
+    // RFC1918 private ranges, loopback, link-local and 0.0.0.0/8.
+    if (a === 10 || a === 127 || a === 0 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 169 && b === 254)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function decodeEntities(value) {
+  return value
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#0?39;/g, "'")
+    .replace(/&apos;/g, "'");
+}
+
+/** Reads one <meta> value, accepting either attribute order (content before or after property/name). */
+function readMeta(html, names) {
+  for (const name of names) {
+    const escaped = name.replace(/[:]/g, '\:');
+    const patterns = [
+      new RegExp(`<meta[^>]+(?:property|name)=["']${escaped}["'][^>]*content=["']([^"']*)["']`, 'i'),
+      new RegExp(`<meta[^>]+content=["']([^"']*)["'][^>]*(?:property|name)=["']${escaped}["']`, 'i'),
+    ];
+    for (const pattern of patterns) {
+      const match = html.match(pattern);
+      if (match && match[1] && match[1].trim()) {
+        return decodeEntities(match[1].trim());
+      }
+    }
+  }
+  return undefined;
+}
+
+exports.linkPreview = onCall(async request => {
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'Sign in required');
+  }
+  const raw = typeof request.data?.url === 'string' ? request.data.url.trim() : '';
+  if (!raw) {
+    throw new HttpsError('invalid-argument', 'url required');
+  }
+
+  let target;
+  try {
+    target = new URL(raw);
+  } catch {
+    throw new HttpsError('invalid-argument', 'invalid url');
+  }
+  if (target.protocol !== 'http:' && target.protocol !== 'https:') {
+    throw new HttpsError('invalid-argument', 'unsupported protocol');
+  }
+  if (isBlockedHost(target.hostname)) {
+    throw new HttpsError('permission-denied', 'blocked host');
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), PREVIEW_TIMEOUT_MS);
+  try {
+    const response = await fetch(target.toString(), {
+      signal: controller.signal,
+      redirect: 'follow',
+      headers: {
+        // Many sites only emit og: tags for a recognised crawler UA.
+        'User-Agent': 'Mozilla/5.0 (compatible; LinkPreviewBot/1.0)',
+        Accept: 'text/html,application/xhtml+xml',
+      },
+    });
+    if (!response.ok) {
+      return { preview: null };
+    }
+    const contentType = response.headers.get('content-type') || '';
+    if (!contentType.includes('html')) {
+      return { preview: null };
+    }
+
+    // Streamed with a hard byte cap so a huge (or endless) response can't tie
+    // up the function — og: tags live in <head>, well within the cap.
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let html = '';
+    let received = 0;
+    while (received < PREVIEW_MAX_BYTES) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      received += value.length;
+      html += decoder.decode(value, { stream: true });
+      if (/<\/head>/i.test(html)) {
+        break;
+      }
+    }
+    await reader.cancel().catch(() => undefined);
+
+    const image = readMeta(html, ['og:image', 'og:image:url', 'og:image:secure_url', 'twitter:image', 'twitter:image:src']);
+    const title =
+      readMeta(html, ['og:title', 'twitter:title']) ||
+      decodeEntities((html.match(/<title[^>]*>([^<]*)<\/title>/i)?.[1] || '').trim()) ||
+      undefined;
+    const description = readMeta(html, ['og:description', 'twitter:description', 'description']);
+    const siteName = readMeta(html, ['og:site_name']);
+
+    if (!title && !image) {
+      return { preview: null };
+    }
+    return {
+      preview: {
+        url: target.toString(),
+        title: title ? title.slice(0, 200) : undefined,
+        description: description ? description.slice(0, 300) : undefined,
+        // Resolved against the final (post-redirect) URL so a relative
+        // og:image path still yields something loadable by the client.
+        imageUrl: image ? new URL(image, response.url || target.toString()).toString() : undefined,
+        siteName: siteName ? siteName.slice(0, 100) : target.hostname.replace(/^www\./, ''),
+      },
+    };
+  } catch {
+    return { preview: null };
+  } finally {
+    clearTimeout(timeout);
+  }
+});

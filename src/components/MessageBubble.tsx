@@ -9,8 +9,9 @@ import YoutubeIframe from 'react-native-youtube-iframe';
 import { useTheme } from '../theme/ThemeContext';
 import { getCachedVideoUri } from '../services/videoCacheService';
 import LinkPreviewCard from './LinkPreviewCard';
-import { extractSpotifyUrl } from '../utils/linkPreview';
+import { extractPreviewUrl } from '../utils/linkPreview';
 import { MissedCallIcon, PhoneCallIcon, VideoCallIcon } from './CallIcons';
+import { buildMapsUrl } from '../services/locationService';
 
 function formatFileSize(bytes: number): string {
   if (bytes < 1024) {
@@ -96,6 +97,10 @@ interface Props {
   onJumpToReply: (messageId: string) => void;
   /** Opens the room-wide swipeable image gallery starting at this message, instead of the single-image modal below. Only wired up for non-hidden images. */
   onImagePress?: (messageId: string) => void;
+  /** Ends an active "canlı konum" (live location) share this device is the sender of — only rendered/relevant for own 'location' messages still live. */
+  onStopLiveLocation?: (message: ChatMessage) => void;
+  /** Opens the in-app map (LocationMapModal) for a 'location' message. Hoisted to ChatRoomScreen so one Modal is mounted for the room instead of one per bubble; falls back to the device maps app when not provided. */
+  onOpenLocationMap?: (message: ChatMessage) => void;
 }
 
 const QUICK_EMOJIS = ['❤️', '🤍', '😂', '😮', '😢', '🙏', '👍'];
@@ -125,6 +130,8 @@ export function replyPreviewLabel(
       return message.callVideo ? '🎥 Görüntülü arama' : '📞 Sesli arama';
     case 'chess':
       return '♟️ Satranç daveti';
+    case 'location':
+      return '📍 Konum';
     default:
       return message.text;
   }
@@ -165,6 +172,43 @@ function renderTextWithLinks(text: string, color: string): React.ReactNode {
   });
 }
 
+/**
+ * Ticking "Xdk kaldı" label for an active live-location share — null once
+ * either the share was explicitly stopped (`active` false) or its
+ * `expiresAt` has passed, even if the sender's app never got a chance to
+ * call stopLiveLocation() (closed/crashed mid-share). Ticks every second
+ * only while a share is actually live, so it doesn't burn a timer on every
+ * other message type.
+ */
+function useLiveLocationCountdown(expiresAt: number | undefined, active: boolean): string | null {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    if (!active || !expiresAt) {
+      return;
+    }
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [active, expiresAt]);
+
+  if (!active || !expiresAt) {
+    return null;
+  }
+  const remainingMs = expiresAt - now;
+  if (remainingMs <= 0) {
+    return null;
+  }
+  const totalMinutes = Math.floor(remainingMs / 60000);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours > 0) {
+    return `${hours} sa ${minutes} dk kaldı`;
+  }
+  if (minutes > 0) {
+    return `${minutes} dk kaldı`;
+  }
+  return `${Math.ceil(remainingMs / 1000)} sn kaldı`;
+}
+
 function formatCallDuration(totalSeconds: number): string {
   const minutes = Math.floor(totalSeconds / 60)
     .toString()
@@ -190,8 +234,14 @@ function MessageBubble({
   onReply,
   onJumpToReply,
   onImagePress,
+  onStopLiveLocation,
+  onOpenLocationMap,
 }: Props): React.JSX.Element {
   const { theme } = useTheme();
+  const liveLocationCountdown = useLiveLocationCountdown(
+    message.type === 'location' ? message.liveExpiresAt : undefined,
+    message.type === 'location' && message.liveLocation === true,
+  );
   const [viewerOpen, setViewerOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [revealed, setRevealed] = useState(false);
@@ -558,10 +608,45 @@ function MessageBubble({
           )
         )}
 
+        {message.type === 'location' && message.latitude !== undefined && message.longitude !== undefined && (
+          <>
+            <Pressable
+              style={styles.locationCard}
+              onPress={() =>
+                onOpenLocationMap
+                  ? onOpenLocationMap(message)
+                  : Linking.openURL(buildMapsUrl(message.latitude!, message.longitude!)).catch(() => undefined)
+              }
+              onLongPress={handleLongPress}
+              delayLongPress={280}
+              accessibilityRole="button"
+              accessibilityLabel="Konumu haritada aç">
+              <Text style={styles.locationIcon}>{liveLocationCountdown ? '🔴' : '📍'}</Text>
+              <View style={styles.locationTextWrap}>
+                <Text style={[styles.locationTitle, { color: bubbleTextColor }]}>
+                  {liveLocationCountdown ? 'Canlı Konum' : 'Konum'}
+                </Text>
+                <Text style={[styles.locationSubtitle, { color: bubbleTextColor }]} numberOfLines={1}>
+                  {liveLocationCountdown ?? `${message.latitude.toFixed(5)}, ${message.longitude.toFixed(5)}`}
+                </Text>
+              </View>
+            </Pressable>
+            {isMine && liveLocationCountdown && onStopLiveLocation && (
+              <Pressable
+                onPress={() => onStopLiveLocation(message)}
+                style={styles.locationStopButton}
+                accessibilityRole="button"
+                accessibilityLabel="Canlı konumu durdur">
+                <Text style={[styles.locationStopText, { color: theme.danger }]}>Canlı Konumu Durdur</Text>
+              </Pressable>
+            )}
+          </>
+        )}
+
         {message.type === 'text' && (() => {
           const isLong = message.text.length > TEXT_TRUNCATE_LENGTH;
           const displayText = isLong && !textExpanded ? `${message.text.slice(0, TEXT_TRUNCATE_LENGTH)}…` : message.text;
-          const spotifyUrl = extractSpotifyUrl(message.text);
+          const previewUrl = extractPreviewUrl(message.text);
           return (
             <>
               <Text style={[styles.messageText, { color: bubbleTextColor }]}>
@@ -578,7 +663,7 @@ function MessageBubble({
                   </Text>
                 </Pressable>
               )}
-              {spotifyUrl && <LinkPreviewCard url={spotifyUrl} />}
+              {previewUrl && <LinkPreviewCard url={previewUrl} />}
             </>
           );
         })()}
@@ -1039,6 +1124,38 @@ const styles = StyleSheet.create({
   },
   callTime: {
     fontSize: 10.5,
+  },
+  locationCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    minWidth: 190,
+    maxWidth: 240,
+  },
+  locationIcon: {
+    fontSize: 26,
+  },
+  locationTextWrap: {
+    flexShrink: 1,
+    minWidth: 0,
+  },
+  locationTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  locationSubtitle: {
+    fontSize: 12,
+    opacity: 0.8,
+    marginTop: 2,
+  },
+  locationStopButton: {
+    marginTop: 6,
+    alignSelf: 'flex-start',
+  },
+  locationStopText: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    textDecorationLine: 'underline',
   },
 });
 

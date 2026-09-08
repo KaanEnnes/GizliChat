@@ -208,6 +208,13 @@ olarak kalıyor, son aramalar/favoriler/çevrimiçi durumu gibi hiçbir sohbet i
   (`messageId`, `text`, `senderId`, `type`) yazar — canlı bir referans değil, bu yüzden orijinal mesaj
   sonradan değişse/silinse bile yanıt balonundaki alıntı doğru render edilmeye devam eder.
   `MessageBubble` bu alıntıyı balonun üstünde küçük bir `replyQuote` kutusu olarak gösterir.
+- **Konum paylaşımı (2026-09-06'da eklendi):** 📎 menüsündeki "Konum" satırı bir "Mevcut Konumu
+  Gönder" (tek seferlik GPS fix'i) / "Canlı Konum Paylaş" (15dk/1sa/8sa, WhatsApp tarzı, aynı
+  mesaj dokümanı üzerine periyodik konum güncellemesi) seçimi sunar (`LocationShareModal.tsx`,
+  `locationService.ts`, `@react-native-community/geolocation`). Canlı paylaşım sadece bu ekran
+  açıkken çalışır (arka plan servisi yok); gönderen tarafta "Canlı Konumu Durdur" linki var.
+  Karta dokununca cihazın harita uygulaması açılır (`Linking` + `geo:` URI, ekstra bir harita
+  SDK'sı yok). Detay: [[03-Services-Backend]], [[Changelog]].
 - Geri ok → `onBack()` ile `CONTACTS`'a döner.
 
 ## NotificationCenter — uygulama-içi "oyun bildirimi"

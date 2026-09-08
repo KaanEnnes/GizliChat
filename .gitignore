@@ -104,3 +104,4 @@ ObsidianVault/*.canvas
 # the whole Firebase project, must never be committed.
 serviceAccountKey.json
 *serviceAccountKey*.json
+storage-backup/

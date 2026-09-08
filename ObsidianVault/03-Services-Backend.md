@@ -175,7 +175,7 @@ Gerçek bir online/offline event sistemi değil, hafif bir "son ne zaman aktifti
 
 ```ts
 {
-  type: 'text' | 'image' | 'video' | 'audio' | 'file' | 'call' | 'chess' | 'song';
+  type: 'text' | 'image' | 'video' | 'audio' | 'file' | 'call' | 'chess' | 'song' | 'location';
   text: string;            // sadece type: 'text' için doldurulur
   senderId: string;        // Firebase uid
   createdAt: Timestamp;
@@ -205,6 +205,11 @@ Gerçek bir online/offline event sistemi değil, hafif bir "son ne zaman aktifti
   (`completed` > `declined` > `missed`) ve süre iki tarafın gördüğü en uzun değer oluyor.
   `createdAt` yalnızca ilk yazan tarafından damgalanır ki kayıt sohbette yerinden oynamasın.
 
+- `type: 'location'` (2026-09-06'da eklendi) — `latitude`/`longitude` (mevcut konum, hiç
+  değişmez) veya `liveLocation: true` + `liveExpiresAt` (canlı konum — aynı dokümanın
+  `latitude`/`longitude`'u sender tarafından periyodik üzerine yazılır). `firestore.rules`'ta
+  bunun için özel bir carve-out var (bkz. aşağıda "Firestore Security Rules"). Sadece mobil
+  istemcide var. Detay: [[02-Screens-and-Features]], [[Changelog]].
 - `type: 'file'` (2026-08-20'de eklendi) — resim/video dışında herhangi bir dosya; `react-native-
   documents/picker` ile seçilip `mediaService.uploadRoomMedia(roomId, 'file', ...)` ile Storage'a
   yükleniyor. Alıcı tarafta `react-native-blob-util` ile cihazın İndirilenler klasörüne
@@ -382,6 +387,10 @@ Kuralların özeti:
   (b) `update` — ikinci yazan cihazın SADECE `callStatus`/`durationSeconds`/`callVideo` alanlarını
   uzlaştırmasına izin var. Bu kural eklenmeden önce alıcının yazısı sessizce reddediliyordu, yani
   arayanın uygulaması kaydı yazamadıysa (çöktü/kapandı/çevrimdışıydı) sohbette hiç kayıt kalmıyordu.
+  2026-09-06'da **canlı konum için bir carve-out daha (#7)** eklendi ve deploy edildi: sadece
+  mesajın `senderId`'si, `type == 'location'` bir mesajın SADECE `['latitude','longitude']` ya da
+  SADECE `['liveLocation','liveExpiresAt']` alanlarını güncelleyebiliyor — bu olmadan canlı konum
+  güncelleme/durdurma sessizce `permission-denied` alıyordu.
 - `rooms/{roomId}/game/{gameId}` (XOX/satranç, kişiye karşı): Sadece oda üyeleri okuyup yazabilir,
   ama **hamlenin gerçekten legal/sırası kendinde mi olduğu kural tarafından doğrulanmıyor** — bilinçli
   bir gevşek model, bkz. [[04-Security-Notes]].

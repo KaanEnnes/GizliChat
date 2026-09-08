@@ -20,7 +20,7 @@ import {
 } from 'firebase/firestore';
 import { db } from './firebase';
 
-export type MessageType = 'text' | 'image' | 'video' | 'audio' | 'file' | 'call' | 'chess' | 'song';
+export type MessageType = 'text' | 'image' | 'video' | 'audio' | 'file' | 'call' | 'chess' | 'song' | 'location';
 export type CallLogStatus = 'completed' | 'missed' | 'declined';
 
 /** Lightweight snapshot of the message being replied to — stored inline so the quoted preview renders without an extra fetch. */
@@ -87,6 +87,13 @@ export interface ChatMessage {
   songThumbnailUrl?: string;
   clipStartSeconds?: number;
   clipDurationSeconds?: number;
+  /** Present for 'location' messages — the shared coordinates. For a live share these are overwritten in place as the sender moves (see updateLiveLocation). */
+  latitude?: number;
+  longitude?: number;
+  /** True while a 'location' message is an active "canlı konum" (live location) share rather than a one-off pin. */
+  liveLocation?: boolean;
+  /** Present while liveLocation is true — when this passes, MessageBubble treats the share as ended even if stopLiveLocation was never explicitly called (e.g. sender's app was killed mid-share). */
+  liveExpiresAt?: number;
 }
 
 // Each 1-1 conversation gets its own room under rooms/{roomId}/messages.
@@ -214,6 +221,10 @@ function docToMessage(docSnap: {
     songThumbnailUrl: typeof data.songThumbnailUrl === 'string' ? data.songThumbnailUrl : undefined,
     clipStartSeconds: typeof data.clipStartSeconds === 'number' ? data.clipStartSeconds : undefined,
     clipDurationSeconds: typeof data.clipDurationSeconds === 'number' ? data.clipDurationSeconds : undefined,
+    latitude: typeof data.latitude === 'number' ? data.latitude : undefined,
+    longitude: typeof data.longitude === 'number' ? data.longitude : undefined,
+    liveLocation: data.liveLocation === true,
+    liveExpiresAt: data.liveExpiresAt instanceof Timestamp ? data.liveExpiresAt.toMillis() : undefined,
   };
 }
 
@@ -445,6 +456,57 @@ export async function sendFileMessage(
   });
 }
 
+/** Sends a one-off "mevcut konum" (current location) pin — never updated again after creation. */
+export async function sendLocationMessage(roomId: string, senderId: string, latitude: number, longitude: number): Promise<void> {
+  await addDoc(collection(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION), {
+    type: 'location',
+    text: '',
+    senderId,
+    createdAt: serverTimestamp(),
+    latitude,
+    longitude,
+  });
+}
+
+/**
+ * Starts a "canlı konum" (live location) share: a single message doc whose
+ * `latitude`/`longitude` are overwritten in place as the sender moves (see
+ * updateLiveLocation) instead of posting a new message per fix. Returns the
+ * new message id so the caller can keep watching GPS and calling
+ * updateLiveLocation/stopLiveLocation against it.
+ */
+export async function sendLiveLocationMessage(
+  roomId: string,
+  senderId: string,
+  latitude: number,
+  longitude: number,
+  durationMs: number,
+): Promise<string> {
+  const docRef = await addDoc(collection(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION), {
+    type: 'location',
+    text: '',
+    senderId,
+    createdAt: serverTimestamp(),
+    latitude,
+    longitude,
+    liveLocation: true,
+    liveExpiresAt: Timestamp.fromMillis(Date.now() + durationMs),
+  });
+  return docRef.id;
+}
+
+/** Sender-only (enforced by firestore.rules): overwrites an active live-location share's coordinates with a fresh GPS fix. */
+export async function updateLiveLocation(roomId: string, messageId: string, latitude: number, longitude: number): Promise<void> {
+  const messageRef = doc(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION, messageId);
+  await updateDoc(messageRef, { latitude, longitude });
+}
+
+/** Sender-only: ends a live-location share early (MessageBubble also treats a share as ended once `liveExpiresAt` passes on its own). Coordinates are left as the last known fix rather than cleared, so the bubble still shows where sharing stopped. */
+export async function stopLiveLocation(roomId: string, messageId: string): Promise<void> {
+  const messageRef = doc(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION, messageId);
+  await updateDoc(messageRef, { liveLocation: false, liveExpiresAt: deleteField() });
+}
+
 /** Edits a text message's content — sender-only (enforced by firestore.rules), and only while it hasn't been deleted (see deleteMessage()'s doc comment). `myUid` is always the message's own sender (rules reject anyone else). */
 export async function editMessage(roomId: string, messageId: string, newText: string, myUid: string): Promise<void> {
   const trimmed = newText.trim();
@@ -599,6 +661,25 @@ export async function fetchMessageById(roomId: string, messageId: string, myUid:
     return null;
   }
   return docToMessage(snap);
+}
+
+/**
+ * Live subscription to a single message doc. Used by LocationMapModal to
+ * follow an active "canlı konum" share: the sender keeps overwriting that
+ * one doc's latitude/longitude (see updateLiveLocation), so watching just
+ * this document is all the viewer needs for the pin to move on its own —
+ * much cheaper than re-reading the room's whole message list for it.
+ */
+export function subscribeToMessageById(
+  roomId: string,
+  messageId: string,
+  onMessage: (message: ChatMessage | null) => void,
+): Unsubscribe {
+  return onSnapshot(
+    doc(db, ROOMS_COLLECTION, roomId, MESSAGES_SUBCOLLECTION, messageId),
+    snapshot => onMessage(snapshot.exists() ? docToMessage(snapshot) : null),
+    () => onMessage(null),
+  );
 }
 
 /**
